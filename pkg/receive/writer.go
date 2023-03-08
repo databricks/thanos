@@ -104,6 +104,7 @@ func (r *Writer) Write(ctx context.Context, tenantID string, wreq *prompb.WriteR
 		return errors.Wrap(err, "get appender")
 	}
 	getRef := app.(storage.GetRef)
+
 	var (
 		ref  storage.SeriesRef
 		errs writeErrors
@@ -148,7 +149,12 @@ func (r *Writer) Write(ctx context.Context, tenantID string, wreq *prompb.WriteR
 
 		// Append as many valid samples as possible, but keep track of the errors.
 		for _, s := range t.Samples {
-			ref, err = app.Append(ref, lset, s.Timestamp, s.Value)
+			if tooFarInFuture != 0 && tooFarInFuture.Before(model.Time(s.Timestamp)) {
+				// now + tooFarInFutureTimeWindow < sample timestamp
+				err = storage.ErrOutOfBounds
+			} else {
+				ref, err = app.Append(ref, lset, s.Timestamp, s.Value)
+			}
 			switch err {
 			case storage.ErrOutOfOrderSample:
 				numSamplesOutOfOrder++
