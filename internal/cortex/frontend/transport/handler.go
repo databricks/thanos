@@ -126,12 +126,20 @@ func (f *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now()
 	resp, err := f.roundTripper.RoundTrip(r)
 	queryResponseTime := time.Since(startTime)
+	isExpensiveQuery := false
+	defer func ()  {
+		if !isExpensiveQuery {
+			return
+		}	
+		// Put it in cache
+	}
 
 	if err != nil {
 		writeError(w, err)
 		if f.cfg.LogFailedQueries {
 			queryString = f.parseRequestQueryString(r, buf)
 			f.reportFailedQuery(r, queryString, err)
+			isExpensiveQuery = isExpensiveQuery || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 		}
 		return
 	}
