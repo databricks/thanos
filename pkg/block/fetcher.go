@@ -515,12 +515,13 @@ func (f *BaseFetcher) fetchMetadata(ctx context.Context) (interface{}, error) {
 		ch  = make(chan ulid.ULID, f.concurrency)
 		mtx sync.Mutex
 	)
-	level.Debug(f.logger).Log("msg", "fetching meta data", "concurrency", f.concurrency, "cache_dir", f.cacheDir)
+	level.Debug(f.logger).Log("msg", "fetching meta data", "concurrency", f.concurrency, "cache_dir", f.cacheDir, "cache_dir", f.cacheDir)
 	for i := 0; i < f.concurrency; i++ {
 		eg.Go(func() error {
 			numBlocks := 0
 			for id := range ch {
 				meta, err := f.loadMeta(ctx, id)
+				level.Debug(f.logger).Log("msg", "loaded meta data", "block", id)
 				numBlocks += 1
 				if (numBlocks % 1000) == 0 {
 					level.Debug(f.logger).Log("msg", "loaded the metadata of a block from one goroutine",
