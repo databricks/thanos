@@ -296,6 +296,23 @@ func testReceiveQuorum(t *testing.T, hashringAlgo HashringAlgorithm, withConsist
 			},
 		},
 		{
+			name:              "size 3 success with replication even",
+			status:            http.StatusOK,
+			replicationFactor: 2,
+			wreq:              wreq,
+			appendables: []*fakeAppendable{
+				{
+					appender: newFakeAppender(nil, nil, nil),
+				},
+				{
+					appender: newFakeAppender(nil, nil, nil),
+				},
+				{
+					appender: newFakeAppender(nil, nil, nil),
+				},
+			},
+		},
+		{
 			name:              "size 3 success with replication",
 			status:            http.StatusOK,
 			replicationFactor: 3,
@@ -316,6 +333,23 @@ func testReceiveQuorum(t *testing.T, hashringAlgo HashringAlgorithm, withConsist
 			name:              "size 3 commit error",
 			status:            http.StatusInternalServerError,
 			replicationFactor: 1,
+			wreq:              wreq,
+			appendables: []*fakeAppendable{
+				{
+					appender: newFakeAppender(nil, commitErrFn, nil),
+				},
+				{
+					appender: newFakeAppender(nil, commitErrFn, nil),
+				},
+				{
+					appender: newFakeAppender(nil, commitErrFn, nil),
+				},
+			},
+		},
+		{
+			name:              "size 3 commit error with replication even",
+			status:            http.StatusInternalServerError,
+			replicationFactor: 2,
 			wreq:              wreq,
 			appendables: []*fakeAppendable{
 				{
@@ -425,6 +459,23 @@ func testReceiveQuorum(t *testing.T, hashringAlgo HashringAlgorithm, withConsist
 			appendables: []*fakeAppendable{
 				{
 					appender: newFakeAppender(cycleErrors([]error{storage.ErrOutOfBounds, storage.ErrOutOfOrderSample, storage.ErrDuplicateSampleForTimestamp}), nil, nil),
+				},
+				{
+					appender: newFakeAppender(nil, nil, nil),
+				},
+				{
+					appender: newFakeAppender(nil, nil, nil),
+				},
+			},
+		},
+		{
+			name:              "size 3 with replication even and one commit error",
+			status:            http.StatusOK,
+			replicationFactor: 2,
+			wreq:              wreq,
+			appendables: []*fakeAppendable{
+				{
+					appender: newFakeAppender(nil, commitErrFn, nil),
 				},
 				{
 					appender: newFakeAppender(nil, nil, nil),
