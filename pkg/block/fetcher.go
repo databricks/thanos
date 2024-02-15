@@ -103,6 +103,9 @@ const (
 
 	// Modified label values.
 	replicaRemovedMeta = "replica-label-removed"
+
+	tenantLabel = "__tenant__"
+	defautTenant = "__unkown__"
 )
 
 func NewBaseFetcherMetrics(reg prometheus.Registerer) *BaseFetcherMetrics {
