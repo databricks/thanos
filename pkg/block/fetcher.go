@@ -383,13 +383,6 @@ func NewBaseFetcherWithMetrics(logger log.Logger, concurrency int, bkt objstore.
 	}
 
 	return &BaseFetcher{
-		logger:          log.With(logger, "component", "block.BaseFetcher"),
-		concurrency:     concurrency,
-		bkt:             bkt,
-		blockIDsFetcher: blockIDsFetcher,
-		cacheDir:        cacheDir,
-		cached:          map[ulid.ULID]*metadata.Meta{},
-		metrics:         metrics,
 		logger:         log.With(logger, "component", "block.BaseFetcher"),
 		concurrency:    concurrency,
 		bkt:            bkt,
