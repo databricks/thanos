@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -104,8 +105,10 @@ const (
 	// Modified label values.
 	replicaRemovedMeta = "replica-label-removed"
 
-	tenantLabel = "__tenant__"
-	defautTenant = "__unkown__"
+	tenantLabel    = "__tenant__"
+	defautTenant   = "__not_set__"
+	replicaLabel   = "__replica__"
+	defaultReplica = ""
 )
 
 func NewBaseFetcherMetrics(reg prometheus.Registerer) *BaseFetcherMetrics {
@@ -181,11 +184,11 @@ func NewFetcherMetrics(reg prometheus.Registerer, syncedExtraLabels, modifiedExt
 	m.Assigned = extprom.NewTxGaugeVec(
 		reg,
 		prometheus.GaugeOpts{
-			Subsystem: FetcherSubSys,
+			Subsystem: fetcherSubSys,
 			Name:      "assigned",
 			Help:      "Number of metadata blocks assigned to this pod after all filters.",
 		},
-		[]string{"tenant", "level"},
+		[]string{"tenant", "level", "replica"},
 		// No init label values is fine. The only downside is those guages won't be reset to 0, but it's fine for the use case.
 	)
 	return &m
@@ -681,7 +684,16 @@ func (f *BaseFetcher) fetch(ctx context.Context, metrics *FetcherMetrics, filter
 	// Therefore, it's skipped to update the gauge.
 	if len(filters) > 0 {
 		for _, m := range metas {
-			metrics.Assigned.WithLabelValues(m.Thanos.GetTenant(), strconv.Itoa(m.BlockMeta.Compaction.Level)).Inc()
+			var tenant, replica string
+			var ok bool
+			// tenant and replica will have the zero value ("") if the key is not in the map.
+			if tenant, ok = m.Thanos.Labels[tenantLabel]; !ok {
+				tenant = defautTenant
+			}
+			if replica, ok = m.Thanos.Labels[replicaLabel]; !ok {
+				replica = defaultReplica
+			}
+			metrics.Assigned.WithLabelValues(tenant, strconv.Itoa(m.BlockMeta.Compaction.Level), replica).Inc()
 		}
 	}
 
