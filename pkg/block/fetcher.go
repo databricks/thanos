@@ -120,12 +120,12 @@ func NewBaseFetcherMetrics(reg prometheus.Registerer) *BaseFetcherMetrics {
 		Help:      "Total blocks metadata synchronization attempts by base Fetcher",
 	})
 	m.CacheMemoryHit = promauto.With(reg).NewCounter(prometheus.CounterOpts{
-		Subsystem: FetcherSubSys,
+		Subsystem: fetcherSubSys,
 		Name:      "base_cache_memory_hits_total",
 		Help:      "Total blocks metadata from memory cache hits",
 	})
 	m.CacheDiskHit = promauto.With(reg).NewCounter(prometheus.CounterOpts{
-		Subsystem: FetcherSubSys,
+		Subsystem: fetcherSubSys,
 		Name:      "base_cache_disk_hits_total",
 		Help:      "Total blocks metadata from disk cache hits",
 	})
@@ -383,6 +383,13 @@ func NewBaseFetcherWithMetrics(logger log.Logger, concurrency int, bkt objstore.
 	}
 
 	return &BaseFetcher{
+		logger:          log.With(logger, "component", "block.BaseFetcher"),
+		concurrency:     concurrency,
+		bkt:             bkt,
+		blockIDsFetcher: blockIDsFetcher,
+		cacheDir:        cacheDir,
+		cached:          map[ulid.ULID]*metadata.Meta{},
+		metrics:         metrics,
 		logger:         log.With(logger, "component", "block.BaseFetcher"),
 		concurrency:    concurrency,
 		bkt:            bkt,
