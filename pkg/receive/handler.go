@@ -800,26 +800,26 @@ func (h *Handler) fanoutForward(pctx context.Context, tenant string, wreqs map[e
 			})
 			if err != nil {
 				// Check if peer connection is unavailable, don't attempt to send requests constantly.
-				if st, ok := status.FromError(err); ok {
-					if st.Code() == codes.Unavailable {
-						h.mtx.Lock()
-						if b, ok := h.peerStates[writeTarget.endpoint]; ok {
-							b.attempt++
-							dur := h.expBackoff.ForAttempt(b.attempt)
-							b.nextAllowed = time.Now().Add(dur)
-							level.Debug(tLogger).Log("msg", "target unavailable backing off", "for", dur)
-						} else {
-							h.peerStates[writeTarget.endpoint] = &retryState{nextAllowed: time.Now().Add(h.expBackoff.ForAttempt(0))}
-						}
-						h.mtx.Unlock()
-						// For other error codes, we want to flush out the endpoint since it means connection is working.
-					} else {
-						h.mtx.Lock()
-						delete(h.peerStates, writeTarget.endpoint)
-						level.Info(tLogger).Log("msg", "flushing retry endpoint", "endpoint", writeTarget.endpoint)
-						h.mtx.Unlock()
-					}
-				}
+				//if st, ok := status.FromError(err); ok {
+				//	if st.Code() == codes.Unavailable {
+				//		h.mtx.Lock()
+				//		if b, ok := h.peerStates[writeTarget.endpoint]; ok {
+				//			b.attempt++
+				//			dur := h.expBackoff.ForAttempt(b.attempt)
+				//			b.nextAllowed = time.Now().Add(dur)
+				//			level.Debug(tLogger).Log("msg", "target unavailable backing off", "for", dur)
+				//		} else {
+				//			h.peerStates[writeTarget.endpoint] = &retryState{nextAllowed: time.Now().Add(h.expBackoff.ForAttempt(0))}
+				//		}
+				//		h.mtx.Unlock()
+				//	} else {
+				//		// For other error codes, we want to flush out the endpoint since it means connection is working.
+				//		h.mtx.Lock()
+				//		delete(h.peerStates, writeTarget.endpoint)
+				//		level.Info(tLogger).Log("msg", "flushing retry endpoint", "endpoint", writeTarget.endpoint)
+				//		h.mtx.Unlock()
+				//	}
+				//}
 				werr := errors.Wrapf(err, "forwarding request to endpoint %v", writeTarget.endpoint)
 				responses <- newWriteResponse(wreqs[writeTarget].seriesIDs, werr)
 				return
