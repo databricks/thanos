@@ -246,7 +246,6 @@ type DefaultGrouper struct {
 	compactionRunsCompleted       *prometheus.CounterVec
 	compactionFailures            *prometheus.CounterVec
 	verticalCompactions           *prometheus.CounterVec
-	overlappingBlocks             *prometheus.CounterVec
 	garbageCollectedBlocks        prometheus.Counter
 	blocksMarkedForDeletion       prometheus.Counter
 	blocksMarkedForNoCompact      prometheus.Counter
@@ -318,7 +317,6 @@ func NewDefaultGrouperWithMetrics(
 	compactionRunsCompleted *prometheus.CounterVec,
 	compactionFailures *prometheus.CounterVec,
 	verticalCompactions *prometheus.CounterVec,
-	overrlappingBlocks *prometheus.CounterVec,
 	blocksMarkedForDeletion prometheus.Counter,
 	garbageCollectedBlocks prometheus.Counter,
 	blocksMarkedForNoCompact prometheus.Counter,
@@ -336,7 +334,6 @@ func NewDefaultGrouperWithMetrics(
 		compactionRunsCompleted:       compactionRunsCompleted,
 		compactionFailures:            compactionFailures,
 		verticalCompactions:           verticalCompactions,
-		overlappingBlocks:             overrlappingBlocks,
 		blocksMarkedForNoCompact:      blocksMarkedForNoCompact,
 		garbageCollectedBlocks:        garbageCollectedBlocks,
 		blocksMarkedForDeletion:       blocksMarkedForDeletion,
@@ -410,7 +407,6 @@ type Group struct {
 	compactionRunsCompleted       prometheus.Counter
 	compactionFailures            prometheus.Counter
 	verticalCompactions           prometheus.Counter
-	overlappingBlocks             prometheus.Counter
 	groupGarbageCollectedBlocks   prometheus.Counter
 	blocksMarkedForDeletion       prometheus.Counter
 	blocksMarkedForNoCompact      prometheus.Counter
@@ -434,7 +430,6 @@ func NewGroup(
 	compactionRunsCompleted prometheus.Counter,
 	compactionFailures prometheus.Counter,
 	verticalCompactions prometheus.Counter,
-	overlappingBlocks prometheus.Counter,
 	groupGarbageCollectedBlocks prometheus.Counter,
 	blocksMarkedForDeletion prometheus.Counter,
 	blocksMarkedForNoCompact prometheus.Counter,
@@ -463,7 +458,6 @@ func NewGroup(
 		compactionRunsCompleted:       compactionRunsCompleted,
 		compactionFailures:            compactionFailures,
 		verticalCompactions:           verticalCompactions,
-		overlappingBlocks:             overlappingBlocks,
 		groupGarbageCollectedBlocks:   groupGarbageCollectedBlocks,
 		blocksMarkedForDeletion:       blocksMarkedForDeletion,
 		blocksMarkedForNoCompact:      blocksMarkedForNoCompact,

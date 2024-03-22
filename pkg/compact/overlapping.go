@@ -13,6 +13,8 @@ import (
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/prometheus/tsdb"
 	"github.com/thanos-io/thanos/pkg/block"
 	"github.com/thanos-io/thanos/pkg/block/metadata"
@@ -78,6 +80,15 @@ func (o OverlappingCompactionLifecycleCallback) PreCompactionCallback(ctx contex
 				return retry(err)
 			}
 			return retry(reason)
+		} else if prevB.MinTime == currB.MinTime && prevB.MaxTime == currB.MaxTime {
+			if prevB.Stats.NumSeries != currB.Stats.NumSeries || prevB.Stats.NumSamples != currB.Stats.NumSamples {
+				level.Warn(logger).Log("msg", "found same time range but different stats, keep both blocks",
+					"prev", prevB.String(), "prevSeries", prevB.Stats.NumSeries, "prevSamples", prevB.Stats.NumSamples,
+					"curr", currB.String(), "currSeries", currB.Stats.NumSeries, "currSamples", currB.Stats.NumSamples,
+				)
+				prev = curr
+				continue
+			}
 		} else if prevB.MinTime == currB.MinTime && prevB.MaxTime == currB.MaxTime {
 			if prevB.Stats.NumSeries != currB.Stats.NumSeries || prevB.Stats.NumSamples != currB.Stats.NumSamples {
 				level.Warn(logger).Log("msg", "found same time range but different stats, keep both blocks",
