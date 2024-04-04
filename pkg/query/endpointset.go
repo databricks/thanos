@@ -193,12 +193,14 @@ type EndpointStatus struct {
 // A Collector is required as we want atomic updates for all 'thanos_store_nodes_grpc_connections' series.
 // TODO(hitanshu-mehta) Currently,only collecting metrics of storeEndpoints. Make this struct generic.
 type endpointSetNodeCollector struct {
-	mtx             sync.Mutex
-	storeNodes      map[component.Component]map[string]int
-	storePerExtLset map[string]int
+	mtx             		sync.Mutex
+	storeNodes      		map[component.Component]map[string]int
+	storeNodeAddrs			map[component.Component]map[string]int
+	storePerExtLset 		map[string]int
 
-	connectionsDesc *prometheus.Desc
-	labels          []string
+	connectionsDesc 		*prometheus.Desc
+	connectionsWithAddrDesc *prometheus.Desc
+	labels          		[]string
 }
 
 func newEndpointSetNodeCollector(labels ...string) *endpointSetNodeCollector {
@@ -211,6 +213,11 @@ func newEndpointSetNodeCollector(labels ...string) *endpointSetNodeCollector {
 			"thanos_store_nodes_grpc_connections",
 			"Number of gRPC connection to Store APIs. Opened connection means healthy store APIs available for Querier.",
 			labels, nil,
+		),
+		connectionsWithAddrDesc: prometheus.NewDesc(
+			"thanos_store_nodes_grpc_connections_addr",
+			"Number of gRPC connection to Store APIs with endpoint addresses. Opened connection means healthy store APIs available for Querier.",
+			[]string{string(StoreType), "addr", }, nil,
 		),
 		labels: labels,
 	}
@@ -229,7 +236,10 @@ func truncateExtLabels(s string, threshold int) string {
 	}
 	return s
 }
-func (c *endpointSetNodeCollector) Update(nodes map[component.Component]map[string]int) {
+func (c *endpointSetNodeCollector) Update(
+	nodes map[component.Component]map[string]int,
+	nodeAddrs map[component.Component]map[string]int,
+) {
 	storeNodes := make(map[component.Component]map[string]int, len(nodes))
 	storePerExtLset := map[string]int{}
 
@@ -246,6 +256,7 @@ func (c *endpointSetNodeCollector) Update(nodes map[component.Component]map[stri
 	defer c.mtx.Unlock()
 	c.storeNodes = storeNodes
 	c.storePerExtLset = storePerExtLset
+	c.storeNodeAddrs = nodeAddrs
 }
 
 func (c *endpointSetNodeCollector) Describe(ch chan<- *prometheus.Desc) {
@@ -273,6 +284,11 @@ func (c *endpointSetNodeCollector) Collect(ch chan<- prometheus.Metric) {
 				}
 			}
 			ch <- prometheus.MustNewConstMetric(c.connectionsDesc, prometheus.GaugeValue, float64(occurrences), lbls...)
+		}
+	}
+	for StoreType, occurrencesPerAddr := range c.storeNodeAddrs {
+		for addr, occurrences := range occurrencesPerAddr {
+			ch <- prometheus.MustNewConstMetric(c.connectionsWithAddrDesc, prometheus.GaugeValue, float64(occurrences), StoreType.String(), addr)
 		}
 	}
 }
@@ -327,7 +343,7 @@ func NewEndpointSet(
 		endpointSpecs = func() []*GRPCEndpointSpec { return nil }
 	}
 
-	return &EndpointSet{
+	es := &EndpointSet{
 		now:             now,
 		logger:          log.With(logger, "component", "endpointset"),
 		endpointsMetric: endpointsMetric,
@@ -344,6 +360,15 @@ func NewEndpointSet(
 		},
 		endpoints: make(map[string]*endpointRef),
 	}
+
+	// Log the endpoints
+	{
+		level.Info(es.logger).Log("msg", "All gPRC endpoints for querying")
+		for _, s := range endpointSpecs() {
+			level.Info(es.logger).Log("msg", "One gPRC endpoint for querying", "address", s.addr, "strict", s.isStrictStatic)
+		}
+	}
+	return es
 }
 
 // Update updates the endpoint set. It fetches current list of endpoint specs from function and updates the fresh metadata
@@ -434,6 +459,7 @@ func (e *EndpointSet) Update(ctx context.Context) {
 
 	// Update stats.
 	stats := newEndpointAPIStats()
+	addrStates := newEndpointAPIStats()
 	for addr, er := range e.endpoints {
 		if !er.isQueryable() {
 			continue
@@ -449,9 +475,10 @@ func (e *EndpointSet) Update(ctx context.Context) {
 				"address", addr, "extLset", extLset, "duplicates", fmt.Sprintf("%v", stats[component.Sidecar][extLset]+stats[component.Rule][extLset]+1))
 		}
 		stats[er.ComponentType()][extLset]++
+		addrStates[er.componentType()][addr]++
 	}
 
-	e.endpointsMetric.Update(stats)
+	e.endpointsMetric.Update(stats, addrStates)
 }
 
 func (e *EndpointSet) updateEndpoint(ctx context.Context, spec *GRPCEndpointSpec, er *endpointRef) {

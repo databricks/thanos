@@ -846,6 +846,17 @@ func prepareEndpointSet(
 	endpointInfoTimeout time.Duration,
 	queryConnMetricLabels ...string,
 ) *query.EndpointSet {
+	level.Info(logger).Log("msg",
+        "Preparing endpoints",
+        "strictStores",
+        strings.Join(strictStores, "|"),
+        "strictEndpoints",
+        strings.Join(strictEndpoints, "|"),
+        "endpointGroupAddrs",
+        strings.Join(endpointGroupAddrs, "|"),
+        "strictEndpointGroups",
+        strings.Join(strictEndpointGroups, "|"),
+	)
 	endpointSet := query.NewEndpointSet(
 		time.Now,
 		logger,
