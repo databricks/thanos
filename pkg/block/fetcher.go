@@ -120,12 +120,12 @@ func NewBaseFetcherMetrics(reg prometheus.Registerer) *BaseFetcherMetrics {
 		Help:      "Total blocks metadata synchronization attempts by base Fetcher",
 	})
 	m.CacheMemoryHit = promauto.With(reg).NewCounter(prometheus.CounterOpts{
-		Subsystem: fetcherSubSys,
+		Subsystem: FetcherSubSys,
 		Name:      "base_cache_memory_hits_total",
 		Help:      "Total blocks metadata from memory cache hits",
 	})
 	m.CacheDiskHit = promauto.With(reg).NewCounter(prometheus.CounterOpts{
-		Subsystem: fetcherSubSys,
+		Subsystem: FetcherSubSys,
 		Name:      "base_cache_disk_hits_total",
 		Help:      "Total blocks metadata from disk cache hits",
 	})
@@ -184,7 +184,7 @@ func NewFetcherMetrics(reg prometheus.Registerer, syncedExtraLabels, modifiedExt
 	m.Assigned = extprom.NewTxGaugeVec(
 		reg,
 		prometheus.GaugeOpts{
-			Subsystem: fetcherSubSys,
+			Subsystem: FetcherSubSys,
 			Name:      "assigned",
 			Help:      "Number of metadata blocks assigned to this pod after all filters.",
 		},
