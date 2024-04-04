@@ -193,14 +193,14 @@ type EndpointStatus struct {
 // A Collector is required as we want atomic updates for all 'thanos_store_nodes_grpc_connections' series.
 // TODO(hitanshu-mehta) Currently,only collecting metrics of storeEndpoints. Make this struct generic.
 type endpointSetNodeCollector struct {
-	mtx             		sync.Mutex
-	storeNodes      		map[component.Component]map[string]int
-	storeNodeAddrs			map[component.Component]map[string]int
-	storePerExtLset 		map[string]int
+	mtx             sync.Mutex
+	storeNodes      map[component.Component]map[string]int
+	storeNodeAddrs  map[component.Component]map[string]int
+	storePerExtLset map[string]int
 
-	connectionsDesc 		*prometheus.Desc
+	connectionsDesc         *prometheus.Desc
 	connectionsWithAddrDesc *prometheus.Desc
-	labels          		[]string
+	labels                  []string
 }
 
 func newEndpointSetNodeCollector(labels ...string) *endpointSetNodeCollector {
@@ -217,7 +217,7 @@ func newEndpointSetNodeCollector(labels ...string) *endpointSetNodeCollector {
 		connectionsWithAddrDesc: prometheus.NewDesc(
 			"thanos_store_nodes_grpc_connections_addr",
 			"Number of gRPC connection to Store APIs with endpoint addresses. Opened connection means healthy store APIs available for Querier.",
-			[]string{string(StoreType), "addr", }, nil,
+			[]string{string(StoreType), "addr"}, nil,
 		),
 		labels: labels,
 	}
