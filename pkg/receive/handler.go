@@ -871,7 +871,7 @@ func (h *Handler) distributeTimeseriesToReplicas(
 			if err != nil {
 				return nil, nil, err
 			}
-			endpointReplica := endpointReplica{endpoint: endpoint, replica: rn}
+			endpointReplica := endpointReplica{endpoint: endpoint, replica: 0}
 			var writeDestination = remoteWrites
 			if endpoint == h.options.Endpoint {
 				writeDestination = localWrites
