@@ -1440,7 +1440,8 @@ func (p *peerGroup) closeUnlocked(addr string) error {
 		// was never established.
 		return nil
 	}
-	c.wp.Close()
+
+	p.connections[addr].wp.Close()
 	delete(p.connections, addr)
 	if err := c.cc.Close(); err != nil {
 		return fmt.Errorf("closing connection for %s", addr)
