@@ -213,6 +213,21 @@ func NewProxyResponseLoserTree(seriesSets ...respSet) *losertree.Tree[*storepb.S
 	})
 }
 
+func (h *ProxyResponseHeap) AtWithKeys() (*storepb.SeriesResponse, string, string) {
+	min := h.Min().rs
+
+	atResp := min.At()
+	groupKey, replicaKey := h.Min().groupKey, h.Min().replicaKey
+
+	if min.Next() {
+		heap.Fix(h, 0)
+	} else {
+		heap.Remove(h, 0)
+	}
+
+	return atResp, groupKey, replicaKey
+}
+
 func (l *lazyRespSet) StoreID() string {
 	return l.storeName
 }

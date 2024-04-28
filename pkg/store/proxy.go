@@ -79,6 +79,14 @@ type Client interface {
 	// E.g. "pantheon-db" has replicas "pantheon-db-rep0", "pantheon-db-rep1".
 	//		"long-range-store" has only one replica, "long-range-store".
 	GroupKey() string
+
+	// A replica key defines a set of endpoints belong to the same replica.
+	// E.g, "pantheon-db-rep0", "pantheon-db-rep1", "long-range-store".
+	ReplicaKey() string
+	// A group key defeines a group of replicas that belong to the same group.
+	// E.g. "pantheon-db" has replicas "pantheon-db-rep0", "pantheon-db-rep1".
+	//		"long-range-store" has only one replica, "long-range-store".
+	GroupKey() string
 }
 
 // ProxyStore implements the store API that proxies request to all given underlying stores.

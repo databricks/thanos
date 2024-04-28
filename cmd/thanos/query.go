@@ -67,6 +67,7 @@ const (
 	promqlAtModifier     = "promql-at-modifier"
 	queryPushdown        = "query-pushdown"
 	dnsPrefix            = "dnssrv+"
+	dnsPrefix            = "dnssrv+"
 )
 
 type queryMode string
@@ -184,6 +185,8 @@ func registerQuery(app *extkingpin.App) {
 		Default(string(dns.MiekgdnsResolverType)).Hidden().String()
 
 	unhealthyStoreTimeout := extkingpin.ModelDuration(cmd.Flag("store.unhealthy-timeout", "Timeout before an unhealthy store is cleaned from the store UI page.").Default("5m"))
+	ignoreStoreErrors := cmd.Flag("store.ignore-errors", "Ignore errors from store endpoints. This is for qeury result completeness.").
+		Default("false").Bool()
 
 	endpointInfoTimeout := extkingpin.ModelDuration(cmd.Flag("endpoint.info-timeout", "Timeout of gRPC Info requests.").Default("5s").Hidden())
 
@@ -378,6 +381,7 @@ func registerQuery(app *extkingpin.App) {
 			*tenantCertField,
 			*enforceTenancy,
 			*tenantLabel,
+			*ignoreStoreErrors,
 			*enableGroupReplicaPartialStrategy,
 			*enableDedupMerge,
 			*enableQuorumChunkDedup,
@@ -463,6 +467,7 @@ func runQuery(
 	tenantCertField string,
 	enforceTenancy bool,
 	tenantLabel string,
+	ignoreStoreErrors bool,
 	groupReplicaPartialResponseStrategy bool,
 	enableDedupMerge bool,
 	enableQuorumChunkDedup bool,
@@ -564,6 +569,7 @@ func runQuery(
 			dialOpts,
 			unhealthyStoreTimeout,
 			endpointInfoTimeout,
+			ignoreStoreErrors,
 			// ignoreErrors when group_replica partial response strategy is enabled.
 			groupReplicaPartialResponseStrategy,
 			queryConnMetricLabels...,

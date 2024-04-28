@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"regexp"
 	"sort"
+	"strings"
 	"strings"
 	"sync"
 	"time"
@@ -342,6 +344,22 @@ func (c *endpointSetNodeCollector) Collect(ch chan<- prometheus.Metric) {
 				level.Warn(c.logger).Log("msg", "failed to collect endpointset metrics", "timeout", 1*time.Second)
 				return
 			}
+		}
+	}
+	for replicaKey, occurrencesPerAddr := range c.storeNodesAddr {
+		for addr, occurrences := range occurrencesPerAddr {
+			ch <- prometheus.MustNewConstMetric(
+				c.connectionsWithAddr, prometheus.GaugeValue,
+				float64(occurrences),
+				replicaKey, addr)
+		}
+	}
+	for groupKey, occurrencesPerReplicaKey := range c.storeNodesKeys {
+		for replicaKeys, occurrences := range occurrencesPerReplicaKey {
+			ch <- prometheus.MustNewConstMetric(
+				c.connectionsWithKeys, prometheus.GaugeValue,
+				float64(occurrences),
+				groupKey, replicaKeys)
 		}
 	}
 }
