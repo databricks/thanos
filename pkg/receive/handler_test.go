@@ -26,7 +26,6 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/alecthomas/units"
-	"github.com/efficientgo/core/testutil"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/go-kit/log/level"
@@ -1854,6 +1853,7 @@ func TestIngestorRestart(t *testing.T) {
 	}
 	resolver.Register(dnsBuilder)
 	dialOpts := []grpc.DialOption{
+		grpc.WithIdleTimeout(1 * time.Second), // set idle timeout to 1s will re-establish the connection quickly
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithResolvers(resolver.Get(dnsScheme)),
 	}
