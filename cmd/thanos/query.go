@@ -567,7 +567,7 @@ func runQuery(
 		queryableCreator query.QueryableCreator
 	)
 	if groupReplicaPartialResponseStrategy {
-		queryableCreator = query.NewQueryableCreator(
+		queryableCreator = query.NewQueryableCreatorWithGroupReplicaPartialResponseStrategy(
 			logger,
 			extprom.WrapRegistererWithPrefix("thanos_query_", reg),
 			proxy,
@@ -575,7 +575,7 @@ func runQuery(
 			queryTimeout,
 		)
 	} else {
-		queryableCreator = query.NewQueryableCreatorWithGroupReplicaPartialResponseStrategy(
+		queryableCreator = query.NewQueryableCreator(
 			logger,
 			extprom.WrapRegistererWithPrefix("thanos_query_", reg),
 			proxy,
