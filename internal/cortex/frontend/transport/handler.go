@@ -46,6 +46,7 @@ type HandlerConfig struct {
 	LogQueriesLongerThan     time.Duration `yaml:"log_queries_longer_than"`
 	MaxBodySize              int64         `yaml:"max_body_size"`
 	QueryStatsEnabled        bool          `yaml:"query_stats_enabled"`
+	SlowQueryLogsUserHeader  string        `yaml:"slow_query_logs_user_header"`
 	LogFailedQueries         bool          `yaml:"log_failed_queries"`
 	FailedQueryCacheCapacity int           `yaml:"failed_query_cache_capacity"`
 }
@@ -261,7 +262,13 @@ func (f *Handler) reportSlowQuery(r *http.Request, responseHeaders http.Header, 
 		thanosTraceID = traceID
 	}
 
-	remoteUser, _, _ := r.BasicAuth()
+	var remoteUser string
+	// Prefer reading remote user from header. Fall back to the value of basic authentication.
+	if f.cfg.SlowQueryLogsUserHeader != "" {
+		remoteUser = r.Header.Get(f.cfg.SlowQueryLogsUserHeader)
+	} else {
+		remoteUser, _, _ = r.BasicAuth()
+	}
 
 	logMessage := append([]interface{}{
 		"msg", "slow query detected",
