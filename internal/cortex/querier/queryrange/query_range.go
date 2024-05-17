@@ -485,7 +485,10 @@ func (prometheusCodec) EncodeResponse(ctx context.Context, res Response) (*http.
 		httpHeader[QueryBytesFetchedHeaderName] = []string{strconv.FormatInt(res.(*PrometheusResponse).Data.SeriesStatsCounter.Bytes, 10)}
 	}
 	resp := http.Response{
-		Header:        httpHeader,
+		Header: http.Header{
+			"Content-Type":              []string{"application/json"},
+			QueryBytesFetchedHeaderName: QueryBytesFetchedHttpHeaderValue(res),
+		},
 		Body:          io.NopCloser(bytes.NewBuffer(b)),
 		StatusCode:    http.StatusOK,
 		ContentLength: int64(len(b)),

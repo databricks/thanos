@@ -274,7 +274,10 @@ func (c queryInstantCodec) EncodeResponse(ctx context.Context, res queryrange.Re
 		httpHeader[queryrange.QueryBytesFetchedHeaderName] = []string{strconv.FormatInt(res.(*queryrange.PrometheusInstantQueryResponse).Data.SeriesStatsCounter.Bytes, 10)}
 	}
 	resp := http.Response{
-		Header:        httpHeader,
+		Header: http.Header{
+			"Content-Type":                         []string{"application/json"},
+			queryrange.QueryBytesFetchedHeaderName: queryrange.QueryBytesFetchedHttpHeaderValue(res),
+		},
 		Body:          io.NopCloser(bytes.NewBuffer(b)),
 		StatusCode:    http.StatusOK,
 		ContentLength: int64(len(b)),
