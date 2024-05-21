@@ -97,6 +97,9 @@ func (s *mockedSeriesIterator) Seek(t int64) chunkenc.ValueType {
 }
 
 func (s *mockedSeriesIterator) At() (t int64, v float64) {
+	if s.cur >= len(s.samples) {
+		return 0, 0
+	}
 	sample := s.samples[s.cur]
 	return sample.t, sample.f
 }
@@ -379,19 +382,19 @@ func TestDedupSeriesSet(t *testing.T) {
 			input: []series{
 				{
 					lset:    labels.Labels{{Name: "a", Value: "5"}, {Name: "c", Value: "6"}},
-					samples: []sample{{1, 1}, {4, 4}},
+					samples: []sample{{10000, 1}, {30000, 3}, {40000, 4}},
 				}, {
 					lset:    labels.Labels{{Name: "a", Value: "5"}, {Name: "c", Value: "6"}},
-					samples: []sample{{1, 1}, {2, 2}, {3, 3}, {5, 5}},
+					samples: []sample{{10000, 1}, {20000, 2}, {30000, 3}, {50000, 5}},
 				}, {
 					lset:    labels.Labels{{Name: "a", Value: "5"}, {Name: "c", Value: "6"}},
-					samples: []sample{{1, 1}, {8, 10}},
+					samples: []sample{{10000, 1}, {80000, 10}},
 				},
 			},
 			exp: []series{
 				{
 					lset:    labels.Labels{{Name: "a", Value: "5"}, {Name: "c", Value: "6"}},
-					samples: []sample{{1, 1}, {2, 2}, {3, 3}, {4, 4}},
+					samples: []sample{{10000, 1}, {20000, 2}, {30000, 3}, {40000, 4}, {50000, 5}, {80000, 10}},
 				},
 			},
 		},

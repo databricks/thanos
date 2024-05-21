@@ -277,7 +277,7 @@ type dedupSeriesIterator struct {
 	lastIter chunkenc.Iterator
 
 	penA, penB int64
-	useA       bool
+	useA, useB bool
 }
 
 func newDedupSeriesIterator(a, b adjustableSeriesIterator) *dedupSeriesIterator {
@@ -288,6 +288,7 @@ func newDedupSeriesIterator(a, b adjustableSeriesIterator) *dedupSeriesIterator 
 		lastIter: a,
 		aval:     a.Next(),
 		bval:     b.Next(),
+		useB:     true,
 	}
 }
 
@@ -304,16 +305,17 @@ func (it *dedupSeriesIterator) Next() chunkenc.ValueType {
 	}()
 
 	// Advance both iterators to at least the next highest timestamp plus the potential penalty.
-	if it.aval != chunkenc.ValNone {
+	if it.aval != chunkenc.ValNone && it.useA {
 		it.aval = it.a.Seek(it.lastT + 1 + it.penA)
 	}
-	if it.bval != chunkenc.ValNone {
+	if it.bval != chunkenc.ValNone && it.useB {
 		it.bval = it.b.Seek(it.lastT + 1 + it.penB)
 	}
 
 	// Handle basic cases where one iterator is exhausted before the other.
 	if it.aval == chunkenc.ValNone {
 		it.useA = false
+		it.useB = true
 		if it.bval != chunkenc.ValNone {
 			it.lastT = it.b.AtT()
 			it.lastIter = it.b
@@ -323,6 +325,7 @@ func (it *dedupSeriesIterator) Next() chunkenc.ValueType {
 	}
 	if it.bval == chunkenc.ValNone {
 		it.useA = true
+		it.useB = false
 		it.lastT = it.a.AtT()
 		it.lastIter = it.a
 		it.penA = 0
@@ -336,6 +339,7 @@ func (it *dedupSeriesIterator) Next() chunkenc.ValueType {
 	tb := it.b.AtT()
 
 	it.useA = ta <= tb
+	it.useB = ta >= tb
 
 	// For the series we didn't pick, add a penalty twice as high as the delta of the last two
 	// samples to the next seek against it.
