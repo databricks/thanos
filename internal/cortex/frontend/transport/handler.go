@@ -8,7 +8,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/thanos-io/thanos/internal/cortex/tenant"
 	"io"
 	"net/http"
 	"net/url"
@@ -17,6 +16,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/thanos-io/thanos/internal/cortex/tenant"
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
@@ -68,25 +69,13 @@ type Handler struct {
 	activeUsers  *util.ActiveUsersCleanupService
 }
 
-// NormalizeString Condeneses whitespaces in string; does not remove all whitespaces
-func NormalizeString(inp string) string {
-	normalized := regexp.MustCompile(`[\n\t]+`).ReplaceAllString(inp, " ")
-	normalized = regexp.MustCompile(`\s+`).ReplaceAllString(normalized, " ")
-	return normalized
-}
-
-// Returns true if response code is in pre-defined cacheable errors list, else returns false
-func CacheableError(statusCode int) bool {
-	for _, errStatusCode := range cacheableResponseCodes {
-		if errStatusCode == statusCode {
-			return true
-		}
-	}
-	return false
-}
-
 // NewHandler creates a new frontend handler.
-func NewHandler(cfg HandlerConfig, roundTripper http.RoundTripper, log log.Logger, lru lru.Cache, reg prometheus.Registerer) http.Handler {
+func NewHandler(cfg HandlerConfig, roundTripper http.RoundTripper, log log.Logger, reg prometheus.Registerer) http.Handler {
+	lru, err := lru.New[string, int](cfg.FailedQueryCacheCapacity)
+	if err != nil {
+		level.Error(log).Log("msg", "failed to create lru cache", "err", err)
+	}
+
 	h := &Handler{
 		cfg:          cfg,
 		log:          log,
