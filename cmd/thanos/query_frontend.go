@@ -149,6 +149,8 @@ func registerQueryFrontend(app *extkingpin.App) {
 
 	cmd.Flag("query-frontend.log-failed-queries", "Log failed queries due to any reason").Default("true").BoolVar(&cfg.CortexHandlerConfig.LogFailedQueries)
 
+	cmd.Flag("query-frontend.enable-failed-queries-cache", "Enable cache for failed queries").Default("true").BoolVar(&cfg.CortexHandlerConfig.EnableFailedQueryCache)
+
 	cmd.Flag("failed-query-cache-capacity", "Capacity of cache for failed queries. 0 means this feature is disabled.").
 		Default("0").IntVar(&cfg.CortexHandlerConfig.FailedQueryCacheCapacity)
 
