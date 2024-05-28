@@ -5,6 +5,7 @@ package transport
 
 import (
 	"bytes"
+	"container/list"
 	"context"
 	"errors"
 	"fmt"
@@ -41,7 +42,7 @@ var (
 	errRequestEntityTooLarge = httpgrpc.Errorf(http.StatusRequestEntityTooLarge, "http: request body too large")
 )
 
-// HandlerConfig Config for a Handler.
+// Config for a Handler.
 type HandlerConfig struct {
 	LogQueriesLongerThan     time.Duration `yaml:"log_queries_longer_than"`
 	MaxBodySize              int64         `yaml:"max_body_size"`
@@ -60,16 +61,59 @@ type Handler struct {
 	failedQueryCache *utils.FailedQueryCache
 
 	// Metrics.
-	querySeconds     *prometheus.CounterVec
-	querySeries      *prometheus.CounterVec
-	queryBytes       *prometheus.CounterVec
-	activeUsers      *util.ActiveUsersCleanupService
-	slowQueryCount   prometheus.Counter
-	failedQueryCount prometheus.Counter
+	querySeconds *prometheus.CounterVec
+	querySeries  *prometheus.CounterVec
+	queryBytes   *prometheus.CounterVec
+	activeUsers  *util.ActiveUsersCleanupService
+}
+
+// Initialize LRU Cache
+func LRUInit(capacity int) LRUCache {
+	return LRUCache{Queue: list.New(), Items: make(map[string]*Node), Capacity: capacity}
+}
+
+// Put method for LRU cache
+func (l *LRUCache) Put(key string, value int) {
+	if item, ok := l.Items[key]; !ok {
+		if l.Capacity <= len(l.Items) {
+			back := l.Queue.Back()
+			l.Queue.Remove(back)
+			delete(l.Items, back.Value.(string))
+		}
+		l.Items[key] = &Node{Data: value, KeyPtr: l.Queue.PushFront(key)}
+	} else {
+		item.Data = value
+		l.Items[key] = item
+		l.Queue.MoveToFront(item.KeyPtr)
+	}
+}
+
+// Get method for LRU cache
+func (l *LRUCache) Get(key string) int {
+	if item, ok := l.Items[key]; ok {
+		l.Queue.MoveToFront(item.KeyPtr)
+		return item.Data
+	}
+	return -1
+}
+
+// Removes whitespaces from string
+func NormalizeString(inp string) string {
+	return strings.ReplaceAll(inp, " ", "")
+}
+
+// Returns true if response code is in pre-defined cacheable errors list, else returns false
+func CacheableError(statusCode int) bool {
+	for _, errStatusCode := range cacheableResponseCodes {
+		if errStatusCode == statusCode {
+			return true
+		}
+	}
+	return false
 }
 
 // NewHandler creates a new frontend handler.
-func NewHandler(cfg HandlerConfig, roundTripper http.RoundTripper, log log.Logger, reg prometheus.Registerer) http.Handler {
+func NewHandler(cfg HandlerConfig, roundTripper http.RoundTripper, log log.Logger, lru LRUCache, reg prometheus.Registerer) http.Handler {
 	h := &Handler{
 		cfg:          cfg,
 		log:          log,
