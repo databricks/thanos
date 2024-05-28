@@ -220,14 +220,14 @@ func runSidecar(
 					return err
 				}
 
-				level.Info(logger).Log(
-					"msg", "successfully loaded prometheus version",
-				)
-				return nil
-			})
-			if err != nil {
-				return errors.Wrap(err, "failed to get prometheus version")
-			}
+			level.Info(logger).Log(
+				"msg", "successfully loaded prometheus version",
+			)
+			return nil
+		})
+		if err != nil {
+			return errors.Wrap(err, "failed to get prometheus version")
+		}
 
 			// Blocking query of external labels before joining as a Source Peer into gossip.
 			// We retry infinitely until we reach and fetch labels from our Prometheus.
@@ -261,6 +261,8 @@ func runSidecar(
 
 			close(readyToStartGRPC)
 
+		ctx, cancel := context.WithCancel(context.Background())
+		g.Add(func() error {
 			// Periodically query the Prometheus config. We use this as a heartbeat as well as for updating
 			// the external labels we apply.
 			return runutil.Repeat(conf.prometheus.getConfigInterval, ctx.Done(), func() error {
