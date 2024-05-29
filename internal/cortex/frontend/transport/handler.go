@@ -71,9 +71,16 @@ type Handler struct {
 
 // NewHandler creates a new frontend handler.
 func NewHandler(cfg HandlerConfig, roundTripper http.RoundTripper, log log.Logger, reg prometheus.Registerer) http.Handler {
-	lru, err := lru.New[string, int](cfg.FailedQueryCacheCapacity)
-	if err != nil {
-		level.Error(log).Log("msg", "failed to create lru cache", "err", err)
+	var (
+		LRU *lru.Cache
+	)
+
+	if cfg.FailedQueryCacheCapacity > 0 {
+		LRU_res, err := lru.New(cfg.FailedQueryCacheCapacity)
+		LRU = LRU_res
+		if err != nil {
+			level.Error(log).Log("msg", "failed to create lru cache", "err", err)
+		}
 	}
 
 	h := &Handler{
