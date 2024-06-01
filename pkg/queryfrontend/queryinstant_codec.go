@@ -85,8 +85,9 @@ func (c queryInstantCodec) MergeResponse(req queryrange.Request, responses ...qu
 						Matrix: matrixMerge(promResponses),
 					},
 				},
-				Analysis: queryrange.AnalyzesMerge(analyzes...),
-				Stats:    queryrange.StatsMerge(responses),
+				Analysis:           queryrange.AnalyzesMerge(analyzes...),
+				Stats:              queryrange.StatsMerge(responses),
+				SeriesStatsCounter: queryrange.SeriesStatsCounterMerge(seriesStatsCounters...),
 			},
 			Headers: queryrange.QueryBytesFetchedPrometheusResponseHeaders(responses...),
 		}
@@ -107,8 +108,9 @@ func (c queryInstantCodec) MergeResponse(req queryrange.Request, responses ...qu
 						Vector: v,
 					},
 				},
-				Analysis: queryrange.AnalyzesMerge(analyzes...),
-				Stats:    queryrange.StatsMerge(responses),
+				Analysis:           queryrange.AnalyzesMerge(analyzes...),
+				Stats:              queryrange.StatsMerge(responses),
+				SeriesStatsCounter: queryrange.SeriesStatsCounterMerge(seriesStatsCounters...),
 			},
 			Headers: queryrange.QueryBytesFetchedPrometheusResponseHeaders(responses...),
 		}
