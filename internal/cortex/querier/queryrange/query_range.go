@@ -296,11 +296,10 @@ func (prometheusCodec) MergeResponse(_ Request, responses ...Response) (Response
 	response := PrometheusResponse{
 		Status: StatusSuccess,
 		Data: PrometheusData{
-			ResultType:         model.ValMatrix.String(),
-			Result:             matrixMerge(promResponses),
-			Stats:              StatsMerge(responses),
-			Analysis:           AnalyzesMerge(analyzes...),
-			SeriesStatsCounter: SeriesStatsCounterMerge(seriesStatsCounters...),
+			ResultType: model.ValMatrix.String(),
+			Result:     matrixMerge(promResponses),
+			Stats:      StatsMerge(responses),
+			Analysis:   AnalyzesMerge(analyzes...),
 		},
 		Warnings: warnings,
 	}
