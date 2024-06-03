@@ -429,6 +429,10 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 				"errors", fmt.Sprintf("%+v", failedStores),
 				"total_failed_stores", totalFailedStores,
 			)
+			level.Warn(s.logger).Log("msg", "Group/replica errors",
+				"errors", fmt.Sprintf("%+v", failedStores),
+				"total_failed_stores", totalFailedStores,
+			)
 		}
 	}
 	defer logGroupReplicaErrors()
