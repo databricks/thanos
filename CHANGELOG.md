@@ -14,7 +14,6 @@ We use *breaking :warning:* to mark changes that are not backward compatible (re
 
 - [#7323](https://github.com/thanos-io/thanos/pull/7323) Sidecar: wait for prometheus on startup
 - [#7326](https://github.com/thanos-io/thanos/pull/7326) Query: fixing exemplars proxy when querying stores with multiple tenants.
-- [#7335](https://github.com/thanos-io/thanos/pull/7335) Dependency: Update minio-go to v7.0.70 which includes support for EKS Pod Identity.
 - [#7403](https://github.com/thanos-io/thanos/pull/7403) Sidecar: fix startup sequence
 - [#6948](https://github.com/thanos-io/thanos/pull/6948) Receive: fix goroutines leak during series requests to thanos store api.
 - [#7392](https://github.com/thanos-io/thanos/pull/7392) Query: fix broken min, max for pre 0.34.1 sidecars
@@ -25,6 +24,7 @@ We use *breaking :warning:* to mark changes that are not backward compatible (re
 - [#7367](https://github.com/thanos-io/thanos/pull/7367) Store Gateway: log request ID in request logs.
 - [#7361](https://github.com/thanos-io/thanos/pull/7361) Query: *breaking :warning:* pass query stats from remote execution from server to client. We changed the protobuf of the QueryAPI, if you use `query.mode=distributed` you need to update your client (upper level Queriers) first, before updating leaf Queriers (servers).
 - [#7363](https://github.com/thanos-io/thanos/pull/7363) Query-frontend: set value of remote_user field in Slow Query Logs from HTTP header
+- [#7335](https://github.com/thanos-io/thanos/pull/7335) Dependency: Update minio-go to v7.0.70 which includes support for EKS Pod Identity.
 
 ### Changed
 
