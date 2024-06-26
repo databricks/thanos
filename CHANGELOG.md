@@ -15,6 +15,7 @@ We use *breaking :warning:* to mark changes that are not backward compatible (re
 - [#7323](https://github.com/thanos-io/thanos/pull/7323) Sidecar: wait for prometheus on startup
 - [#7326](https://github.com/thanos-io/thanos/pull/7326) Query: fixing exemplars proxy when querying stores with multiple tenants.
 - [#7403](https://github.com/thanos-io/thanos/pull/7403) Sidecar: fix startup sequence
+- [#7484](https://github.com/thanos-io/thanos/pull/7484) Proxy: fix panic in lazy response set
 - [#6948](https://github.com/thanos-io/thanos/pull/6948) Receive: fix goroutines leak during series requests to thanos store api.
 - [#7392](https://github.com/thanos-io/thanos/pull/7392) Query: fix broken min, max for pre 0.34.1 sidecars
 
