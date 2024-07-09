@@ -7,6 +7,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/pprof"
+	"time"
 
 	"github.com/felixge/fgprof"
 	"github.com/go-kit/log"
@@ -100,7 +101,8 @@ func (s *Server) Shutdown(err error) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), s.opts.gracePeriod)
+	//ctx, cancel := context.WithTimeout(context.Background(), s.opts.gracePeriod)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
 	if err := s.srv.Shutdown(ctx); err != nil {

@@ -790,7 +790,7 @@ func runQuery(
 			statusProber.NotReady(err)
 			defer httpProbe.NotHealthy(err)
 
-			//srv.Shutdown(err)
+			srv.Shutdown(err)
 		})
 	}
 	// Start query (proxy) gRPC StoreAPI.
