@@ -5,6 +5,9 @@ package http
 
 import (
 	"context"
+	"net/http"
+	"net/http/pprof"
+
 	"github.com/felixge/fgprof"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
@@ -14,8 +17,6 @@ import (
 	toolkit_web "github.com/prometheus/exporter-toolkit/web"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
-	"net/http"
-	"net/http/pprof"
 
 	"github.com/thanos-io/thanos/pkg/component"
 	"github.com/thanos-io/thanos/pkg/prober"
@@ -101,6 +102,7 @@ func (s *Server) Shutdown(err error) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), s.opts.gracePeriod)
 	defer cancel()
+
 	if err := s.srv.Shutdown(ctx); err != nil {
 		level.Error(s.logger).Log("msg", "internal server shut down failed", "err", err)
 		return
