@@ -7,6 +7,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/pprof"
+	"time"
 
 	"github.com/felixge/fgprof"
 	"github.com/go-kit/log"
@@ -102,7 +103,9 @@ func (s *Server) Shutdown(err error) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), s.opts.gracePeriod)
 	defer cancel()
-
+	// https://go-review.googlesource.com/c/go/+/565277
+	level.Info(s.logger).Log("msg", "sleeping 30 seconds before shutting down internal server")
+	time.Sleep(30 * time.Second)
 	if err := s.srv.Shutdown(ctx); err != nil {
 		level.Error(s.logger).Log("msg", "internal server shut down failed", "err", err)
 		return
