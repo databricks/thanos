@@ -845,6 +845,8 @@ func runQuery(
 			return s.ListenAndServe()
 		}, func(error) {
 			statusProber.NotReady(err)
+			level.Info(logger).Log("msg", "sleeping 10 seconds before querier http server shutdown")
+			time.Sleep(10 * time.Second)
 			s.Shutdown(err)
 		})
 	}
