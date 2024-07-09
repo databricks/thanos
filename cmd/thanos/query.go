@@ -746,7 +746,7 @@ func runQuery(
 			return srv.ListenAndServe()
 		}, func(err error) {
 			statusProber.NotReady(err)
-			defer statusProber.NotHealthy(err)
+			defer httpProbe.NotHealthy(err)
 
 			srv.Shutdown(err)
 		})
@@ -803,6 +803,7 @@ func runQuery(
 			return s.ListenAndServe()
 		}, func(error) {
 			statusProber.NotReady(err)
+			defer grpcProbe.NotHealthy(err)
 			s.Shutdown(err)
 		})
 	}
