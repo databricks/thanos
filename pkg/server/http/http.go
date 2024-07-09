@@ -102,6 +102,7 @@ func (s *Server) Shutdown(err error) {
 	}
 
 	//ctx, cancel := context.WithTimeout(context.Background(), s.opts.gracePeriod)
+	level.Info(s.logger).Log("msg", "internal server is shutdown", "s.opts.gracePeriod", s.opts.gracePeriod)
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
