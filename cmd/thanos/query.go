@@ -788,7 +788,7 @@ func runQuery(
 			return srv.ListenAndServe()
 		}, func(err error) {
 			statusProber.NotReady(err)
-			defer httpProbe.NotHealthy(err)
+			httpProbe.NotHealthy(err)
 
 			srv.Shutdown(err)
 		})
