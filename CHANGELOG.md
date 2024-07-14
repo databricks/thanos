@@ -17,6 +17,7 @@ We use *breaking :warning:* to mark changes that are not backward compatible (re
 - [#7484](https://github.com/thanos-io/thanos/pull/7484) Proxy: fix panic in lazy response set
 - [#6948](https://github.com/thanos-io/thanos/pull/6948) Receive: fix goroutines leak during series requests to thanos store api.
 - [#7392](https://github.com/thanos-io/thanos/pull/7392) Query: fix broken min, max for pre 0.34.1 sidecars
+- [#7493](https://github.com/thanos-io/thanos/pull/7493) *: fix server grpc histograms
 
 ### Added
 
