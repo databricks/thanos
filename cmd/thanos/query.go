@@ -790,6 +790,7 @@ func runQuery(
 			statusProber.NotReady(err)
 			defer statusProber.NotHealthy(err)
 
+			time.Sleep(5 * time.Second)
 			srv.Shutdown(err)
 		})
 	}
@@ -845,6 +846,7 @@ func runQuery(
 			return s.ListenAndServe()
 		}, func(error) {
 			statusProber.NotReady(err)
+			time.Sleep(10 * time.Second)
 			s.Shutdown(err)
 		})
 	}
