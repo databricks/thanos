@@ -383,6 +383,7 @@ func runQueryFrontend(
 			statusProber.NotReady(err)
 			defer statusProber.NotHealthy(err)
 
+			time.Sleep(5 * time.Second)
 			srv.Shutdown(err)
 		})
 	}
