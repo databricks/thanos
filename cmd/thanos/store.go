@@ -300,6 +300,7 @@ func runStore(
 		statusProber.NotReady(err)
 		defer statusProber.NotHealthy(err)
 
+		time.Sleep(5 * time.Second)
 		srv.Shutdown(err)
 	})
 
@@ -529,6 +530,7 @@ func runStore(
 			return s.ListenAndServe()
 		}, func(err error) {
 			statusProber.NotReady(err)
+			time.Sleep(10 * time.Second)
 			s.Shutdown(err)
 		})
 	}

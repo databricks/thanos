@@ -313,6 +313,7 @@ func runReceive(
 			statusProber.NotReady(err)
 			defer statusProber.NotHealthy(err)
 
+			time.Sleep(5 * time.Second)
 			srv.Shutdown(err)
 		})
 	}
@@ -384,6 +385,7 @@ func runReceive(
 				statusProber.NotReady(err)
 				defer statusProber.NotHealthy(err)
 
+				time.Sleep(10 * time.Second)
 				srv.Shutdown(err)
 			},
 		)
