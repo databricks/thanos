@@ -71,6 +71,14 @@ type Client interface {
 	// Addr returns address of the store client. If second parameter is true, the client
 	// represents a local client (server-as-client) and has no remote address.
 	Addr() (addr string, isLocalClient bool)
+
+	// A replica key defines a set of endpoints belong to the same replica.
+	// E.g, "pantheon-db-rep0", "pantheon-db-rep1", "long-range-store".
+	ReplicaKey() string
+	// A group key defeines a group of replicas that belong to the same group.
+	// E.g. "pantheon-db" has replicas "pantheon-db-rep0", "pantheon-db-rep1".
+	//		"long-range-store" has only one replica, "long-range-store".
+	GroupKey() string
 }
 
 // ProxyStore implements the store API that proxies request to all given underlying stores.
@@ -85,6 +93,7 @@ type ProxyStore struct {
 	metrics           *proxyStoreMetrics
 	retrievalStrategy RetrievalStrategy
 	debugLogging      bool
+	tsdbSelector      *TSDBSelector
 }
 
 type proxyStoreMetrics struct {
@@ -111,10 +120,17 @@ func RegisterStoreServer(storeSrv storepb.StoreServer, logger log.Logger) func(*
 // BucketStoreOption are functions that configure BucketStore.
 type ProxyStoreOption func(s *ProxyStore)
 
-// WithProxyStoreDebugLogging enables debug logging.
-func WithProxyStoreDebugLogging() ProxyStoreOption {
+// WithProxyStoreDebugLogging toggles debug logging.
+func WithProxyStoreDebugLogging(enable bool) ProxyStoreOption {
 	return func(s *ProxyStore) {
-		s.debugLogging = true
+		s.debugLogging = enable
+	}
+}
+
+// WithTSDBSelector sets the TSDB selector for the proxy.
+func WithTSDBSelector(selector *TSDBSelector) ProxyStoreOption {
+	return func(s *ProxyStore) {
+		s.tsdbSelector = selector
 	}
 }
 
@@ -147,6 +163,7 @@ func NewProxyStore(
 		responseTimeout:   responseTimeout,
 		metrics:           metrics,
 		retrievalStrategy: retrievalStrategy,
+		tsdbSelector:      DefaultSelector,
 	}
 
 	for _, option := range options {
@@ -265,8 +282,12 @@ func (s *ProxyStore) TimeRange() (int64, int64) {
 
 func (s *ProxyStore) TSDBInfos() []infopb.TSDBInfo {
 	infos := make([]infopb.TSDBInfo, 0)
-	for _, store := range s.stores() {
-		infos = append(infos, store.TSDBInfos()...)
+	for _, st := range s.stores() {
+		matches, _ := s.tsdbSelector.MatchLabelSets(st.LabelSets()...)
+		if !matches {
+			continue
+		}
+		infos = append(infos, st.TSDBInfos()...)
 	}
 	return infos
 }
@@ -274,7 +295,10 @@ func (s *ProxyStore) TSDBInfos() []infopb.TSDBInfo {
 func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.Store_SeriesServer) error {
 	// TODO(bwplotka): This should be part of request logger, otherwise it does not make much sense. Also, could be
 	// tiggered by tracing span to reduce cognitive load.
-	reqLogger := log.With(s.logger, "component", "proxy", "request", originalRequest.String())
+	reqLogger := log.With(s.logger, "component", "proxy")
+	if s.debugLogging {
+		reqLogger = log.With(reqLogger, "request", originalRequest.String())
+	}
 
 	match, matchers, err := matchesExternalLabels(originalRequest.Matchers, s.selectorLabels)
 	if err != nil {
@@ -316,37 +340,99 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 	ctx = metadata.AppendToOutgoingContext(ctx, tenancy.DefaultTenantHeader, tenant)
 	level.Debug(s.logger).Log("msg", "Tenant info in Series()", "tenant", tenant)
 
-	stores := []Client{}
+	var (
+		stores         []Client
+		storeLabelSets []labels.Labels
+	)
+	// groupReplicaStores[groupKey][replicaKey] = number of stores with the groupKey and replicaKey
+	groupReplicaStores := make(map[string]map[string]int)
+	// failedStores[groupKey][replicaKey] = number of store failures
+	failedStores := make(map[string]map[string]int)
+	totalFailedStores := 0
+	bumpCounter := func(key1, key2 string, mp map[string]map[string]int) {
+		if _, ok := mp[key1]; !ok {
+			mp[key1] = make(map[string]int)
+		}
+		mp[key1][key2]++
+	}
+
 	for _, st := range s.stores() {
 		// We might be able to skip the store if its meta information indicates it cannot have series matching our query.
 		if ok, reason := storeMatches(ctx, st, s.debugLogging, originalRequest.MinTime, originalRequest.MaxTime, matchers...); !ok {
 			if s.debugLogging {
-				storeDebugMsgs = append(storeDebugMsgs, fmt.Sprintf("store %s filtered out: %v", st, reason))
+				storeDebugMsgs = append(storeDebugMsgs, fmt.Sprintf("Store %s filtered out due to: %v", st, reason))
 			}
 			continue
 		}
+		matches, extraMatchers := s.tsdbSelector.MatchLabelSets(st.LabelSets()...)
+		if !matches {
+			if s.debugLogging {
+				storeDebugMsgs = append(storeDebugMsgs, fmt.Sprintf("Store %s filtered out due to: %v", st, "tsdb selector"))
+			}
+			continue
+		}
+		storeLabelSets = append(storeLabelSets, extraMatchers...)
 
 		stores = append(stores, st)
+		bumpCounter(st.GroupKey(), st.ReplicaKey(), groupReplicaStores)
 	}
-
 	if len(stores) == 0 {
 		level.Debug(reqLogger).Log("err", ErrorNoStoresMatched, "stores", strings.Join(storeDebugMsgs, ";"))
 		return nil
 	}
+	r.Matchers = append(r.Matchers, MatchersForLabelSets(storeLabelSets)...)
 
 	storeResponses := make([]respSet, 0, len(stores))
+
+	checkGroupReplicaErrors := func(st Client, err error) error {
+		if len(failedStores[st.GroupKey()]) > 1 {
+			level.Error(reqLogger).Log(
+				"msg", "Multipel replicas have failures for the same group",
+				"group", st.GroupKey(),
+				"replicas", fmt.Sprintf("%+v", failedStores[st.GroupKey()]),
+			)
+			return err
+		}
+		if len(groupReplicaStores[st.GroupKey()]) == 1 && failedStores[st.GroupKey()][st.ReplicaKey()] > 1 {
+			level.Error(reqLogger).Log(
+				"msg", "A single replica group has multiple failures",
+				"group", st.GroupKey(),
+				"replicas", fmt.Sprintf("%+v", failedStores[st.GroupKey()]),
+			)
+			return err
+		}
+		return nil
+	}
+
+	logGroupReplicaErrors := func() {
+		if len(failedStores) > 0 {
+			level.Warn(s.logger).Log("msg", "Group/replica errors",
+				"errors", fmt.Sprintf("%+v", failedStores),
+				"total_failed_stores", totalFailedStores,
+			)
+		}
+	}
+	defer logGroupReplicaErrors()
 
 	for _, st := range stores {
 		st := st
 		if s.debugLogging {
-			storeDebugMsgs = append(storeDebugMsgs, fmt.Sprintf("store %s queried", st))
+			storeDebugMsgs = append(storeDebugMsgs, fmt.Sprintf("Store %s queried", st))
 		}
 
 		respSet, err := newAsyncRespSet(ctx, st, r, s.responseTimeout, s.retrievalStrategy, &s.buffers, r.ShardInfo, reqLogger, s.metrics.emptyStreamResponses)
 		if err != nil {
+			// NB: respSet is nil in case of error.
 			level.Error(reqLogger).Log("err", err)
-
-			if !r.PartialResponseDisabled || r.PartialResponseStrategy == storepb.PartialResponseStrategy_WARN {
+			level.Warn(s.logger).Log("msg", "Store failure", "group", st.GroupKey(), "replica", st.ReplicaKey())
+			bumpCounter(st.GroupKey(), st.ReplicaKey(), failedStores)
+			totalFailedStores++
+			if r.PartialResponseStrategy == storepb.PartialResponseStrategy_GROUP_REPLICA {
+				if checkGroupReplicaErrors(st, err) != nil {
+					return err
+				}
+				continue
+			} else if !r.PartialResponseDisabled || r.PartialResponseStrategy == storepb.PartialResponseStrategy_WARN {
 				if err := srv.Send(storepb.NewWarnSeriesResponse(err)); err != nil {
 					return err
 				}
@@ -362,12 +448,24 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 
 	level.Debug(reqLogger).Log("msg", "Series: started fanout streams", "status", strings.Join(storeDebugMsgs, ";"))
 
-	respHeap := NewDedupResponseHeap(NewProxyResponseHeap(storeResponses...))
+	respHeap := NewResponseDeduplicator(NewProxyResponseLoserTree(storeResponses...))
 	for respHeap.Next() {
 		resp := respHeap.At()
 
-		if resp.GetWarning() != "" && (r.PartialResponseDisabled || r.PartialResponseStrategy == storepb.PartialResponseStrategy_ABORT) {
-			return status.Error(codes.Aborted, resp.GetWarning())
+		if resp.GetWarning() != "" {
+			totalFailedStores++
+			level.Error(s.logger).Log("msg", "Series: warning from store", "warning", resp.GetWarning())
+			if r.PartialResponseStrategy == storepb.PartialResponseStrategy_GROUP_REPLICA {
+				// TODO: attribute the warning to the store(group key and replica key) that produced it.
+				// Each client streams a sequence of time series, so it's not trivial to attribute the warning to a specific client.
+				if totalFailedStores > 1 {
+					level.Error(reqLogger).Log("msg", "more than one stores have failed")
+					// If we don't know which store has failed, we can tolerate at most one failed store.
+					return status.Error(codes.Aborted, resp.GetWarning())
+				}
+			} else if r.PartialResponseDisabled || r.PartialResponseStrategy == storepb.PartialResponseStrategy_ABORT {
+				return status.Error(codes.Aborted, resp.GetWarning())
+			}
 		}
 
 		if err := srv.Send(resp); err != nil {
@@ -482,10 +580,18 @@ func (s *ProxyStore) LabelNames(ctx context.Context, r *storepb.LabelNamesReques
 		// We might be able to skip the store if its meta information indicates it cannot have series matching our query.
 		if ok, reason := storeMatches(gctx, st, s.debugLogging, r.Start, r.End); !ok {
 			if s.debugLogging {
-				storeDebugMsgs = append(storeDebugMsgs, fmt.Sprintf("Store %s filtered out due to %v", st, reason))
+				storeDebugMsgs = append(storeDebugMsgs, fmt.Sprintf("Store %s filtered out due to: %v", st, reason))
 			}
 			continue
 		}
+		matches, extraMatchers := s.tsdbSelector.MatchLabelSets(st.LabelSets()...)
+		if !matches {
+			if s.debugLogging {
+				storeDebugMsgs = append(storeDebugMsgs, fmt.Sprintf("Store %s filtered out due to: %v", st, "tsdb selector"))
+			}
+			continue
+		}
+
 		if s.debugLogging {
 			storeDebugMsgs = append(storeDebugMsgs, fmt.Sprintf("Store %s queried", st))
 		}
@@ -495,7 +601,8 @@ func (s *ProxyStore) LabelNames(ctx context.Context, r *storepb.LabelNamesReques
 				PartialResponseDisabled: r.PartialResponseDisabled,
 				Start:                   r.Start,
 				End:                     r.End,
-				Matchers:                r.Matchers,
+				Matchers:                append(r.Matchers, MatchersForLabelSets(extraMatchers)...),
+				WithoutReplicaLabels:    r.WithoutReplicaLabels,
 			})
 			if err != nil {
 				err = errors.Wrapf(err, "fetch label names from store %s", st)
@@ -540,6 +647,9 @@ func (s *ProxyStore) LabelValues(ctx context.Context, r *storepb.LabelValuesRequ
 		g, gctx        = errgroup.WithContext(ctx)
 		storeDebugMsgs []string
 	)
+	if r.Label == "" {
+		return nil, status.Error(codes.InvalidArgument, "label name parameter cannot be empty")
+	}
 
 	// We may arrive here either via the promql engine
 	// or as a result of a grpc call in layered queries
@@ -566,7 +676,14 @@ func (s *ProxyStore) LabelValues(ctx context.Context, r *storepb.LabelValuesRequ
 		// We might be able to skip the store if its meta information indicates it cannot have series matching our query.
 		if ok, reason := storeMatches(gctx, st, s.debugLogging, r.Start, r.End); !ok {
 			if s.debugLogging {
-				storeDebugMsgs = append(storeDebugMsgs, fmt.Sprintf("Store %s filtered out due to %v", st, reason))
+				storeDebugMsgs = append(storeDebugMsgs, fmt.Sprintf("Store %s filtered out due to: %v", st, reason))
+			}
+			continue
+		}
+		matches, extraMatchers := s.tsdbSelector.MatchLabelSets(st.LabelSets()...)
+		if !matches {
+			if s.debugLogging {
+				storeDebugMsgs = append(storeDebugMsgs, fmt.Sprintf("Store %s filtered out due to: %v", st, "tsdb selector"))
 			}
 			continue
 		}
@@ -587,7 +704,8 @@ func (s *ProxyStore) LabelValues(ctx context.Context, r *storepb.LabelValuesRequ
 				PartialResponseDisabled: r.PartialResponseDisabled,
 				Start:                   r.Start,
 				End:                     r.End,
-				Matchers:                r.Matchers,
+				Matchers:                append(r.Matchers, MatchersForLabelSets(extraMatchers)...),
+				WithoutReplicaLabels:    r.WithoutReplicaLabels,
 			})
 			if err != nil {
 				msg := "fetch label values from store %s"

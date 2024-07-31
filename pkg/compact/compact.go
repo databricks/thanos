@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -807,14 +808,17 @@ type CompactionLifecycleCallback interface {
 type DefaultCompactionLifecycleCallback struct {
 }
 
-func (c DefaultCompactionLifecycleCallback) PreCompactionCallback(_ context.Context, _ log.Logger, _ *Group, toCompactBlocks []*metadata.Meta) error {
+func (c DefaultCompactionLifecycleCallback) PreCompactionCallback(_ context.Context, logger log.Logger, cg *Group, toCompactBlocks []*metadata.Meta) error {
 	// Due to #183 we verify that none of the blocks in the plan have overlapping sources.
 	// This is one potential source of how we could end up with duplicated chunks.
 	uniqueSources := map[ulid.ULID]struct{}{}
 	for _, m := range toCompactBlocks {
 		for _, s := range m.Compaction.Sources {
 			if _, ok := uniqueSources[s]; ok {
-				return halt(errors.Errorf("overlapping sources detected for plan %v", toCompactBlocks))
+				if !cg.enableVerticalCompaction {
+					return halt(errors.Errorf("overlapping sources detected for plan %v", toCompactBlocks))
+				}
+				level.Warn(logger).Log("msg", "overlapping sources detected for plan", "duplicated_block", s, "to_compact_blocks", fmt.Sprintf("%v", toCompactBlocks))
 			}
 			uniqueSources[s] = struct{}{}
 		}
@@ -831,13 +835,9 @@ func (c DefaultCompactionLifecycleCallback) GetBlockPopulator(_ context.Context,
 }
 
 // Compactor provides compaction against an underlying storage of time series data.
-// This is similar to tsdb.Compactor just without Plan method.
+// It is similar to tsdb.Compactor but only relevant methods are kept. Plan and Write are removed.
 // TODO(bwplotka): Split the Planner from Compactor on upstream as well, so we can import it.
 type Compactor interface {
-	// Write persists a Block into a directory.
-	// No Block is written when resulting Block has 0 samples, and returns empty ulid.ULID{}.
-	Write(dest string, b tsdb.BlockReader, mint, maxt int64, parent *tsdb.BlockMeta) (ulid.ULID, error)
-
 	// Compact runs compaction against the provided directories. Must
 	// only be called concurrently with results of Plan().
 	// Can optionally pass a list of already open blocks,
@@ -871,6 +871,21 @@ func (cg *Group) Compact(ctx context.Context, dir string, planner Planner, comp 
 	if err := os.MkdirAll(subDir, 0750); err != nil {
 		return false, ulid.ULID{}, errors.Wrap(err, "create compaction group dir")
 	}
+
+	defer func() {
+		if p := recover(); p != nil {
+			var sb strings.Builder
+
+			cgIDs := cg.IDs()
+			for i, blid := range cgIDs {
+				_, _ = sb.WriteString(blid.String())
+				if i < len(cgIDs)-1 {
+					_, _ = sb.WriteString(",")
+				}
+			}
+			rerr = fmt.Errorf("paniced while compacting %s: %v", sb.String(), p)
+		}
+	}()
 
 	errChan := make(chan error, 1)
 	err := tracing.DoInSpanWithErr(ctx, "compaction_group", func(ctx context.Context) (err error) {
@@ -941,10 +956,14 @@ func (e HaltError) Error() string {
 	return e.err.Error()
 }
 
+func (e HaltError) Unwrap() error {
+	return errors.Cause(e.err)
+}
+
 // IsHaltError returns true if the base error is a HaltError.
 // If a multierror is passed, any halt error will return true.
 func IsHaltError(err error) bool {
-	if multiErr, ok := errors.Cause(err).(errutil.NonNilMultiError); ok {
+	if multiErr, ok := errors.Cause(err).(errutil.NonNilMultiRootError); ok {
 		for _, err := range multiErr {
 			if _, ok := errors.Cause(err).(HaltError); ok {
 				return true
@@ -963,6 +982,10 @@ type RetryError struct {
 	err error
 }
 
+func NewRetryError(err error) error {
+	return retry(err)
+}
+
 func retry(err error) error {
 	if IsHaltError(err) {
 		return err
@@ -974,10 +997,14 @@ func (e RetryError) Error() string {
 	return e.err.Error()
 }
 
+func (e RetryError) Unwrap() error {
+	return errors.Cause(e.err)
+}
+
 // IsRetryError returns true if the base error is a RetryError.
 // If a multierror is passed, all errors must be retriable.
 func IsRetryError(err error) bool {
-	if multiErr, ok := errors.Cause(err).(errutil.NonNilMultiError); ok {
+	if multiErr, ok := errors.Cause(err).(errutil.NonNilMultiRootError); ok {
 		for _, err := range multiErr {
 			if _, ok := errors.Cause(err).(RetryError); !ok {
 				return false
@@ -1335,7 +1362,7 @@ func NewBucketCompactor(
 	concurrency int,
 	skipBlocksWithOutOfOrderChunks bool,
 ) (*BucketCompactor, error) {
-	if concurrency <= 0 {
+	if concurrency < 0 {
 		return nil, errors.Errorf("invalid concurrency level (%d), concurrency level must be > 0", concurrency)
 	}
 	return NewBucketCompactorWithCheckerAndCallback(
@@ -1366,7 +1393,7 @@ func NewBucketCompactorWithCheckerAndCallback(
 	concurrency int,
 	skipBlocksWithOutOfOrderChunks bool,
 ) (*BucketCompactor, error) {
-	if concurrency <= 0 {
+	if concurrency < 0 {
 		return nil, errors.Errorf("invalid concurrency level (%d), concurrency level must be > 0", concurrency)
 	}
 	return &BucketCompactor{
@@ -1386,6 +1413,10 @@ func NewBucketCompactorWithCheckerAndCallback(
 
 // Compact runs compaction over bucket.
 func (c *BucketCompactor) Compact(ctx context.Context) (rerr error) {
+	if c.concurrency == 0 {
+		level.Warn(c.logger).Log("msg", "compactor is disabled")
+		return nil
+	}
 	defer func() {
 		// Do not remove the compactDir if an error has occurred
 		// because potentially on the next run we would not have to download

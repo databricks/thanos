@@ -42,13 +42,15 @@ message PrometheusResponse {
   string ErrorType = 3 [(gogoproto.jsontag) = "errorType,omitempty"];
   string Error = 4 [(gogoproto.jsontag) = "error,omitempty"];
   repeated PrometheusResponseHeader Headers = 5 [(gogoproto.jsontag) = "-"];
+  repeated string Warnings = 6 [(gogoproto.jsontag) = "warnings,omitempty"];
 }
 
 message PrometheusData {
   string ResultType = 1 [(gogoproto.jsontag) = "resultType"];
   repeated SampleStream Result = 2 [(gogoproto.nullable) = false, (gogoproto.jsontag) = "result"];
   PrometheusResponseStats stats = 3 [(gogoproto.jsontag) = "stats,omitempty"];
-  Explanation Explanation = 4 [(gogoproto.jsontag) = "explanation"];
+  Analysis analysis = 4 [(gogoproto.jsontag) = "analysis"];
+  SeriesStatsCounter seriesStatsCounter = 5 [(gogoproto.jsontag) = "seriesStatsCounter,omitempty"];
 }
 
 message PrometheusInstantQueryResponse {
@@ -57,13 +59,15 @@ message PrometheusInstantQueryResponse {
   string ErrorType = 3 [(gogoproto.jsontag) = "errorType,omitempty"];
   string Error = 4 [(gogoproto.jsontag) = "error,omitempty"];
   repeated PrometheusResponseHeader Headers = 5 [(gogoproto.jsontag) = "-"];
+  repeated string Warnings = 6 [(gogoproto.jsontag) = "warnings,omitempty"];
 }
 
 message PrometheusInstantQueryData {
   string ResultType = 1 [(gogoproto.jsontag) = "resultType"];
   PrometheusInstantQueryResult Result = 2 [(gogoproto.nullable) = false, (gogoproto.jsontag) = "result"];
   PrometheusResponseStats stats = 3 [(gogoproto.jsontag) = "stats,omitempty"];
-  Explanation Explanation = 4 [(gogoproto.jsontag) = "explanation"];
+  Analysis analysis = 4 [(gogoproto.jsontag) = "analysis"];
+  SeriesStatsCounter seriesStatsCounter = 5 [(gogoproto.jsontag) = "seriesStatsCounter,omitempty"];
 }
 
 message PrometheusInstantQueryResult {
@@ -156,4 +160,17 @@ message CachingOptions {
 message Explanation {
   string name = 1 [(gogoproto.jsontag) = "name"];
   repeated Explanation children = 2 [(gogoproto.jsontag) = "children"];
+}
+
+message Analysis {
+  string name = 1 [(gogoproto.jsontag) = "name"];
+  google.protobuf.Duration executionTime = 2 [(gogoproto.customtype) = "Duration", (gogoproto.nullable) = false, (gogoproto.jsontag) = "executionTime"];
+  repeated Analysis children = 3 [(gogoproto.jsontag) = "children"];
+}
+
+message SeriesStatsCounter {
+  int64 Series = 1 [(gogoproto.jsontag) = "Series"];
+  int64 Chunks = 2 [(gogoproto.jsontag) = "Chunks"];
+  int64 Samples = 3 [(gogoproto.jsontag) = "Samples"];
+  int64 Bytes = 4 [(gogoproto.jsontag) = "Bytes"];
 }

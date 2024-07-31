@@ -19,6 +19,7 @@ import (
 
 	"github.com/thanos-io/thanos/pkg/store/labelpb"
 	"github.com/thanos-io/thanos/pkg/store/storepb/prompb"
+	"github.com/thanos-io/thanos/pkg/tracing"
 )
 
 // Appendable returns an Appender.
@@ -155,8 +156,8 @@ func (r *Writer) Write(ctx context.Context, tenantID string, wreq *prompb.WriteR
 			case storage.ErrDuplicateSampleForTimestamp:
 				// we don't care about duplicated sample for the same timestamp
 				continue
-				// numSamplesDuplicates++
-				// level.Debug(tLogger).Log("msg", "Duplicate sample for timestamp", "lset", lset, "value", s.Value, "timestamp", s.Timestamp)
+				//numSamplesDuplicates++
+				//level.Debug(tLogger).Log("msg", "Duplicate sample for timestamp", "lset", lset, "value", s.Value, "timestamp", s.Timestamp)
 			case storage.ErrOutOfBounds:
 				numSamplesOutOfBounds++
 				level.Debug(tLogger).Log("msg", "Out of bounds metric", "lset", lset, "value", s.Value, "timestamp", s.Timestamp)
@@ -226,9 +227,7 @@ func (r *Writer) Write(ctx context.Context, tenantID string, wreq *prompb.WriteR
 						numExemplarsLabelLength++
 						level.Debug(exLogger).Log("msg", "Label length for exemplar exceeds max limit", "limit", exemplar.ExemplarMaxLabelSetLength)
 					default:
-						if err != nil {
-							level.Debug(exLogger).Log("msg", "Error ingesting exemplar", "err", err)
-						}
+						level.Debug(exLogger).Log("msg", "Error ingesting exemplar", "err", err)
 					}
 				}
 			}
@@ -277,7 +276,8 @@ func (r *Writer) Write(ctx context.Context, tenantID string, wreq *prompb.WriteR
 		level.Info(tLogger).Log("msg", "Error on ingesting exemplars with label length exceeding maximum limit", "numDropped", numExemplarsLabelLength)
 		errs.Add(errors.Wrapf(storage.ErrExemplarLabelLength, "add %d exemplars", numExemplarsLabelLength))
 	}
-
+	span, _ := tracing.StartSpan(ctx, "receive_commit")
+	defer span.Finish()
 	if err := app.Commit(); err != nil {
 		errs.Add(errors.Wrap(err, "commit samples"))
 	}

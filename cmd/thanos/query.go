@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	extflag "github.com/efficientgo/tools/extkingpin"
 	"google.golang.org/grpc"
 
 	"github.com/go-kit/log"
@@ -23,6 +24,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/common/route"
+	"github.com/prometheus/prometheus/discovery"
 	"github.com/prometheus/prometheus/discovery/file"
 	"github.com/prometheus/prometheus/discovery/targetgroup"
 	"github.com/prometheus/prometheus/model/labels"
@@ -31,6 +33,7 @@ import (
 
 	apiv1 "github.com/thanos-io/thanos/pkg/api/query"
 	"github.com/thanos-io/thanos/pkg/api/query/querypb"
+	"github.com/thanos-io/thanos/pkg/block"
 	"github.com/thanos-io/thanos/pkg/compact/downsample"
 	"github.com/thanos-io/thanos/pkg/component"
 	"github.com/thanos-io/thanos/pkg/discovery/cache"
@@ -64,6 +67,7 @@ const (
 	promqlNegativeOffset = "promql-negative-offset"
 	promqlAtModifier     = "promql-at-modifier"
 	queryPushdown        = "query-pushdown"
+	dnsPrefix            = "dnssrv+"
 )
 
 type queryMode string
@@ -104,7 +108,6 @@ func registerQuery(app *extkingpin.App) {
 		Enum(string(apiv1.PromqlEnginePrometheus), string(apiv1.PromqlEngineThanos))
 	extendedFunctionsEnabled := cmd.Flag("query.enable-x-functions", "Whether to enable extended rate functions (xrate, xincrease and xdelta). Only has effect when used with Thanos engine.").Default("false").Bool()
 	promqlQueryMode := cmd.Flag("query.mode", "PromQL query mode. One of: local, distributed.").
-		Hidden().
 		Default(string(queryModeLocal)).
 		Enum(string(queryModeLocal), string(queryModeDistributed))
 
@@ -123,6 +126,9 @@ func registerQuery(app *extkingpin.App) {
 
 	queryReplicaLabels := cmd.Flag("query.replica-label", "Labels to treat as a replica indicator along which data is deduplicated. Still you will be able to query without deduplication using 'dedup=false' parameter. Data includes time series, recording rules, and alerting rules.").
 		Strings()
+
+	enableDedupMerge := cmd.Flag("query.dedup-merge", "Enable deduplication merge of multiple time series with the same labels.").
+		Default("false").Bool()
 
 	instantDefaultMaxSourceResolution := extkingpin.ModelDuration(cmd.Flag("query.instant.default.max_source_resolution", "default value for max_source_resolution for instant queries. If not set, defaults to 0s only taking raw resolution into account. 1h can be a good value if you use instant queries over time ranges that incorporate times outside of your raw-retention.").Default("0s").Hidden())
 
@@ -186,6 +192,9 @@ func registerQuery(app *extkingpin.App) {
 	enableQueryPartialResponse := cmd.Flag("query.partial-response", "Enable partial response for queries if no partial_response param is specified. --no-query.partial-response for disabling.").
 		Default("true").Bool()
 
+	enableGroupReplicaPartialStrategy := cmd.Flag("query.group-replica-strategy", "Enable group-replica partial response strategy.").
+		Default("false").Bool()
+
 	enableRulePartialResponse := cmd.Flag("rule.partial-response", "Enable partial response for rules endpoint. --no-rule.partial-response for disabling.").
 		Hidden().Default("true").Bool()
 
@@ -197,7 +206,7 @@ func registerQuery(app *extkingpin.App) {
 
 	activeQueryDir := cmd.Flag("query.active-query-path", "Directory to log currently active queries in the queries.active file.").Default("").String()
 
-	featureList := cmd.Flag("enable-feature", "Comma separated experimental feature names to enable.The current list of features is "+queryPushdown+".").Default("").Strings()
+	featureList := cmd.Flag("enable-feature", "Comma separated experimental feature names to enable.The current list of features is empty.").Hidden().Default("").Strings()
 
 	enableExemplarPartialResponse := cmd.Flag("exemplar.partial-response", "Enable partial response for exemplar endpoint. --no-exemplar.partial-response for disabling.").
 		Hidden().Default("true").Bool()
@@ -208,6 +217,14 @@ func registerQuery(app *extkingpin.App) {
 		Default("1s"))
 
 	storeResponseTimeout := extkingpin.ModelDuration(cmd.Flag("store.response-timeout", "If a Store doesn't send any data in this specified duration then a Store will be ignored and partial data will be returned if it's enabled. 0 disables timeout.").Default("0ms"))
+
+	storeSelectorRelabelConf := *extflag.RegisterPathOrContent(
+		cmd,
+		"selector.relabel-config",
+		"YAML file with relabeling configuration that allows selecting blocks to query based on their external labels. It follows the Thanos sharding relabel-config syntax. For format details see: https://thanos.io/tip/thanos/sharding.md/#relabelling ",
+		extflag.WithEnvSubstitution(),
+	)
+
 	reqLogConfig := extkingpin.RegisterRequestLoggingFlags(cmd)
 
 	alertQueryURL := cmd.Flag("alert.query-url", "The external Thanos Query URL that would be set in all alerts 'Source' field.").String()
@@ -232,16 +249,15 @@ func registerQuery(app *extkingpin.App) {
 			return errors.Wrap(err, "parse federation labels")
 		}
 
-		var enableQueryPushdown bool
 		for _, feature := range *featureList {
-			if feature == queryPushdown {
-				enableQueryPushdown = true
-			}
 			if feature == promqlAtModifier {
 				level.Warn(logger).Log("msg", "This option for --enable-feature is now permanently enabled and therefore a no-op.", "option", promqlAtModifier)
 			}
 			if feature == promqlNegativeOffset {
 				level.Warn(logger).Log("msg", "This option for --enable-feature is now permanently enabled and therefore a no-op.", "option", promqlNegativeOffset)
+			}
+			if feature == queryPushdown {
+				level.Warn(logger).Log("msg", "This option for --enable-feature is now permanently deprecated and therefore ignored.", "option", queryPushdown)
 			}
 		}
 
@@ -262,7 +278,7 @@ func registerQuery(app *extkingpin.App) {
 				RefreshInterval: *fileSDInterval,
 			}
 			var err error
-			if fileSD, err = file.NewDiscovery(conf, logger, reg); err != nil {
+			if fileSD, err = file.NewDiscovery(conf, logger, conf.NewDiscovererMetrics(reg, discovery.NewRefreshMetrics(reg))); err != nil {
 				return err
 			}
 		}
@@ -273,6 +289,15 @@ func registerQuery(app *extkingpin.App) {
 
 		if *webRoutePrefix != *webExternalPrefix {
 			level.Warn(logger).Log("msg", "different values for --web.route-prefix and --web.external-prefix detected, web UI may not work without a reverse-proxy.")
+		}
+
+		tsdbRelabelConfig, err := storeSelectorRelabelConf.Content()
+		if err != nil {
+			return errors.Wrap(err, "error while parsing tsdb selector configuration")
+		}
+		tsdbSelector, err := block.ParseRelabelConfig(tsdbRelabelConfig, block.SelectorSupportedRelabelActions)
+		if err != nil {
+			return err
 		}
 
 		return runQuery(
@@ -335,7 +360,6 @@ func registerQuery(app *extkingpin.App) {
 			*strictEndpoints,
 			*strictEndpointGroups,
 			*webDisableCORS,
-			enableQueryPushdown,
 			*alertQueryURL,
 			*grpcProxyStrategy,
 			component.Query,
@@ -345,12 +369,15 @@ func registerQuery(app *extkingpin.App) {
 			*defaultEngine,
 			storeRateLimits,
 			*extendedFunctionsEnabled,
+			store.NewTSDBSelector(tsdbSelector),
 			queryMode(*promqlQueryMode),
 			*tenantHeader,
 			*defaultTenant,
 			*tenantCertField,
 			*enforceTenancy,
 			*tenantLabel,
+			*enableGroupReplicaPartialStrategy,
+			*enableDedupMerge,
 		)
 	})
 }
@@ -417,7 +444,6 @@ func runQuery(
 	strictEndpoints []string,
 	strictEndpointGroups []string,
 	disableCORS bool,
-	enableQueryPushdown bool,
 	alertQueryURL string,
 	grpcProxyStrategy string,
 	comp component.Component,
@@ -427,12 +453,15 @@ func runQuery(
 	defaultEngine string,
 	storeRateLimits store.SeriesSelectLimits,
 	extendedFunctionsEnabled bool,
+	tsdbSelector *store.TSDBSelector,
 	queryMode queryMode,
 	tenantHeader string,
 	defaultTenant string,
 	tenantCertField string,
 	enforceTenancy bool,
 	tenantLabel string,
+	groupReplicaPartialResponseStrategy bool,
+	enableDedupMerge bool,
 ) error {
 	if alertQueryURL == "" {
 		lastColon := strings.LastIndex(httpBindAddr, ":")
@@ -504,9 +533,9 @@ func runQuery(
 		dns.ResolverType(dnsSDResolver),
 	)
 
-	options := []store.ProxyStoreOption{}
-	if debugLogging {
-		options = append(options, store.WithProxyStoreDebugLogging())
+	options := []store.ProxyStoreOption{
+		store.WithTSDBSelector(tsdbSelector),
+		store.WithProxyStoreDebugLogging(debugLogging),
 	}
 
 	var (
@@ -530,6 +559,8 @@ func runQuery(
 			dialOpts,
 			unhealthyStoreTimeout,
 			endpointInfoTimeout,
+			// ignoreErrors when group_replica partial response strategy is enabled.
+			groupReplicaPartialResponseStrategy,
 			queryConnMetricLabels...,
 		)
 
@@ -538,13 +569,20 @@ func runQuery(
 		targetsProxy     = targets.NewProxy(logger, endpoints.GetTargetsClients)
 		metadataProxy    = metadata.NewProxy(logger, endpoints.GetMetricMetadataClients)
 		exemplarsProxy   = exemplars.NewProxy(logger, endpoints.GetExemplarsStores, selectorLset)
-		queryableCreator = query.NewQueryableCreator(
-			logger,
-			extprom.WrapRegistererWithPrefix("thanos_query_", reg),
-			proxy,
-			maxConcurrentSelects,
-			queryTimeout,
-		)
+		queryableCreator query.QueryableCreator
+	)
+	opts := query.Options{
+		GroupReplicaPartialResponseStrategy: groupReplicaPartialResponseStrategy,
+		EnableDedupMerge:                    enableDedupMerge,
+	}
+	level.Info(logger).Log("msg", "databricks querier features", "opts", fmt.Sprintf("%+v", opts))
+	queryableCreator = query.NewQueryableCreatorWithOptions(
+		logger,
+		extprom.WrapRegistererWithPrefix("thanos_query_", reg),
+		proxy,
+		maxConcurrentSelects,
+		queryTimeout,
+		opts,
 	)
 
 	// Run File Service Discovery and update the store set when the files are modified.
@@ -649,6 +687,8 @@ func runQuery(
 
 	var remoteEngineEndpoints api.RemoteEndpoints
 	if queryMode != queryModeLocal {
+		level.Info(logger).Log("msg", "Distributed query mode enabled, using Thanos as the default query engine.")
+		defaultEngine = string(apiv1.PromqlEngineThanos)
 		remoteEngineEndpoints = query.NewRemoteEndpoints(logger, endpoints.GetQueryAPIClients, query.Opts{
 			AutoDownsample:        enableAutodownsampling,
 			ReplicaLabels:         queryReplicaLabels,
@@ -688,7 +728,7 @@ func runQuery(
 
 		ins := extpromhttp.NewTenantInstrumentationMiddleware(tenantHeader, defaultTenant, reg, nil)
 		// TODO(bplotka in PR #513 review): pass all flags, not only the flags needed by prefix rewriting.
-		ui.NewQueryUI(logger, endpoints, webExternalPrefix, webPrefixHeaderName, alertQueryURL).Register(router, ins)
+		ui.NewQueryUI(logger, endpoints, webExternalPrefix, webPrefixHeaderName, alertQueryURL, tenantHeader, defaultTenant, enforceTenancy).Register(router, ins)
 
 		api := apiv1.NewQueryAPI(
 			logger,
@@ -708,7 +748,6 @@ func runQuery(
 			enableTargetPartialResponse,
 			enableMetricMetadataPartialResponse,
 			enableExemplarPartialResponse,
-			enableQueryPushdown,
 			queryReplicaLabels,
 			flagsMap,
 			defaultRangeQueryStep,
@@ -764,7 +803,7 @@ func runQuery(
 		infoSrv := info.NewInfoServer(
 			component.Query.String(),
 			info.WithLabelSetFunc(func() []labelpb.ZLabelSet { return proxy.LabelSet() }),
-			info.WithStoreInfoFunc(func() *infopb.StoreInfo {
+			info.WithStoreInfoFunc(func() (*infopb.StoreInfo, error) {
 				if httpProbe.IsReady() {
 					mint, maxt := proxy.TimeRange()
 					return &infopb.StoreInfo{
@@ -773,9 +812,9 @@ func runQuery(
 						SupportsSharding:             true,
 						SupportsWithoutReplicaLabels: true,
 						TsdbInfos:                    proxy.TSDBInfos(),
-					}
+					}, nil
 				}
-				return nil
+				return nil, errors.New("Not ready")
 			}),
 			info.WithExemplarsInfoFunc(),
 			info.WithRulesInfoFunc(),
@@ -844,6 +883,7 @@ func prepareEndpointSet(
 	dialOpts []grpc.DialOption,
 	unhealthyStoreTimeout time.Duration,
 	endpointInfoTimeout time.Duration,
+	ignoreStoreErrors bool,
 	queryConnMetricLabels ...string,
 ) *query.EndpointSet {
 	endpointSet := query.NewEndpointSet(
@@ -862,9 +902,13 @@ func prepareEndpointSet(
 
 			for _, dnsProvider := range dnsProviders {
 				var tmpSpecs []*query.GRPCEndpointSpec
-
-				for _, addr := range dnsProvider.Addresses() {
-					tmpSpecs = append(tmpSpecs, query.NewGRPCEndpointSpec(addr, false))
+				for dnsName, addrs := range dnsProvider.AddressesWithDNS() {
+					// The dns name is like "dnssrv+pantheon-db-rep0:10901" whose replica key is "pantheon-db-rep0".
+					// TODO: have a more robust protocol to extract the replica key.
+					replicaKey := strings.Split(strings.TrimPrefix(dnsName, dnsPrefix), ":")[0]
+					for _, addr := range addrs {
+						tmpSpecs = append(tmpSpecs, query.NewGRPCEndpointSpecWithReplicaKey(replicaKey, addr, false, ignoreStoreErrors))
+					}
 				}
 				tmpSpecs = removeDuplicateEndpointSpecs(logger, duplicatedStores, tmpSpecs)
 				specs = append(specs, tmpSpecs...)

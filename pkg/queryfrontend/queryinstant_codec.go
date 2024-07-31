@@ -54,12 +54,22 @@ func (c queryInstantCodec) MergeResponse(req queryrange.Request, responses ...qu
 		promResponses = append(promResponses, resp.(*queryrange.PrometheusInstantQueryResponse))
 	}
 
-	var explanation *queryrange.Explanation
+	var analyzes []*queryrange.Analysis
 	for i := range promResponses {
-		if promResponses[i].Data.GetExplanation() != nil {
-			explanation = promResponses[i].Data.GetExplanation()
-			break
+		if promResponses[i].Data.GetAnalysis() == nil {
+			continue
 		}
+
+		analyzes = append(analyzes, promResponses[i].Data.GetAnalysis())
+	}
+
+	var seriesStatsCounters []*queryrange.SeriesStatsCounter
+	for i := range promResponses {
+		if promResponses[i].Data.GetSeriesStatsCounter() == nil {
+			continue
+		}
+
+		seriesStatsCounters = append(seriesStatsCounters, promResponses[i].Data.GetSeriesStatsCounter())
 	}
 
 	var res queryrange.Response
@@ -74,9 +84,13 @@ func (c queryInstantCodec) MergeResponse(req queryrange.Request, responses ...qu
 						Matrix: matrixMerge(promResponses),
 					},
 				},
-				Stats:       queryrange.StatsMerge(responses),
-				Explanation: explanation,
+				Analysis: queryrange.AnalyzesMerge(analyzes...),
+				Stats:    queryrange.StatsMerge(responses),
 			},
+			Headers: queryrange.QueryBytesFetchedPrometheusResponseHeaders(responses...),
+		}
+		if len(seriesStatsCounters) > 0 {
+			res.(*queryrange.PrometheusInstantQueryResponse).Data.SeriesStatsCounter = queryrange.SeriesStatsCounterMerge(seriesStatsCounters...)
 		}
 	default:
 		v, err := vectorMerge(req, promResponses)
@@ -92,9 +106,13 @@ func (c queryInstantCodec) MergeResponse(req queryrange.Request, responses ...qu
 						Vector: v,
 					},
 				},
-				Stats:       queryrange.StatsMerge(responses),
-				Explanation: explanation,
+				Analysis: queryrange.AnalyzesMerge(analyzes...),
+				Stats:    queryrange.StatsMerge(responses),
 			},
+			Headers: queryrange.QueryBytesFetchedPrometheusResponseHeaders(responses...),
+		}
+		if len(seriesStatsCounters) > 0 {
+			res.(*queryrange.PrometheusInstantQueryResponse).Data.SeriesStatsCounter = queryrange.SeriesStatsCounterMerge(seriesStatsCounters...)
 		}
 	}
 
@@ -111,6 +129,14 @@ func (c queryInstantCodec) DecodeRequest(_ context.Context, r *http.Request, for
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	if len(r.FormValue("analyze")) > 0 {
+		analyze, err := strconv.ParseBool(r.FormValue("analyze"))
+		if err != nil {
+			return nil, err
+		}
+		result.Analyze = analyze
 	}
 
 	result.Dedup, err = parseEnableDedupParam(r.FormValue(queryv1.DedupParam))
@@ -153,7 +179,6 @@ func (c queryInstantCodec) DecodeRequest(_ context.Context, r *http.Request, for
 
 	result.Query = r.FormValue("query")
 	result.Path = r.URL.Path
-	result.Analyze = r.FormValue("analyze")
 	result.Engine = r.FormValue("engine")
 
 	for _, header := range forwardHeaders {
@@ -164,6 +189,7 @@ func (c queryInstantCodec) DecodeRequest(_ context.Context, r *http.Request, for
 			}
 		}
 	}
+
 	return &result, nil
 }
 
@@ -175,8 +201,8 @@ func (c queryInstantCodec) EncodeRequest(ctx context.Context, r queryrange.Reque
 	params := url.Values{
 		"query":                      []string{thanosReq.Query},
 		queryv1.DedupParam:           []string{strconv.FormatBool(thanosReq.Dedup)},
+		queryv1.QueryAnalyzeParam:    []string{strconv.FormatBool(thanosReq.Analyze)},
 		queryv1.PartialResponseParam: []string{strconv.FormatBool(thanosReq.PartialResponse)},
-		queryv1.QueryAnalyzeParam:    []string{thanosReq.Analyze},
 		queryv1.EngineParam:          []string{thanosReq.Engine},
 		queryv1.ReplicaLabelsParam:   thanosReq.ReplicaLabels,
 	}
@@ -237,10 +263,17 @@ func (c queryInstantCodec) EncodeResponse(ctx context.Context, res queryrange.Re
 
 	sp.LogFields(otlog.Int("bytes", len(b)))
 
+	httpHeader := http.Header{
+		"Content-Type": []string{"application/json"}}
+	if queryBytesFetchedHttpHeaderValue := queryrange.QueryBytesFetchedHttpHeaderValue(res); queryBytesFetchedHttpHeaderValue != nil {
+		// M3 code path
+		httpHeader[queryrange.QueryBytesFetchedHeaderName] = queryBytesFetchedHttpHeaderValue
+	} else if res.(*queryrange.PrometheusInstantQueryResponse).Data.SeriesStatsCounter != nil {
+		// Pantheon code path
+		httpHeader[queryrange.QueryBytesFetchedHeaderName] = []string{strconv.FormatInt(res.(*queryrange.PrometheusInstantQueryResponse).Data.SeriesStatsCounter.Bytes, 10)}
+	}
 	resp := http.Response{
-		Header: http.Header{
-			"Content-Type": []string{"application/json"},
-		},
+		Header:        httpHeader,
 		Body:          io.NopCloser(bytes.NewBuffer(b)),
 		StatusCode:    http.StatusOK,
 		ContentLength: int64(len(b)),

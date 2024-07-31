@@ -14,6 +14,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 
 	"github.com/go-kit/log"
 	"github.com/oklog/ulid"
@@ -52,6 +54,12 @@ const (
 	TSDBVersion1 = 1
 	// ThanosVersion1 is a enumeration of Thanos section of TSDB meta supported by Thanos.
 	ThanosVersion1 = 1
+)
+
+const (
+	TenantLabel = "__tenant__"
+
+	DefaultTenant = "__not_set__"
 )
 
 // Meta describes the a block's meta. It wraps the known TSDB meta structure and
@@ -106,6 +114,23 @@ type IndexStats struct {
 
 func (m *Thanos) ParseExtensions(v any) (any, error) {
 	return ConvertExtensions(m.Extensions, v)
+}
+
+func (m *Thanos) GetTenant() string {
+	if tenant, ok := m.Labels[TenantLabel]; ok {
+		return tenant
+	} else {
+		return DefaultTenant
+	}
+}
+
+func (m *Thanos) GetLabels() string {
+	res := make([]string, 0, len(m.Labels))
+	for k, v := range m.Labels {
+		res = append(res, fmt.Sprintf("%s=%s", k, v))
+	}
+	sort.Strings(res)
+	return strings.Join(res, ",")
 }
 
 // ConvertExtensions converts extensions with `any` type into specific type `v`

@@ -484,6 +484,7 @@ type SeriesStatsCounter struct {
 	Series  int
 	Chunks  int
 	Samples int
+	Bytes   uint64
 }
 
 func (c *SeriesStatsCounter) CountSeries(seriesLabels []labelpb.ZLabel) {
@@ -494,61 +495,47 @@ func (c *SeriesStatsCounter) CountSeries(seriesLabels []labelpb.ZLabel) {
 	}
 }
 
-func (c *SeriesStatsCounter) Count(series *Series) {
-	c.CountSeries(series.Labels)
-	for _, chk := range series.Chunks {
-		if chk.Raw != nil {
-			c.Chunks++
-			c.Samples += chk.Raw.XORNumSamples()
-		}
+func (c *SeriesStatsCounter) Count(r *SeriesResponse) {
+	if r.GetSeries() != nil {
+		series := r.GetSeries()
+		c.CountSeries(series.Labels)
+		for _, chk := range series.Chunks {
+			if chk.Raw != nil {
+				c.Chunks++
+				c.Samples += chk.Raw.XORNumSamples()
+			}
 
-		if chk.Count != nil {
-			c.Chunks++
-			c.Samples += chk.Count.XORNumSamples()
-		}
+			if chk.Count != nil {
+				c.Chunks++
+				c.Samples += chk.Count.XORNumSamples()
+			}
 
-		if chk.Counter != nil {
-			c.Chunks++
-			c.Samples += chk.Counter.XORNumSamples()
-		}
+			if chk.Counter != nil {
+				c.Chunks++
+				c.Samples += chk.Counter.XORNumSamples()
+			}
 
-		if chk.Max != nil {
-			c.Chunks++
-			c.Samples += chk.Max.XORNumSamples()
-		}
+			if chk.Max != nil {
+				c.Chunks++
+				c.Samples += chk.Max.XORNumSamples()
+			}
 
-		if chk.Min != nil {
-			c.Chunks++
-			c.Samples += chk.Min.XORNumSamples()
-		}
+			if chk.Min != nil {
+				c.Chunks++
+				c.Samples += chk.Min.XORNumSamples()
+			}
 
-		if chk.Sum != nil {
-			c.Chunks++
-			c.Samples += chk.Sum.XORNumSamples()
+			if chk.Sum != nil {
+				c.Chunks++
+				c.Samples += chk.Sum.XORNumSamples()
+			}
 		}
 	}
+
+	//aggregate # of bytes fetched
+	c.Bytes += uint64(r.Size())
 }
 
 func (m *SeriesRequest) ToPromQL() string {
 	return m.QueryHints.toPromQL(m.Matchers)
-}
-
-// IsSafeToExecute returns true if the function or aggregation from the query hint
-// can be safely executed by the underlying Prometheus instance without affecting the
-// result of the query.
-func (m *QueryHints) IsSafeToExecute() bool {
-	distributiveOperations := []string{
-		"max",
-		"max_over_time",
-		"min",
-		"min_over_time",
-		"group",
-	}
-	for _, op := range distributiveOperations {
-		if m.Func.Name == op {
-			return true
-		}
-	}
-
-	return false
 }

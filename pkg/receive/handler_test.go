@@ -27,6 +27,7 @@ import (
 
 	"github.com/alecthomas/units"
 	"github.com/go-kit/log"
+	"github.com/go-kit/log/level"
 	"github.com/gogo/protobuf/proto"
 	"github.com/golang/snappy"
 	"github.com/pkg/errors"
@@ -39,17 +40,65 @@ import (
 	"github.com/prometheus/prometheus/model/relabel"
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/tsdb"
+	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/resolver"
 
 	"github.com/efficientgo/core/testutil"
 
 	"github.com/thanos-io/thanos/pkg/block/metadata"
+	"github.com/thanos-io/thanos/pkg/component"
 	"github.com/thanos-io/thanos/pkg/extkingpin"
+	"github.com/thanos-io/thanos/pkg/logging"
 	"github.com/thanos-io/thanos/pkg/runutil"
+	grpcserver "github.com/thanos-io/thanos/pkg/server/grpc"
+	"github.com/thanos-io/thanos/pkg/store"
 	"github.com/thanos-io/thanos/pkg/store/labelpb"
 	"github.com/thanos-io/thanos/pkg/store/storepb"
 	"github.com/thanos-io/thanos/pkg/store/storepb/prompb"
 	"github.com/thanos-io/thanos/pkg/tenancy"
 )
+
+const dnsScheme = "dns"
+
+type dnsResolver struct {
+	logger    log.Logger
+	target    resolver.Target
+	cc        resolver.ClientConn
+	addrStore map[string][]string
+}
+
+func (r *dnsResolver) start() {
+	addrStrs := r.addrStore[r.target.Endpoint()]
+	addrs := make([]resolver.Address, len(addrStrs))
+	for i, s := range addrStrs {
+		addrs[i] = resolver.Address{Addr: s}
+	}
+	if err := r.cc.UpdateState(resolver.State{Addresses: addrs}); err != nil {
+		level.Error(r.logger).Log("msg", "failed to update state", "err", err)
+	}
+}
+
+func (*dnsResolver) ResolveNow(_ resolver.ResolveNowOptions) {}
+
+func (*dnsResolver) Close() {}
+
+type dnsResolverBuilder struct {
+	logger    log.Logger
+	addrStore map[string][]string
+}
+
+func (b *dnsResolverBuilder) Build(target resolver.Target, cc resolver.ClientConn, opts resolver.BuildOptions) (resolver.Resolver, error) {
+	r := &dnsResolver{
+		logger:    b.logger,
+		target:    target,
+		cc:        cc,
+		addrStore: b.addrStore,
+	}
+	r.start()
+	return r, nil
+}
+func (*dnsResolverBuilder) Scheme() string { return dnsScheme }
 
 type fakeTenantAppendable struct {
 	f *fakeAppendable
@@ -167,9 +216,18 @@ func (f *fakeAppender) AppendCTZeroSample(ref storage.SeriesRef, l labels.Labels
 }
 
 type fakePeersGroup struct {
-	clients map[string]storepb.WriteableStoreClient
+	clients map[string]WriteableStoreAsyncClient
 
 	closeCalled map[string]bool
+}
+
+func (g *fakePeersGroup) markPeerUnavailable(s string) {
+}
+
+func (g *fakePeersGroup) markPeerAvailable(s string) {
+}
+
+func (g *fakePeersGroup) reset() {
 }
 
 func (g *fakePeersGroup) close(addr string) error {
@@ -180,7 +238,11 @@ func (g *fakePeersGroup) close(addr string) error {
 	return nil
 }
 
-func (g *fakePeersGroup) get(_ context.Context, addr string) (storepb.WriteableStoreClient, error) {
+func (g *fakePeersGroup) closeAll() error {
+	return nil
+}
+
+func (g *fakePeersGroup) getConnection(_ context.Context, addr string) (WriteableStoreAsyncClient, error) {
 	c, ok := g.clients[addr]
 	if !ok {
 		return nil, fmt.Errorf("client %s not found", addr)
@@ -197,13 +259,14 @@ func newTestHandlerHashring(appendables []*fakeAppendable, replicationFactor uin
 		wOpts    = &WriterOptions{}
 	)
 	fakePeers := &fakePeersGroup{
-		clients: map[string]storepb.WriteableStoreClient{},
+		clients: map[string]WriteableStoreAsyncClient{},
 	}
 
 	ag := addrGen{}
 	limiter, _ := NewLimiter(NewNopConfig(), nil, RouterIngestor, log.NewNopLogger(), 1*time.Second)
+	logger := logging.NewLogger("debug", "logfmt", "receive_test")
 	for i := range appendables {
-		h := NewHandler(nil, &Options{
+		h := NewHandler(logger, &Options{
 			TenantHeader:      tenancy.DefaultTenantHeader,
 			ReplicaHeader:     DefaultReplicaHeader,
 			ReplicationFactor: replicationFactor,
@@ -248,6 +311,7 @@ func testReceiveQuorum(t *testing.T, hashringAlgo HashringAlgorithm, withConsist
 		replicationFactor uint64
 		wreq              *prompb.WriteRequest
 		appendables       []*fakeAppendable
+		randomNode        bool
 	}{
 		{
 			name:              "size 1 success",
@@ -605,17 +669,29 @@ func testReceiveQuorum(t *testing.T, hashringAlgo HashringAlgorithm, withConsist
 				t.Fatalf("unable to create test handler: %v", err)
 			}
 			tenant := "test"
-			// Test from the point of view of every node
-			// so that we know status code does not depend
-			// on which node is erroring and which node is receiving.
-			for i, handler := range handlers {
-				// Test that the correct status is returned.
+
+			if tc.randomNode {
+				handler := handlers[0]
 				rec, err := makeRequest(handler, tenant, tc.wreq)
 				if err != nil {
-					t.Fatalf("handler %d: unexpectedly failed making HTTP request: %v", i+1, err)
+					t.Fatalf("handler: unexpectedly failed making HTTP request: %v", err)
 				}
 				if rec.Code != tc.status {
-					t.Errorf("handler %d: got unexpected HTTP status code: expected %d, got %d; body: %s", i+1, tc.status, rec.Code, rec.Body.String())
+					t.Errorf("handler: got unexpected HTTP status code: expected %d, got %d; body: %s", tc.status, rec.Code, rec.Body.String())
+				}
+			} else {
+				// Test from the point of view of every node
+				// so that we know status code does not depend
+				// on which node is erroring and which node is receiving.
+				for i, handler := range handlers {
+					// Test that the correct status is returned.
+					rec, err := makeRequest(handler, tenant, tc.wreq)
+					if err != nil {
+						t.Fatalf("handler %d: unexpectedly failed making HTTP request: %v", i+1, err)
+					}
+					if rec.Code != tc.status {
+						t.Errorf("handler %d: got unexpected HTTP status code: expected %d, got %d; body: %s", i+1, tc.status, rec.Code, rec.Body.String())
+					}
 				}
 			}
 
@@ -626,13 +702,7 @@ func testReceiveQuorum(t *testing.T, hashringAlgo HashringAlgorithm, withConsist
 			// Test that each time series is stored
 			// the correct amount of times in each fake DB.
 			for _, ts := range tc.wreq.Timeseries {
-				lset := make(labels.Labels, len(ts.Labels))
-				for j := range ts.Labels {
-					lset[j] = labels.Label{
-						Name:  ts.Labels[j].Name,
-						Value: ts.Labels[j].Value,
-					}
-				}
+				lset := labelpb.ZLabelsToPromLabels(ts.Labels)
 				for j, a := range tc.appendables {
 					if withConsistencyDelay {
 						var expected int
@@ -654,6 +724,9 @@ func testReceiveQuorum(t *testing.T, hashringAlgo HashringAlgorithm, withConsist
 							// We have len(handlers) copies of each sample because the test case
 							// is run once for each handler and they all use the same appender.
 							expectedMin = int((tc.replicationFactor/2)+1) * len(ts.Samples)
+							if tc.randomNode {
+								expectedMin = len(ts.Samples)
+							}
 						}
 						if uint64(expectedMin) > got {
 							t.Errorf("handler: %d, labels %q: expected minimum of %d samples, got %d", j, lset.String(), expectedMin, got)
@@ -853,6 +926,16 @@ type fakeRemoteWriteGRPCServer struct {
 
 func (f *fakeRemoteWriteGRPCServer) RemoteWrite(ctx context.Context, in *storepb.WriteRequest, opts ...grpc.CallOption) (*storepb.WriteResponse, error) {
 	return f.h.RemoteWrite(ctx, in)
+}
+
+func (f *fakeRemoteWriteGRPCServer) RemoteWriteAsync(ctx context.Context, in *storepb.WriteRequest, er endpointReplica, seriesIDs []int, responses chan writeResponse, cb func(error)) {
+	_, err := f.h.RemoteWrite(ctx, in)
+	responses <- writeResponse{
+		er:        er,
+		err:       err,
+		seriesIDs: seriesIDs,
+	}
+	cb(err)
 }
 
 func BenchmarkHandlerReceiveHTTP(b *testing.B) {
@@ -1617,4 +1700,229 @@ func TestHashringChangeCallsClose(t *testing.T) {
 
 	pg := allHandlers[0].peers.(*fakePeersGroup)
 	testutil.Assert(t, len(pg.closeCalled) > 0)
+}
+
+func TestHandlerEarlyStop(t *testing.T) {
+	h := NewHandler(nil, &Options{})
+	h.Close()
+
+	err := h.Run()
+	testutil.NotOk(t, err)
+	testutil.Equals(t, "http: Server closed", err.Error())
+}
+
+type hashringSeenTenants struct {
+	Hashring
+
+	seenTenants map[string]struct{}
+}
+
+func (h *hashringSeenTenants) GetN(tenant string, ts *prompb.TimeSeries, n uint64) (string, error) {
+	if h.seenTenants == nil {
+		h.seenTenants = map[string]struct{}{}
+	}
+	h.seenTenants[tenant] = struct{}{}
+	return h.Hashring.GetN(tenant, ts, n)
+}
+
+func TestDistributeSeries(t *testing.T) {
+	const tenantIDLabelName = "thanos_tenant_id"
+	h := NewHandler(nil, &Options{
+		SplitTenantLabelName: tenantIDLabelName,
+	})
+
+	hashring, err := newSimpleHashring([]Endpoint{
+		{
+			Address: "http://localhost:9090",
+		},
+	})
+	require.NoError(t, err)
+	hr := &hashringSeenTenants{Hashring: hashring}
+	h.Hashring(hr)
+
+	_, remote, err := h.distributeTimeseriesToReplicas(
+		"foo",
+		[]uint64{0},
+		[]prompb.TimeSeries{
+			{
+				Labels: labelpb.ZLabelsFromPromLabels(labels.FromStrings("a", "b", tenantIDLabelName, "bar")),
+			},
+			{
+				Labels: labelpb.ZLabelsFromPromLabels(labels.FromStrings("b", "a", tenantIDLabelName, "boo")),
+			},
+		},
+	)
+	require.NoError(t, err)
+	require.Len(t, remote, 1)
+	require.Len(t, remote[endpointReplica{endpoint: "http://localhost:9090", replica: 0}]["bar"].timeSeries, 1)
+	require.Len(t, remote[endpointReplica{endpoint: "http://localhost:9090", replica: 0}]["boo"].timeSeries, 1)
+
+	require.Equal(t, 1, labelpb.ZLabelsToPromLabels(remote[endpointReplica{endpoint: "http://localhost:9090", replica: 0}]["bar"].timeSeries[0].Labels).Len())
+	require.Equal(t, 1, labelpb.ZLabelsToPromLabels(remote[endpointReplica{endpoint: "http://localhost:9090", replica: 0}]["boo"].timeSeries[0].Labels).Len())
+	require.Equal(t, map[string]struct{}{"bar": {}, "boo": {}}, hr.seenTenants)
+}
+
+func TestHandlerFlippingHashrings(t *testing.T) {
+	h := NewHandler(log.NewLogfmtLogger(os.Stderr), &Options{})
+	t.Cleanup(h.Close)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	h1, err := newSimpleHashring([]Endpoint{
+		{
+			Address: "http://localhost:9090",
+		},
+	})
+	require.NoError(t, err)
+	h2, err := newSimpleHashring([]Endpoint{
+		{
+			Address: "http://localhost:9091",
+		},
+	})
+	require.NoError(t, err)
+
+	h.Hashring(h1)
+
+	var wg sync.WaitGroup
+
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+
+		for {
+			select {
+			case <-time.After(50 * time.Millisecond):
+			case <-ctx.Done():
+				return
+			}
+
+			_, err := h.handleRequest(ctx, 0, "test", &prompb.WriteRequest{
+				Timeseries: []prompb.TimeSeries{
+					{
+						Labels: labelpb.ZLabelsFromPromLabels(labels.FromStrings("foo", "bar")),
+						Samples: []prompb.Sample{
+							{
+								Timestamp: time.Now().Unix(),
+								Value:     123,
+							},
+						},
+					},
+				},
+			})
+			require.Error(t, err)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		var flipper bool
+
+		for {
+			select {
+			case <-time.After(200 * time.Millisecond):
+			case <-ctx.Done():
+				return
+			}
+
+			if flipper {
+				h.Hashring(h2)
+			} else {
+				h.Hashring(h1)
+			}
+			flipper = !flipper
+		}
+	}()
+
+	<-time.After(1 * time.Second)
+	cancel()
+	wg.Wait()
+}
+
+func TestIngestorRestart(t *testing.T) {
+	var err error
+	logger := log.NewLogfmtLogger(os.Stderr)
+	addr1, addr2, addr3 := "localhost:14090", "localhost:14091", "localhost:14092"
+	ing1, ing2 := startIngestor(logger, addr1, 0), startIngestor(logger, addr2, 0)
+	defer ing1.Shutdown(err) // srv1 is stable and will only be closed after the test ends
+
+	clientAddr := "ingestor.com"
+	dnsBuilder := &dnsResolverBuilder{
+		logger:    logger,
+		addrStore: map[string][]string{clientAddr: {addr2}},
+	}
+	resolver.Register(dnsBuilder)
+	dialOpts := []grpc.DialOption{
+		grpc.WithIdleTimeout(1 * time.Second), // set idle timeout to 1s will re-establish the connection quickly
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithResolvers(resolver.Get(dnsScheme)),
+	}
+	client := NewHandler(logger, &Options{
+		MaxBackoff:        1 * time.Second,
+		DialOpts:          dialOpts,
+		ReplicationFactor: 2,
+		ReceiverMode:      RouterOnly,
+		ForwardTimeout:    15 * time.Second,
+	})
+	// one of the endpoints is DNS and wire up to different backend address on the fly
+	client.Hashring(&simpleHashring{addr1, fmt.Sprintf("%s:///%s", dnsScheme, clientAddr)})
+	defer client.Close()
+
+	ctx := context.TODO()
+	data := &prompb.WriteRequest{
+		Timeseries: []prompb.TimeSeries{
+			{
+				Labels:  labelpb.ZLabelsFromPromLabels(labels.FromStrings("foo", addr3)),
+				Samples: []prompb.Sample{{Timestamp: time.Now().Unix(), Value: 123}},
+			},
+		},
+	}
+
+	_, err = client.handleRequest(ctx, 0, "test", data)
+	require.NoError(t, err)
+
+	// close srv2 to simulate ingestor down
+	ing2.Shutdown(err)
+	ing3 := startIngestor(logger, addr3, 2*time.Second)
+	defer ing3.Shutdown(err)
+	// bind the new backend to the same DNS
+	dnsBuilder.addrStore[clientAddr] = []string{addr3}
+
+	iter, errs := 10, 0
+	for i := 0; i < iter; i++ {
+		_, err = client.handleRequest(ctx, 0, "test", data)
+		if err != nil {
+			require.Error(t, errUnavailable, err)
+			errs++
+		} else {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	require.Greater(t, errs, 0, "expected to have unavailable errors initially")
+	require.Less(t, errs, iter, "expected to recover quickly after server restarts")
+}
+
+type fakeStoreServer struct {
+	logger log.Logger
+}
+
+func (f *fakeStoreServer) RemoteWrite(_ context.Context, in *storepb.WriteRequest) (*storepb.WriteResponse, error) {
+	level.Debug(f.logger).Log("msg", "received remote write request", "request", in.String())
+	return &storepb.WriteResponse{}, nil
+}
+
+func startIngestor(logger log.Logger, serverAddress string, delay time.Duration) *grpcserver.Server {
+	h := &fakeStoreServer{logger: logger}
+	srv := grpcserver.TestServer(logger, component.Receive, serverAddress,
+		grpcserver.WithServer(store.RegisterWritableStoreServer(h)),
+	)
+	go func() {
+		if delay > 0 {
+			time.Sleep(delay)
+		}
+		if err := srv.ListenAndServe(); err != nil {
+			level.Error(logger).Log("msg", "server error", "addr", serverAddress, "err", err)
+		}
+	}()
+	return srv
 }

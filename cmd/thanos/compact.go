@@ -239,8 +239,16 @@ func runCompact(
 	consistencyDelayMetaFilter := block.NewConsistencyDelayMetaFilter(logger, conf.consistencyDelay, extprom.WrapRegistererWithPrefix("thanos_", reg))
 	timePartitionMetaFilter := block.NewTimePartitionMetaFilter(conf.filterConf.MinTime, conf.filterConf.MaxTime)
 
-	baseBlockIDsFetcher := block.NewBaseBlockIDsFetcher(logger, insBkt)
-	baseMetaFetcher, err := block.NewBaseFetcher(logger, conf.blockMetaFetchConcurrency, insBkt, baseBlockIDsFetcher, conf.dataDir, extprom.WrapRegistererWithPrefix("thanos_", reg))
+	var blockLister block.Lister
+	switch syncStrategy(conf.blockListStrategy) {
+	case concurrentDiscovery:
+		blockLister = block.NewConcurrentLister(logger, insBkt)
+	case recursiveDiscovery:
+		blockLister = block.NewRecursiveLister(logger, insBkt)
+	default:
+		return errors.Errorf("unknown sync strategy %s", conf.blockListStrategy)
+	}
+	baseMetaFetcher, err := block.NewBaseFetcher(logger, conf.blockMetaFetchConcurrency, insBkt, blockLister, conf.dataDir, extprom.WrapRegistererWithPrefix("thanos_", reg))
 	if err != nil {
 		return errors.Wrap(err, "create meta fetcher")
 	}
@@ -369,12 +377,14 @@ func runCompact(
 		compactMetrics.blocksMarked.WithLabelValues(metadata.NoCompactMarkFilename, metadata.IndexSizeExceedingNoCompactReason),
 	)
 	blocksCleaner := compact.NewBlocksCleaner(logger, insBkt, ignoreDeletionMarkFilter, deleteDelay, compactMetrics.blocksCleaned, compactMetrics.blockCleanupFailures)
-	compactor, err := compact.NewBucketCompactor(
+	compactor, err := compact.NewBucketCompactorWithCheckerAndCallback(
 		logger,
 		sy,
 		grouper,
 		planner,
 		comp,
+		compact.DefaultBlockDeletableChecker{},
+		compact.NewOverlappingCompactionLifecycleCallback(reg, conf.enableOverlappingRemoval),
 		compactDir,
 		insBkt,
 		conf.compactionConcurrency,
@@ -429,7 +439,7 @@ func runCompact(
 
 	compactMainFn := func() error {
 		if err := compactor.Compact(ctx); err != nil {
-			return errors.Wrap(err, "compaction")
+			return errors.Wrap(err, "whole compaction error")
 		}
 
 		if !conf.disableDownsampling {
@@ -448,9 +458,9 @@ func runCompact(
 			}
 
 			for _, meta := range filteredMetas {
-				groupKey := meta.Thanos.GroupKey()
-				downsampleMetrics.downsamples.WithLabelValues(groupKey)
-				downsampleMetrics.downsampleFailures.WithLabelValues(groupKey)
+				resolutionLabel := meta.Thanos.ResolutionString()
+				downsampleMetrics.downsamples.WithLabelValues(resolutionLabel)
+				downsampleMetrics.downsampleFailures.WithLabelValues(resolutionLabel)
 			}
 
 			if err := downsampleBucket(
@@ -693,6 +703,7 @@ type compactConfig struct {
 	wait                                           bool
 	waitInterval                                   time.Duration
 	disableDownsampling                            bool
+	blockListStrategy                              string
 	blockMetaFetchConcurrency                      int
 	blockFilesConcurrency                          int
 	blockViewerSyncBlockInterval                   time.Duration
@@ -710,6 +721,7 @@ type compactConfig struct {
 	maxBlockIndexSize                              units.Base2Bytes
 	hashFunc                                       string
 	enableVerticalCompaction                       bool
+	enableOverlappingRemoval                       bool
 	dedupFunc                                      string
 	skipBlockWithOutOfOrderChunks                  bool
 	progressCalculateInterval                      time.Duration
@@ -754,6 +766,9 @@ func (cc *compactConfig) registerFlag(cmd extkingpin.FlagClause) {
 		"as querying long time ranges without non-downsampled data is not efficient and useful e.g it is not possible to render all samples for a human eye anyway").
 		Default("false").BoolVar(&cc.disableDownsampling)
 
+	strategies := strings.Join([]string{string(concurrentDiscovery), string(recursiveDiscovery)}, ", ")
+	cmd.Flag("block-discovery-strategy", "One of "+strategies+". When set to concurrent, stores will concurrently issue one call per directory to discover active blocks in the bucket. The recursive strategy iterates through all objects in the bucket, recursively traversing into each directory. This avoids N+1 calls at the expense of having slower bucket iterations.").
+		Default(string(concurrentDiscovery)).StringVar(&cc.blockListStrategy)
 	cmd.Flag("block-meta-fetch-concurrency", "Number of goroutines to use when fetching block metadata from object storage.").
 		Default("32").IntVar(&cc.blockMetaFetchConcurrency)
 	cmd.Flag("block-files-concurrency", "Number of goroutines to use when fetching/uploading block files from object storage.").
@@ -785,6 +800,9 @@ func (cc *compactConfig) registerFlag(cmd extkingpin.FlagClause) {
 		"Please note that by default this uses a NAIVE algorithm for merging. If you need a different deduplication algorithm (e.g one that works well with Prometheus replicas), please set it via --deduplication.func."+
 		"NOTE: This flag is ignored and (enabled) when --deduplication.replica-label flag is set.").
 		Hidden().Default("false").BoolVar(&cc.enableVerticalCompaction)
+
+	cmd.Flag("compact.enable-overlapping-removal", "In house flag to remove overlapping blocks. Turn this on to fix https://github.com/thanos-io/thanos/issues/6775.").
+		Default("false").BoolVar(&cc.enableOverlappingRemoval)
 
 	cmd.Flag("deduplication.func", "Experimental. Deduplication algorithm for merging overlapping blocks. "+
 		"Possible values are: \"\", \"penalty\". If no value is specified, the default compact deduplication merger is used, which performs 1:1 deduplication for samples. "+

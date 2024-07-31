@@ -14,20 +14,19 @@ import (
 	"testing"
 	"time"
 
+	"github.com/efficientgo/core/testutil"
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/require"
-
-	"github.com/prometheus/prometheus/model/labels"
-	"github.com/thanos-io/thanos/pkg/store"
-
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	"github.com/efficientgo/core/testutil"
-	"github.com/pkg/errors"
 	promtestutil "github.com/prometheus/client_golang/prometheus/testutil"
+	"github.com/prometheus/prometheus/model/labels"
+
 	"github.com/thanos-io/thanos/pkg/component"
 	"github.com/thanos-io/thanos/pkg/info/infopb"
+	"github.com/thanos-io/thanos/pkg/store"
 	"github.com/thanos-io/thanos/pkg/store/labelpb"
 	"github.com/thanos-io/thanos/pkg/store/storepb"
 )
@@ -316,6 +315,14 @@ func TestEndpointSetUpdate(t *testing.T) {
 	# HELP thanos_store_nodes_grpc_connections Number of gRPC connection to Store APIs. Opened connection means healthy store APIs available for Querier.
 	# TYPE thanos_store_nodes_grpc_connections gauge
 	`
+	const metricsMetaAddr = `
+	# HELP thanos_store_nodes_grpc_connections_addr Number of gRPC connection to Store APIs. Opened connection means healthy store APIs available for Querier.
+	# TYPE thanos_store_nodes_grpc_connections_addr gauge
+	`
+	const metricsMetaKeys = `
+	# HELP thanos_store_nodes_grpc_connections_keys Number of gRPC connection to Store APIs. Opened connection means healthy store APIs available for Querier.
+	# TYPE thanos_store_nodes_grpc_connections_keys gauge
+	`
 	testCases := []struct {
 		name       string
 		endpoints  []testEndpointMeta
@@ -343,6 +350,12 @@ func TestEndpointSetUpdate(t *testing.T) {
 			expectedConnMetrics: metricsMeta +
 				`
 			thanos_store_nodes_grpc_connections{store_type="sidecar"} 1
+			` + metricsMetaAddr +
+				`
+			thanos_store_nodes_grpc_connections_addr{addr="127.0.0.1",replica_key=""} 1
+			` + metricsMetaKeys +
+				`
+			thanos_store_nodes_grpc_connections_keys{group_key="",replica_key=""} 1
 			`,
 		},
 		{
@@ -397,6 +410,12 @@ func TestEndpointSetUpdate(t *testing.T) {
 			expectedConnMetrics: metricsMeta +
 				`
 			thanos_store_nodes_grpc_connections{store_type="sidecar"} 1
+			` + metricsMetaAddr +
+				`
+			thanos_store_nodes_grpc_connections_addr{addr="127.0.0.1",replica_key=""} 1
+			` + metricsMetaKeys +
+				`
+			thanos_store_nodes_grpc_connections_keys{group_key="",replica_key=""} 1
 			`,
 		},
 		{
@@ -420,6 +439,12 @@ func TestEndpointSetUpdate(t *testing.T) {
 			expectedEndpoints: 1,
 			expectedConnMetrics: metricsMeta + `
 			thanos_store_nodes_grpc_connections{external_labels="{lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val}",store_type="sidecar"} 1
+			` + metricsMetaAddr +
+				`
+			thanos_store_nodes_grpc_connections_addr{addr="127.0.0.1",replica_key=""} 1
+			` + metricsMetaKeys +
+				`
+			thanos_store_nodes_grpc_connections_keys{group_key="",replica_key=""} 1
 			`,
 		},
 	}

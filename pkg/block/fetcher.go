@@ -42,7 +42,9 @@ const FetcherConcurrency = 32
 // to allow depending projects (eg. Cortex) to implement their own custom metadata fetcher while tracking
 // compatible metrics.
 type BaseFetcherMetrics struct {
-	Syncs prometheus.Counter
+	Syncs          prometheus.Counter
+	CacheMemoryHit prometheus.Counter
+	CacheDiskHit   prometheus.Counter
 }
 
 // FetcherMetrics holds metrics tracked by the metadata fetcher. This struct and its fields are exported
@@ -77,7 +79,7 @@ func (s *FetcherMetrics) ResetTx() {
 }
 
 const (
-	fetcherSubSys = "blocks_meta"
+	FetcherSubSys = "blocks_meta"
 
 	CorruptedMeta = "corrupted-meta-json"
 	NoMeta        = "no-meta-json"
@@ -101,22 +103,26 @@ const (
 
 	// Modified label values.
 	replicaRemovedMeta = "replica-label-removed"
-
-	tenantLabel    = "__tenant__"
-	defautTenant   = "__not_set__"
-	replicaLabel   = "__replica__"
-	defaultReplica = ""
 )
 
 func NewBaseFetcherMetrics(reg prometheus.Registerer) *BaseFetcherMetrics {
 	var m BaseFetcherMetrics
 
 	m.Syncs = promauto.With(reg).NewCounter(prometheus.CounterOpts{
-		Subsystem: fetcherSubSys,
+		Subsystem: FetcherSubSys,
 		Name:      "base_syncs_total",
 		Help:      "Total blocks metadata synchronization attempts by base Fetcher",
 	})
-
+	m.CacheMemoryHit = promauto.With(reg).NewCounter(prometheus.CounterOpts{
+		Subsystem: FetcherSubSys,
+		Name:      "base_cache_memory_hits_total",
+		Help:      "Total blocks metadata from memory cache hits",
+	})
+	m.CacheDiskHit = promauto.With(reg).NewCounter(prometheus.CounterOpts{
+		Subsystem: FetcherSubSys,
+		Name:      "base_cache_disk_hits_total",
+		Help:      "Total blocks metadata from disk cache hits",
+	})
 	return &m
 }
 
@@ -124,17 +130,17 @@ func NewFetcherMetrics(reg prometheus.Registerer, syncedExtraLabels, modifiedExt
 	var m FetcherMetrics
 
 	m.Syncs = promauto.With(reg).NewCounter(prometheus.CounterOpts{
-		Subsystem: fetcherSubSys,
+		Subsystem: FetcherSubSys,
 		Name:      "syncs_total",
 		Help:      "Total blocks metadata synchronization attempts",
 	})
 	m.SyncFailures = promauto.With(reg).NewCounter(prometheus.CounterOpts{
-		Subsystem: fetcherSubSys,
+		Subsystem: FetcherSubSys,
 		Name:      "sync_failures_total",
 		Help:      "Total blocks metadata synchronization failures",
 	})
 	m.SyncDuration = promauto.With(reg).NewHistogram(prometheus.HistogramOpts{
-		Subsystem: fetcherSubSys,
+		Subsystem: FetcherSubSys,
 		Name:      "sync_duration_seconds",
 		Help:      "Duration of the blocks metadata synchronization in seconds",
 		Buckets:   []float64{0.01, 1, 10, 100, 300, 600, 1000},
@@ -142,7 +148,7 @@ func NewFetcherMetrics(reg prometheus.Registerer, syncedExtraLabels, modifiedExt
 	m.Synced = extprom.NewTxGaugeVec(
 		reg,
 		prometheus.GaugeOpts{
-			Subsystem: fetcherSubSys,
+			Subsystem: FetcherSubSys,
 			Name:      "synced",
 			Help:      "Number of block metadata synced",
 		},
@@ -152,7 +158,7 @@ func NewFetcherMetrics(reg prometheus.Registerer, syncedExtraLabels, modifiedExt
 	m.Modified = extprom.NewTxGaugeVec(
 		reg,
 		prometheus.GaugeOpts{
-			Subsystem: fetcherSubSys,
+			Subsystem: FetcherSubSys,
 			Name:      "modified",
 			Help:      "Number of blocks whose metadata changed",
 		},
@@ -162,7 +168,7 @@ func NewFetcherMetrics(reg prometheus.Registerer, syncedExtraLabels, modifiedExt
 	m.SyncedByTenant = extprom.NewTxGaugeVec(
 		reg,
 		prometheus.GaugeOpts{
-			Subsystem: fetcherSubSys,
+			Subsystem: FetcherSubSys,
 			Name:      "synced_by_tenant",
 			Help:      "Number of metadata blocks synced broken down by tenant",
 		},
@@ -172,11 +178,11 @@ func NewFetcherMetrics(reg prometheus.Registerer, syncedExtraLabels, modifiedExt
 	m.Assigned = extprom.NewTxGaugeVec(
 		reg,
 		prometheus.GaugeOpts{
-			Subsystem: fetcherSubSys,
+			Subsystem: FetcherSubSys,
 			Name:      "assigned",
 			Help:      "Number of metadata blocks assigned to this pod after all filters.",
 		},
-		[]string{"tenant", "level", "replica"},
+		[]string{"tenant", "level"},
 		// No init label values is fine. The only downside is those guages won't be reset to 0, but it's fine for the use case.
 	)
 	return &m
@@ -203,26 +209,27 @@ func DefaultModifiedLabelValues() [][]string {
 	}
 }
 
-// Fetcher interface to retieve blockId information from a bucket.
-type BlockIDsFetcher interface {
-	// GetActiveBlocksIDs returning it via channel (streaming) and response.
+// Lister lists block IDs from a bucket.
+type Lister interface {
+	// GetActiveAndPartialBlockIDs GetActiveBlocksIDs returning it via channel (streaming) and response.
 	// Active blocks are blocks which contain meta.json, while partial blocks are blocks without meta.json
 	GetActiveAndPartialBlockIDs(ctx context.Context, ch chan<- ulid.ULID) (partialBlocks map[ulid.ULID]bool, err error)
 }
 
-type BaseBlockIDsFetcher struct {
+// RecursiveLister lists block IDs by recursively iterating through a bucket.
+type RecursiveLister struct {
 	logger log.Logger
 	bkt    objstore.InstrumentedBucketReader
 }
 
-func NewBaseBlockIDsFetcher(logger log.Logger, bkt objstore.InstrumentedBucketReader) *BaseBlockIDsFetcher {
-	return &BaseBlockIDsFetcher{
+func NewRecursiveLister(logger log.Logger, bkt objstore.InstrumentedBucketReader) *RecursiveLister {
+	return &RecursiveLister{
 		logger: logger,
 		bkt:    bkt,
 	}
 }
 
-func (f *BaseBlockIDsFetcher) GetActiveAndPartialBlockIDs(ctx context.Context, ch chan<- ulid.ULID) (partialBlocks map[ulid.ULID]bool, err error) {
+func (f *RecursiveLister) GetActiveAndPartialBlockIDs(ctx context.Context, ch chan<- ulid.ULID) (partialBlocks map[ulid.ULID]bool, err error) {
 	partialBlocks = make(map[ulid.ULID]bool)
 	err = f.bkt.Iter(ctx, "", func(name string) error {
 		parts := strings.Split(name, "/")
@@ -249,6 +256,74 @@ func (f *BaseBlockIDsFetcher) GetActiveAndPartialBlockIDs(ctx context.Context, c
 	return partialBlocks, err
 }
 
+// ConcurrentLister lists block IDs by doing a top level iteration of the bucket
+// followed by one Exists call for each discovered block to detect partial blocks.
+type ConcurrentLister struct {
+	logger log.Logger
+	bkt    objstore.InstrumentedBucketReader
+}
+
+func NewConcurrentLister(logger log.Logger, bkt objstore.InstrumentedBucketReader) *ConcurrentLister {
+	return &ConcurrentLister{
+		logger: logger,
+		bkt:    bkt,
+	}
+}
+
+func (f *ConcurrentLister) GetActiveAndPartialBlockIDs(ctx context.Context, ch chan<- ulid.ULID) (partialBlocks map[ulid.ULID]bool, err error) {
+	const concurrency = 64
+
+	partialBlocks = make(map[ulid.ULID]bool)
+	var (
+		metaChan = make(chan ulid.ULID, concurrency)
+		eg, gCtx = errgroup.WithContext(ctx)
+		mu       sync.Mutex
+	)
+	for i := 0; i < concurrency; i++ {
+		eg.Go(func() error {
+			for uid := range metaChan {
+				// TODO(bwplotka): If that causes problems (obj store rate limits), add longer ttl to cached items.
+				// For 1y and 100 block sources this generates ~1.5-3k HEAD RPM. AWS handles 330k RPM per prefix.
+				// TODO(bwplotka): Consider filtering by consistency delay here (can't do until compactor healthyOverride work).
+				metaFile := path.Join(uid.String(), MetaFilename)
+				ok, err := f.bkt.Exists(gCtx, metaFile)
+				if err != nil {
+					return errors.Wrapf(err, "meta.json file exists: %v", uid)
+				}
+				if !ok {
+					mu.Lock()
+					partialBlocks[uid] = true
+					mu.Unlock()
+					continue
+				}
+				ch <- uid
+			}
+			return nil
+		})
+	}
+
+	if err = f.bkt.Iter(ctx, "", func(name string) error {
+		id, ok := IsBlockDir(name)
+		if !ok {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case metaChan <- id:
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	close(metaChan)
+
+	if err := eg.Wait(); err != nil {
+		return nil, err
+	}
+	return partialBlocks, nil
+}
+
 type MetadataFetcher interface {
 	Fetch(ctx context.Context) (metas map[ulid.ULID]*metadata.Meta, partial map[ulid.ULID]error, err error)
 	UpdateOnChange(func([]metadata.Meta, error))
@@ -267,27 +342,28 @@ type MetadataFilter interface {
 // BaseFetcher is a struct that synchronizes filtered metadata of all block in the object storage with the local state.
 // Go-routine safe.
 type BaseFetcher struct {
-	logger          log.Logger
-	concurrency     int
-	bkt             objstore.InstrumentedBucketReader
-	blockIDsFetcher BlockIDsFetcher
+	logger         log.Logger
+	concurrency    int
+	bkt            objstore.InstrumentedBucketReader
+	blockIDsLister Lister
 
 	// Optional local directory to cache meta.json files.
 	cacheDir string
-	syncs    prometheus.Counter
 	g        singleflight.Group
 
 	mtx    sync.Mutex
 	cached map[ulid.ULID]*metadata.Meta
+
+	metrics *BaseFetcherMetrics
 }
 
 // NewBaseFetcher constructs BaseFetcher.
-func NewBaseFetcher(logger log.Logger, concurrency int, bkt objstore.InstrumentedBucketReader, blockIDsFetcher BlockIDsFetcher, dir string, reg prometheus.Registerer) (*BaseFetcher, error) {
+func NewBaseFetcher(logger log.Logger, concurrency int, bkt objstore.InstrumentedBucketReader, blockIDsFetcher Lister, dir string, reg prometheus.Registerer) (*BaseFetcher, error) {
 	return NewBaseFetcherWithMetrics(logger, concurrency, bkt, blockIDsFetcher, dir, NewBaseFetcherMetrics(reg))
 }
 
 // NewBaseFetcherWithMetrics constructs BaseFetcher.
-func NewBaseFetcherWithMetrics(logger log.Logger, concurrency int, bkt objstore.InstrumentedBucketReader, blockIDsFetcher BlockIDsFetcher, dir string, metrics *BaseFetcherMetrics) (*BaseFetcher, error) {
+func NewBaseFetcherWithMetrics(logger log.Logger, concurrency int, bkt objstore.InstrumentedBucketReader, blockIDsLister Lister, dir string, metrics *BaseFetcherMetrics) (*BaseFetcher, error) {
 	if logger == nil {
 		logger = log.NewNopLogger()
 	}
@@ -301,24 +377,24 @@ func NewBaseFetcherWithMetrics(logger log.Logger, concurrency int, bkt objstore.
 	}
 
 	return &BaseFetcher{
-		logger:          log.With(logger, "component", "block.BaseFetcher"),
-		concurrency:     concurrency,
-		bkt:             bkt,
-		blockIDsFetcher: blockIDsFetcher,
-		cacheDir:        cacheDir,
-		cached:          map[ulid.ULID]*metadata.Meta{},
-		syncs:           metrics.Syncs,
+		logger:         log.With(logger, "component", "block.BaseFetcher"),
+		concurrency:    concurrency,
+		bkt:            bkt,
+		blockIDsLister: blockIDsLister,
+		cacheDir:       cacheDir,
+		cached:         map[ulid.ULID]*metadata.Meta{},
+		metrics:        metrics,
 	}, nil
 }
 
 // NewRawMetaFetcher returns basic meta fetcher without proper handling for eventual consistent backends or partial uploads.
 // NOTE: Not suitable to use in production.
-func NewRawMetaFetcher(logger log.Logger, bkt objstore.InstrumentedBucketReader, blockIDsFetcher BlockIDsFetcher) (*MetaFetcher, error) {
+func NewRawMetaFetcher(logger log.Logger, bkt objstore.InstrumentedBucketReader, blockIDsFetcher Lister) (*MetaFetcher, error) {
 	return NewMetaFetcher(logger, 1, bkt, blockIDsFetcher, "", nil, nil)
 }
 
 // NewMetaFetcher returns meta fetcher.
-func NewMetaFetcher(logger log.Logger, concurrency int, bkt objstore.InstrumentedBucketReader, blockIDsFetcher BlockIDsFetcher, dir string, reg prometheus.Registerer, filters []MetadataFilter) (*MetaFetcher, error) {
+func NewMetaFetcher(logger log.Logger, concurrency int, bkt objstore.InstrumentedBucketReader, blockIDsFetcher Lister, dir string, reg prometheus.Registerer, filters []MetadataFilter) (*MetaFetcher, error) {
 	b, err := NewBaseFetcher(logger, concurrency, bkt, blockIDsFetcher, dir, reg)
 	if err != nil {
 		return nil, err
@@ -327,7 +403,7 @@ func NewMetaFetcher(logger log.Logger, concurrency int, bkt objstore.Instrumente
 }
 
 // NewMetaFetcherWithMetrics returns meta fetcher.
-func NewMetaFetcherWithMetrics(logger log.Logger, concurrency int, bkt objstore.InstrumentedBucketReader, blockIDsFetcher BlockIDsFetcher, dir string, baseFetcherMetrics *BaseFetcherMetrics, fetcherMetrics *FetcherMetrics, filters []MetadataFilter) (*MetaFetcher, error) {
+func NewMetaFetcherWithMetrics(logger log.Logger, concurrency int, bkt objstore.InstrumentedBucketReader, blockIDsFetcher Lister, dir string, baseFetcherMetrics *BaseFetcherMetrics, fetcherMetrics *FetcherMetrics, filters []MetadataFilter) (*MetaFetcher, error) {
 	b, err := NewBaseFetcherWithMetrics(logger, concurrency, bkt, blockIDsFetcher, dir, baseFetcherMetrics)
 	if err != nil {
 		return nil, err
@@ -359,6 +435,7 @@ func (f *BaseFetcher) loadMeta(ctx context.Context, id ulid.ULID) (*metadata.Met
 	)
 
 	if m, seen := f.cached[id]; seen {
+		f.metrics.CacheMemoryHit.Inc()
 		return m, nil
 	}
 
@@ -366,6 +443,7 @@ func (f *BaseFetcher) loadMeta(ctx context.Context, id ulid.ULID) (*metadata.Met
 	if f.cacheDir != "" {
 		m, err := metadata.ReadFromDir(cachedBlockDir)
 		if err == nil {
+			f.metrics.CacheDiskHit.Inc()
 			return m, nil
 		}
 
@@ -426,7 +504,7 @@ type response struct {
 }
 
 func (f *BaseFetcher) fetchMetadata(ctx context.Context) (interface{}, error) {
-	f.syncs.Inc()
+	f.metrics.Syncs.Inc()
 
 	var (
 		resp = response{
@@ -444,7 +522,7 @@ func (f *BaseFetcher) fetchMetadata(ctx context.Context) (interface{}, error) {
 			for id := range ch {
 				meta, err := f.loadMeta(ctx, id)
 				numBlocks += 1
-				if (numBlocks % 10) == 0 {
+				if (numBlocks % 1000) == 0 {
 					level.Debug(f.logger).Log("msg", "loaded the metadata of a block from one goroutine",
 						"block", id,
 						"n_th_block", numBlocks,
@@ -488,7 +566,7 @@ func (f *BaseFetcher) fetchMetadata(ctx context.Context) (interface{}, error) {
 	// Workers scheduled, distribute blocks.
 	eg.Go(func() error {
 		defer close(ch)
-		partialBlocks, err = f.blockIDsFetcher.GetActiveAndPartialBlockIDs(ctx, ch)
+		partialBlocks, err = f.blockIDsLister.GetActiveAndPartialBlockIDs(ctx, ch)
 		return err
 	})
 
@@ -579,11 +657,7 @@ func (f *BaseFetcher) fetch(ctx context.Context, metrics *FetcherMetrics, filter
 	metas := make(map[ulid.ULID]*metadata.Meta, len(resp.metas))
 	for id, m := range resp.metas {
 		metas[id] = m
-		if tenant, ok := m.Thanos.Labels[tenantLabel]; ok {
-			numBlocksByTenant[tenant]++
-		} else {
-			numBlocksByTenant[defautTenant]++
-		}
+		numBlocksByTenant[m.Thanos.GetTenant()]++
 	}
 
 	for tenant, numBlocks := range numBlocksByTenant {
@@ -605,16 +679,7 @@ func (f *BaseFetcher) fetch(ctx context.Context, metrics *FetcherMetrics, filter
 	// Therefore, it's skipped to update the gauge.
 	if len(filters) > 0 {
 		for _, m := range metas {
-			var tenant, replica string
-			var ok bool
-			// tenant and replica will have the zero value ("") if the key is not in the map.
-			if tenant, ok = m.Thanos.Labels[tenantLabel]; !ok {
-				tenant = defautTenant
-			}
-			if replica, ok = m.Thanos.Labels[replicaLabel]; !ok {
-				replica = defaultReplica
-			}
-			metrics.Assigned.WithLabelValues(tenant, strconv.Itoa(m.BlockMeta.Compaction.Level), replica).Inc()
+			metrics.Assigned.WithLabelValues(m.Thanos.GetTenant(), strconv.Itoa(m.BlockMeta.Compaction.Level)).Inc()
 		}
 	}
 
@@ -706,8 +771,13 @@ func NewLabelShardedMetaFilter(relabelConfig []*relabel.Config) *LabelShardedMet
 	return &LabelShardedMetaFilter{relabelConfig: relabelConfig}
 }
 
-// Special label that will have an ULID of the meta.json being referenced to.
-const BlockIDLabel = "__block_id"
+const (
+	// BlockIDLabel Special label that will have an ULID of the meta.json being referenced to.
+	BlockIDLabel = "__block_id"
+
+	// BlockLevelLabel Special label that will have the compaction level of the meta.json being referenced to.
+	BlockLevelLabel = "__block_level"
+)
 
 // Filter filters out blocks that have no labels after relabelling of each block external (Thanos) labels.
 func (f *LabelShardedMetaFilter) Filter(_ context.Context, metas map[ulid.ULID]*metadata.Meta, synced GaugeVec, modified GaugeVec) error {
@@ -715,6 +785,7 @@ func (f *LabelShardedMetaFilter) Filter(_ context.Context, metas map[ulid.ULID]*
 	for id, m := range metas {
 		b.Reset(labels.EmptyLabels())
 		b.Set(BlockIDLabel, id.String())
+		b.Set(BlockLevelLabel, strconv.Itoa(m.BlockMeta.Compaction.Level))
 
 		for k, v := range m.Thanos.Labels {
 			b.Set(k, v)

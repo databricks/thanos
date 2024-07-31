@@ -20,13 +20,13 @@ import (
 	"github.com/go-kit/log/level"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
-	"github.com/weaveworks/common/httpgrpc"
-	"github.com/weaveworks/common/httpgrpc/server"
-
+	"github.com/thanos-io/thanos/internal/cortex/frontend/transport/utils"
 	querier_stats "github.com/thanos-io/thanos/internal/cortex/querier/stats"
 	"github.com/thanos-io/thanos/internal/cortex/tenant"
 	"github.com/thanos-io/thanos/internal/cortex/util"
 	util_log "github.com/thanos-io/thanos/internal/cortex/util/log"
+	"github.com/weaveworks/common/httpgrpc"
+	"github.com/weaveworks/common/httpgrpc/server"
 )
 
 const (
@@ -41,20 +41,22 @@ var (
 	errRequestEntityTooLarge = httpgrpc.Errorf(http.StatusRequestEntityTooLarge, "http: request body too large")
 )
 
-// Config for a Handler.
+// HandlerConfig Config for a Handler.
 type HandlerConfig struct {
-	LogQueriesLongerThan time.Duration `yaml:"log_queries_longer_than"`
-	MaxBodySize          int64         `yaml:"max_body_size"`
-	QueryStatsEnabled    bool          `yaml:"query_stats_enabled"`
-	LogFailedQueries    bool          `yaml:"log_failed_queries"`
+	LogQueriesLongerThan     time.Duration `yaml:"log_queries_longer_than"`
+	MaxBodySize              int64         `yaml:"max_body_size"`
+	QueryStatsEnabled        bool          `yaml:"query_stats_enabled"`
+	LogFailedQueries         bool          `yaml:"log_failed_queries"`
+	FailedQueryCacheCapacity int           `yaml:"failed_query_cache_capacity"`
 }
 
 // Handler accepts queries and forwards them to RoundTripper. It can log slow queries,
 // but all other logic is inside the RoundTripper.
 type Handler struct {
-	cfg          HandlerConfig
-	log          log.Logger
-	roundTripper http.RoundTripper
+	cfg              HandlerConfig
+	log              log.Logger
+	roundTripper     http.RoundTripper
+	failedQueryCache *utils.FailedQueryCache
 
 	// Metrics.
 	querySeconds *prometheus.CounterVec
@@ -69,6 +71,14 @@ func NewHandler(cfg HandlerConfig, roundTripper http.RoundTripper, log log.Logge
 		cfg:          cfg,
 		log:          log,
 		roundTripper: roundTripper,
+	}
+
+	if cfg.FailedQueryCacheCapacity > 0 {
+		FailedQueryCache, errQueryCache := utils.NewFailedQueryCache(cfg.FailedQueryCacheCapacity, reg)
+		if errQueryCache != nil {
+			level.Warn(log).Log(errQueryCache.Error())
+		}
+		h.failedQueryCache = FailedQueryCache
 	}
 
 	if cfg.QueryStatsEnabled {
@@ -92,6 +102,7 @@ func NewHandler(cfg HandlerConfig, roundTripper http.RoundTripper, log log.Logge
 			h.querySeries.DeleteLabelValues(user)
 			h.queryBytes.DeleteLabelValues(user)
 		})
+
 		// If cleaner stops or fail, we will simply not clean the metrics for inactive users.
 		_ = h.activeUsers.StartAsync(context.Background())
 	}
@@ -103,6 +114,7 @@ func (f *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var (
 		stats       *querier_stats.Stats
 		queryString url.Values
+		urlQuery    url.Values
 	)
 
 	// Initialise the stats in the context and make sure it's propagated
@@ -122,14 +134,37 @@ func (f *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, f.cfg.MaxBodySize)
 	r.Body = io.NopCloser(io.TeeReader(r.Body, &buf))
 
+	urlQuery = r.URL.Query()
+
+	// Check if query is cached
+	if f.failedQueryCache != nil {
+		cached, message := f.failedQueryCache.QueryHitCache(urlQuery)
+		if cached {
+			w.WriteHeader(http.StatusForbidden)
+			level.Info(util_log.WithContext(r.Context(), f.log)).Log(message)
+			return
+		}
+	}
+
 	startTime := time.Now()
 	resp, err := f.roundTripper.RoundTrip(r)
 	queryResponseTime := time.Since(startTime)
 
 	if err != nil {
 		writeError(w, err)
+		queryString = f.parseRequestQueryString(r, buf)
+
+		// Update cache for failed queries.
+		if f.failedQueryCache != nil {
+			success, message := f.failedQueryCache.UpdateFailedQueryCache(err, urlQuery)
+			if success {
+				level.Info(util_log.WithContext(r.Context(), f.log)).Log(message)
+			} else {
+				level.Debug(util_log.WithContext(r.Context(), f.log)).Log(message)
+			}
+		}
+
 		if f.cfg.LogFailedQueries {
-			queryString = f.parseRequestQueryString(r, buf)
 			f.reportFailedQuery(r, queryString, err)
 		}
 		return

@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/model/labels"
@@ -56,6 +57,19 @@ func TestQueryInstantCodec_DecodeRequest(t *testing.T) {
 				Time:          123000,
 				Dedup:         true,
 				StoreMatchers: [][]*labels.Matcher{},
+			},
+		},
+		{
+			name:            "parse with analyze",
+			url:             "/api/v1/query?time=123&query=up&analyze=true",
+			partialResponse: false,
+			expectedRequest: &ThanosQueryInstantRequest{
+				Path:          "/api/v1/query",
+				Query:         "up",
+				Time:          123000,
+				Dedup:         true,
+				StoreMatchers: [][]*labels.Matcher{},
+				Analyze:       true,
 			},
 		},
 		{
@@ -159,10 +173,10 @@ func TestQueryInstantCodec_DecodeRequest(t *testing.T) {
 			codec := NewThanosQueryInstantCodec(tc.partialResponse)
 			req, err := codec.DecodeRequest(context.Background(), r, nil)
 			if tc.expectedError != nil {
-				testutil.Equals(t, err, tc.expectedError)
+				testutil.Equals(t, tc.expectedError, err)
 			} else {
 				testutil.Ok(t, err)
-				testutil.Equals(t, req, tc.expectedRequest)
+				testutil.Equals(t, tc.expectedRequest, req)
 			}
 		})
 	}
@@ -250,10 +264,10 @@ func TestQueryInstantCodec_EncodeRequest(t *testing.T) {
 			codec := NewThanosQueryInstantCodec(false)
 			r, err := codec.EncodeRequest(context.TODO(), tc.req)
 			if tc.expectedError != nil {
-				testutil.Equals(t, err, tc.expectedError)
+				testutil.Equals(t, tc.expectedError, err)
 			} else {
 				testutil.Ok(t, err)
-				testutil.Equals(t, tc.checkFunc(r), true)
+				testutil.Equals(t, true, tc.checkFunc(r))
 			}
 		})
 	}
@@ -272,12 +286,55 @@ func TestMergeResponse(t *testing.T) {
 		expectedErr  error
 	}{
 		{
+			name: "response with analysis",
+			req:  defaultReq,
+			expectedResp: &queryrange.PrometheusInstantQueryResponse{
+				Status: queryrange.StatusSuccess,
+				Data: queryrange.PrometheusInstantQueryData{
+					ResultType: model.ValScalar.String(),
+					Analysis: &queryrange.Analysis{
+						Name:          "foo",
+						ExecutionTime: queryrange.Duration(1 * time.Second),
+					},
+					Result: queryrange.PrometheusInstantQueryResult{
+						Result: &queryrange.PrometheusInstantQueryResult_Scalar{
+							Scalar: &cortexpb.Sample{
+								TimestampMs: 0,
+								Value:       1,
+							},
+						},
+					},
+				},
+			},
+			resps: []queryrange.Response{
+				&queryrange.PrometheusInstantQueryResponse{
+					Status: queryrange.StatusSuccess,
+					Data: queryrange.PrometheusInstantQueryData{
+						ResultType: model.ValScalar.String(),
+						Analysis: &queryrange.Analysis{
+							Name:          "foo",
+							ExecutionTime: queryrange.Duration(1 * time.Second),
+						},
+						Result: queryrange.PrometheusInstantQueryResult{
+							Result: &queryrange.PrometheusInstantQueryResult_Scalar{
+								Scalar: &cortexpb.Sample{
+									TimestampMs: 0,
+									Value:       1,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
 			name:  "empty response",
 			req:   defaultReq,
 			resps: []queryrange.Response{},
 			expectedResp: &queryrange.PrometheusInstantQueryResponse{
 				Status: queryrange.StatusSuccess,
 				Data: queryrange.PrometheusInstantQueryData{
+					Analysis:   nil,
 					ResultType: model.ValVector.String(),
 					Result: queryrange.PrometheusInstantQueryResult{
 						Result: &queryrange.PrometheusInstantQueryResult_Vector{},
@@ -315,6 +372,7 @@ func TestMergeResponse(t *testing.T) {
 				Status: queryrange.StatusSuccess,
 				Data: queryrange.PrometheusInstantQueryData{
 					ResultType: model.ValVector.String(),
+					Analysis:   nil,
 					Result: queryrange.PrometheusInstantQueryResult{
 						Result: &queryrange.PrometheusInstantQueryResult_Vector{
 							Vector: &queryrange.Vector{
@@ -388,6 +446,7 @@ func TestMergeResponse(t *testing.T) {
 				Status: queryrange.StatusSuccess,
 				Data: queryrange.PrometheusInstantQueryData{
 					ResultType: model.ValVector.String(),
+					Analysis:   &queryrange.Analysis{},
 					Result: queryrange.PrometheusInstantQueryResult{
 						Result: &queryrange.PrometheusInstantQueryResult_Vector{
 							Vector: &queryrange.Vector{
@@ -469,6 +528,7 @@ func TestMergeResponse(t *testing.T) {
 			expectedResp: &queryrange.PrometheusInstantQueryResponse{
 				Status: queryrange.StatusSuccess,
 				Data: queryrange.PrometheusInstantQueryData{
+					Analysis:   &queryrange.Analysis{},
 					ResultType: model.ValVector.String(),
 					Result: queryrange.PrometheusInstantQueryResult{
 						Result: &queryrange.PrometheusInstantQueryResult_Vector{
@@ -550,6 +610,7 @@ func TestMergeResponse(t *testing.T) {
 				Status: queryrange.StatusSuccess,
 				Data: queryrange.PrometheusInstantQueryData{
 					ResultType: model.ValVector.String(),
+					Analysis:   &queryrange.Analysis{},
 					Result: queryrange.PrometheusInstantQueryResult{
 						Result: &queryrange.PrometheusInstantQueryResult_Vector{
 							Vector: &queryrange.Vector{
@@ -574,6 +635,90 @@ func TestMergeResponse(t *testing.T) {
 							},
 						},
 					},
+				},
+			},
+		},
+		{
+			name: "merge two responses with series status counter",
+			req:  defaultReq,
+			resps: []queryrange.Response{
+				&queryrange.PrometheusInstantQueryResponse{
+					Status: queryrange.StatusSuccess,
+					Data: queryrange.PrometheusInstantQueryData{
+						ResultType: model.ValVector.String(),
+						Result: queryrange.PrometheusInstantQueryResult{
+							Result: &queryrange.PrometheusInstantQueryResult_Vector{
+								Vector: &queryrange.Vector{
+									Samples: []*queryrange.Sample{
+										{
+											Timestamp:   0,
+											SampleValue: 1,
+											Labels: cortexpb.FromLabelsToLabelAdapters(labels.FromMap(map[string]string{
+												"__name__": "up",
+												"job":      "foo",
+											})),
+										},
+									},
+								},
+							},
+						},
+						SeriesStatsCounter: &queryrange.SeriesStatsCounter{Series: 2, Chunks: 16, Samples: 256, Bytes: 1024},
+					},
+				},
+				&queryrange.PrometheusInstantQueryResponse{
+					Status: queryrange.StatusSuccess,
+					Data: queryrange.PrometheusInstantQueryData{
+						ResultType: model.ValVector.String(),
+						Result: queryrange.PrometheusInstantQueryResult{
+							Result: &queryrange.PrometheusInstantQueryResult_Vector{
+								Vector: &queryrange.Vector{
+									Samples: []*queryrange.Sample{
+										{
+											Timestamp:   0,
+											SampleValue: 2,
+											Labels: cortexpb.FromLabelsToLabelAdapters(labels.FromMap(map[string]string{
+												"__name__": "up",
+												"job":      "bar",
+											})),
+										},
+									},
+								},
+							},
+						},
+						SeriesStatsCounter: &queryrange.SeriesStatsCounter{Series: 2, Chunks: 16, Samples: 256, Bytes: 1024},
+					},
+				},
+			},
+			expectedResp: &queryrange.PrometheusInstantQueryResponse{
+				Status: queryrange.StatusSuccess,
+				Data: queryrange.PrometheusInstantQueryData{
+					ResultType: model.ValVector.String(),
+					Analysis:   &queryrange.Analysis{},
+					Result: queryrange.PrometheusInstantQueryResult{
+						Result: &queryrange.PrometheusInstantQueryResult_Vector{
+							Vector: &queryrange.Vector{
+								Samples: []*queryrange.Sample{
+									{
+										Timestamp:   0,
+										SampleValue: 2,
+										Labels: cortexpb.FromLabelsToLabelAdapters(labels.FromMap(map[string]string{
+											"__name__": "up",
+											"job":      "bar",
+										})),
+									},
+									{
+										Timestamp:   0,
+										SampleValue: 1,
+										Labels: cortexpb.FromLabelsToLabelAdapters(labels.FromMap(map[string]string{
+											"__name__": "up",
+											"job":      "foo",
+										})),
+									},
+								},
+							},
+						},
+					},
+					SeriesStatsCounter: &queryrange.SeriesStatsCounter{Series: 4, Chunks: 32, Samples: 512, Bytes: 2048},
 				},
 			},
 		},
@@ -630,6 +775,7 @@ func TestMergeResponse(t *testing.T) {
 				Status: queryrange.StatusSuccess,
 				Data: queryrange.PrometheusInstantQueryData{
 					ResultType: model.ValVector.String(),
+					Analysis:   &queryrange.Analysis{},
 					Result: queryrange.PrometheusInstantQueryResult{
 						Result: &queryrange.PrometheusInstantQueryResult_Vector{
 							Vector: &queryrange.Vector{
@@ -686,6 +832,7 @@ func TestMergeResponse(t *testing.T) {
 				Status: queryrange.StatusSuccess,
 				Data: queryrange.PrometheusInstantQueryData{
 					ResultType: model.ValVector.String(),
+					Analysis:   &queryrange.Analysis{},
 					Result: queryrange.PrometheusInstantQueryResult{
 						Result: &queryrange.PrometheusInstantQueryResult_Vector{
 							Vector: &queryrange.Vector{
@@ -761,6 +908,7 @@ func TestMergeResponse(t *testing.T) {
 				Status: queryrange.StatusSuccess,
 				Data: queryrange.PrometheusInstantQueryData{
 					ResultType: model.ValMatrix.String(),
+					Analysis:   &queryrange.Analysis{},
 					Result: queryrange.PrometheusInstantQueryResult{
 						Result: &queryrange.PrometheusInstantQueryResult_Matrix{
 							Matrix: &queryrange.Matrix{
@@ -794,6 +942,7 @@ func TestMergeResponse(t *testing.T) {
 					Status: queryrange.StatusSuccess,
 					Data: queryrange.PrometheusInstantQueryData{
 						ResultType: model.ValMatrix.String(),
+						Analysis:   &queryrange.Analysis{},
 						Result: queryrange.PrometheusInstantQueryResult{
 							Result: &queryrange.PrometheusInstantQueryResult_Matrix{
 								Matrix: &queryrange.Matrix{
@@ -851,6 +1000,7 @@ func TestMergeResponse(t *testing.T) {
 				Status: queryrange.StatusSuccess,
 				Data: queryrange.PrometheusInstantQueryData{
 					ResultType: model.ValMatrix.String(),
+					Analysis:   &queryrange.Analysis{},
 					Result: queryrange.PrometheusInstantQueryResult{
 						Result: &queryrange.PrometheusInstantQueryResult_Matrix{
 							Matrix: &queryrange.Matrix{
@@ -879,8 +1029,8 @@ func TestMergeResponse(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			resp, err := codec.MergeResponse(tc.req, tc.resps...)
-			testutil.Equals(t, err, tc.expectedErr)
-			testutil.Equals(t, resp, tc.expectedResp)
+			testutil.Equals(t, tc.expectedErr, err)
+			testutil.Equals(t, tc.expectedResp, resp)
 		})
 	}
 }
@@ -897,37 +1047,33 @@ func TestDecodeResponse(t *testing.T) {
 		expectedErr      error
 	}{
 		{
-			name: "with explanation",
+			name: "with analysis",
 			body: `{
-  "status":"success",
-  "data":{
-	"resultType":"vector",
-	"result":[],
-	"explanation": {
-		"name":"[*concurrencyOperator(buff=2)]",
-		"children":[{"name":"[*aggregate] sum by ([])", "children": []}]
-    }
-}
-}`,
+				"status": "success",
+				"data": {
+					"resultType": "scalar",
+					"result": [
+						1708690766.576,
+						"1708690766.576"
+					],
+					"analysis": {
+						"name": "[noArgFunction]",
+						"executionTime": "1s"
+					}
+				}
+			}`,
 			expectedResponse: &queryrange.PrometheusInstantQueryResponse{
 				Status:  queryrange.StatusSuccess,
 				Headers: headers,
 				Data: queryrange.PrometheusInstantQueryData{
-					Explanation: &queryrange.Explanation{
-						Name: "[*concurrencyOperator(buff=2)]",
-						Children: []*queryrange.Explanation{
-							{
-								Name:     "[*aggregate] sum by ([])",
-								Children: []*queryrange.Explanation{},
-							},
-						},
+					Analysis: &queryrange.Analysis{
+						Name:          "[noArgFunction]",
+						ExecutionTime: queryrange.Duration(1 * time.Second),
 					},
-					ResultType: model.ValVector.String(),
+					ResultType: model.ValScalar.String(),
 					Result: queryrange.PrometheusInstantQueryResult{
-						Result: &queryrange.PrometheusInstantQueryResult_Vector{
-							Vector: &queryrange.Vector{
-								Samples: []*queryrange.Sample{},
-							},
+						Result: &queryrange.PrometheusInstantQueryResult_Scalar{
+							Scalar: &cortexpb.Sample{TimestampMs: 1708690766576, Value: 1708690766.576},
 						},
 					},
 				},

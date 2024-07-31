@@ -144,8 +144,8 @@ func runReceive(
 		logger,
 		reg,
 		tracer,
-		conf.grpcConfig.tlsSrvCert != "",
-		conf.grpcConfig.tlsSrvClientCA == "",
+		conf.rwClientSecure,
+		conf.rwClientSkipVerify,
 		conf.rwClientCert,
 		conf.rwClientKey,
 		conf.rwClientServerCA,
@@ -156,6 +156,10 @@ func runReceive(
 	}
 	if conf.compression != compressionNone {
 		dialOpts = append(dialOpts, grpc.WithDefaultCallOptions(grpc.UseCompressor(conf.compression)))
+	}
+	if receiveMode == receive.RouterOnly {
+		dialOpts = append(dialOpts, grpc.WithIdleTimeout(time.Duration(*conf.maxBackoff)))
+		dialOpts = append(dialOpts, extgrpc.EndpointGroupGRPCOpts()...)
 	}
 
 	var bkt objstore.Bucket
@@ -237,24 +241,27 @@ func runReceive(
 	}
 
 	webHandler := receive.NewHandler(log.With(logger, "component", "receive-handler"), &receive.Options{
-		Writer:            writer,
-		ListenAddress:     conf.rwAddress,
-		Registry:          reg,
-		Endpoint:          conf.endpoint,
-		TenantHeader:      conf.tenantHeader,
-		TenantField:       conf.tenantField,
-		DefaultTenantID:   conf.defaultTenantID,
-		ReplicaHeader:     conf.replicaHeader,
-		ReplicationFactor: conf.replicationFactor,
-		RelabelConfigs:    relabelConfig,
-		ReceiverMode:      receiveMode,
-		Tracer:            tracer,
-		TLSConfig:         rwTLSConfig,
-		DialOpts:          dialOpts,
-		ForwardTimeout:    time.Duration(*conf.forwardTimeout),
-		MaxBackoff:        time.Duration(*conf.maxBackoff),
-		TSDBStats:         dbs,
-		Limiter:           limiter,
+		Writer:               writer,
+		ListenAddress:        conf.rwAddress,
+		Registry:             reg,
+		Endpoint:             conf.endpoint,
+		TenantHeader:         conf.tenantHeader,
+		TenantField:          conf.tenantField,
+		DefaultTenantID:      conf.defaultTenantID,
+		ReplicaHeader:        conf.replicaHeader,
+		ReplicationFactor:    conf.replicationFactor,
+		RelabelConfigs:       relabelConfig,
+		ReceiverMode:         receiveMode,
+		Tracer:               tracer,
+		TLSConfig:            rwTLSConfig,
+		SplitTenantLabelName: conf.splitTenantLabelName,
+		DialOpts:             dialOpts,
+		ForwardTimeout:       time.Duration(*conf.forwardTimeout),
+		MaxBackoff:           time.Duration(*conf.maxBackoff),
+		TSDBStats:            dbs,
+		Limiter:              limiter,
+
+		AsyncForwardWorkerCount: conf.asyncForwardWorkerCount,
 	})
 
 	grpcProbe := prober.NewGRPC()
@@ -317,9 +324,8 @@ func runReceive(
 			return errors.Wrap(err, "setup gRPC server")
 		}
 
-		options := []store.ProxyStoreOption{}
-		if debugLogging {
-			options = append(options, store.WithProxyStoreDebugLogging())
+		options := []store.ProxyStoreOption{
+			store.WithProxyStoreDebugLogging(debugLogging),
 		}
 
 		proxy := store.NewProxyStore(
@@ -341,7 +347,7 @@ func runReceive(
 		infoSrv := info.NewInfoServer(
 			component.Receive.String(),
 			info.WithLabelSetFunc(func() []labelpb.ZLabelSet { return proxy.LabelSet() }),
-			info.WithStoreInfoFunc(func() *infopb.StoreInfo {
+			info.WithStoreInfoFunc(func() (*infopb.StoreInfo, error) {
 				if httpProbe.IsReady() {
 					minTime, maxTime := proxy.TimeRange()
 					return &infopb.StoreInfo{
@@ -350,9 +356,9 @@ func runReceive(
 						SupportsSharding:             true,
 						SupportsWithoutReplicaLabels: true,
 						TsdbInfos:                    proxy.TSDBInfos(),
-					}
+					}, nil
 				}
-				return nil
+				return nil, errors.New("Not ready")
 			}),
 			info.WithExemplarsInfoFunc(),
 		)
@@ -779,8 +785,10 @@ type receiveConfig struct {
 	rwServerClientCA   string
 	rwClientCert       string
 	rwClientKey        string
+	rwClientSecure     bool
 	rwClientServerCA   string
 	rwClientServerName string
+	rwClientSkipVerify bool
 
 	dataDir   string
 	labelStrs []string
@@ -816,9 +824,10 @@ type receiveConfig struct {
 	tsdbMemorySnapshotOnShutdown bool
 	tsdbEnableNativeHistograms   bool
 
-	walCompression  bool
-	noLockFile      bool
-	writerInterning bool
+	walCompression       bool
+	noLockFile           bool
+	writerInterning      bool
+	splitTenantLabelName string
 
 	hashFunc string
 
@@ -831,6 +840,8 @@ type receiveConfig struct {
 	writeLimitsConfig       *extflag.PathOrContent
 	storeRateLimits         store.SeriesSelectLimits
 	limitsConfigReloadTimer time.Duration
+
+	asyncForwardWorkerCount uint
 }
 
 func (rc *receiveConfig) registerFlag(cmd extkingpin.FlagClause) {
@@ -850,6 +861,10 @@ func (rc *receiveConfig) registerFlag(cmd extkingpin.FlagClause) {
 	cmd.Flag("remote-write.client-tls-cert", "TLS Certificates to use to identify this client to the server.").Default("").StringVar(&rc.rwClientCert)
 
 	cmd.Flag("remote-write.client-tls-key", "TLS Key for the client's certificate.").Default("").StringVar(&rc.rwClientKey)
+
+	cmd.Flag("remote-write.client-tls-secure", "Use TLS when talking to the other receivers.").Default("false").BoolVar(&rc.rwClientSecure)
+
+	cmd.Flag("remote-write.client-tls-skip-verify", "Disable TLS certificate verification when talking to the other receivers i.e self signed, signed by fake CA.").Default("false").BoolVar(&rc.rwClientSkipVerify)
 
 	cmd.Flag("remote-write.client-tls-ca", "TLS CA Certificates to use to verify servers.").Default("").StringVar(&rc.rwClientServerCA)
 
@@ -884,10 +899,13 @@ func (rc *receiveConfig) registerFlag(cmd extkingpin.FlagClause) {
 
 	cmd.Flag("receive.default-tenant-id", "Default tenant ID to use when none is provided via a header.").Default(tenancy.DefaultTenant).StringVar(&rc.defaultTenantID)
 
+	cmd.Flag("receive.split-tenant-label-name", "Label name through which the request will be split into multiple tenants. This takes precedence over the HTTP header.").Default("").StringVar(&rc.splitTenantLabelName)
+
 	cmd.Flag("receive.tenant-label-name", "Label name through which the tenant will be announced.").Default(tenancy.DefaultTenantLabel).StringVar(&rc.tenantLabelName)
 
 	cmd.Flag("receive.replica-header", "HTTP header specifying the replica number of a write request.").Default(receive.DefaultReplicaHeader).StringVar(&rc.replicaHeader)
 
+	cmd.Flag("receive.forward.async-workers", "Number of concurrent workers processing forwarding of remote-write requests.").Default("5").UintVar(&rc.asyncForwardWorkerCount)
 	compressionOptions := strings.Join([]string{snappy.Name, compressionNone}, ", ")
 	cmd.Flag("receive.grpc-compression", "Compression algorithm to use for gRPC requests to other receivers. Must be one of: "+compressionOptions).Default(snappy.Name).EnumVar(&rc.compression, snappy.Name, compressionNone)
 
