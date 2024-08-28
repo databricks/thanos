@@ -6,13 +6,13 @@ package utils
 
 import (
 	"fmt"
+	"github.com/hashicorp/golang-lru/v2/expirable"
 	"net/http"
 	"net/url"
 	"regexp"
 	"strconv"
 	"time"
 
-	lru "github.com/hashicorp/golang-lru"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
@@ -25,39 +25,35 @@ var (
 type FailedQueryCache struct {
 	regex         *regexp.Regexp
 	errorExtract  *regexp.Regexp
-	lruCache      *lru.Cache
+	lruCache      *expirable.LRU[string, int]
 	cachedHits    prometheus.Counter
 	cachedQueries prometheus.Gauge
 }
 
-func NewFailedQueryCache(capacity int, reg prometheus.Registerer) (*FailedQueryCache, error) {
+func NewFailedQueryCache(capacity int, ttlDuration time.Duration, reg prometheus.Registerer) *FailedQueryCache {
 	regex := regexp.MustCompile(`[\s\n\t]+`)
 	errorExtract := regexp.MustCompile(`Code\((\d+)\)`)
-	lruCache, err := lru.New(capacity)
-	if err != nil {
-		lruCache = nil
-		err = fmt.Errorf("failed to create lru cache: %s", err)
-		return nil, err
-	}
+	lruCacheWithTTL := expirable.NewLRU[string, int](capacity, nil, ttlDuration)
+
 	cachedHits := promauto.With(reg).NewCounter(prometheus.CounterOpts{
 		Namespace: "cortex",
-		Name: "cached_failed_queries_count",
-		Help: "Total number of queries that hit the failed query cache.",
+		Name:      "cached_failed_queries_count",
+		Help:      "Total number of queries that hit the failed query cache.",
 	})
 	cachedQueries := promauto.With(reg).NewGauge(prometheus.GaugeOpts{
 		Namespace: "cortex",
-		Name: "failed_query_cache_size",
-		Help: "How many queries are cached in the failed query cache.",
+		Name:      "failed_query_cache_size",
+		Help:      "How many queries are cached in the failed query cache.",
 	})
 	cachedQueries.Set(0)
 
 	return &FailedQueryCache{
 		regex:         regex,
 		errorExtract:  errorExtract,
-		lruCache:      lruCache,
+		lruCache:      lruCacheWithTTL,
 		cachedHits:    cachedHits,
 		cachedQueries: cachedQueries,
-	}, err
+	}
 }
 
 // UpdateFailedQueryCache returns true if query is cached so that callsite can increase counter, returns message as a string for callsite to log outcome
@@ -92,19 +88,20 @@ func (f *FailedQueryCache) updateFailedQueryCache(err error, queryExpressionNorm
 
 func (f *FailedQueryCache) addCacheEntry(queryExpressionNormalized string, queryExpressionRangeLength int) {
 	// Checks if queryExpression is already in cache, and updates time range length value to min of stored and new value.
-	if contains, _ := f.lruCache.ContainsOrAdd(queryExpressionNormalized, queryExpressionRangeLength); contains {
+	if contains := f.lruCache.Contains(queryExpressionNormalized); contains {
 		if oldValue, ok := f.lruCache.Get(queryExpressionNormalized); ok {
-			queryExpressionRangeLength = min(queryExpressionRangeLength, oldValue.(int))
+			queryExpressionRangeLength = min(queryExpressionRangeLength, oldValue)
 		}
-		f.lruCache.Add(queryExpressionNormalized, queryExpressionRangeLength)
 	}
+	f.lruCache.Add(queryExpressionNormalized, queryExpressionRangeLength)
+
 	f.cachedQueries.Set(float64(f.lruCache.Len()))
 }
 
 // QueryHitCache checks if the lru cache is hit and returns whether to increment counter for cache hits along with appropriate message.
-func queryHitCache(queryExpressionNormalized string, queryExpressionRangeLength int, lruCache *lru.Cache, cachedHits prometheus.Counter) (bool, string) {
-	if value, ok := lruCache.Get(queryExpressionNormalized); ok && value.(int) <= queryExpressionRangeLength {
-		cachedQueryRangeSeconds := value.(int)
+func queryHitCache(queryExpressionNormalized string, queryExpressionRangeLength int, lruCache *expirable.LRU[string, int], cachedHits prometheus.Counter) (bool, string) {
+	if value, ok := lruCache.Get(queryExpressionNormalized); ok && value <= queryExpressionRangeLength {
+		cachedQueryRangeSeconds := value
 		message := createLogMessage("Retrieved query from cache", queryExpressionNormalized, cachedQueryRangeSeconds, queryExpressionRangeLength, nil)
 		cachedHits.Inc()
 		return true, message
@@ -159,7 +156,7 @@ func (f *FailedQueryCache) UpdateFailedQueryCache(err error, query url.Values, q
 	queryExpressionRangeLength := getQueryRangeSeconds(query)
 	// TODO(hc.zhu): add a flag for the threshold
 	// The current gateway timeout is 5 minutes, so we cache the failed query running longer than 5 minutes - 10 seconds.
-	if queryResponseTime > time.Second * (60 * 5 - 10) {
+	if queryResponseTime > time.Second*(60*5-10) {
 		// Cache long running queries regardless of the error code. The most common case is "context canceled".
 		f.addCacheEntry(queryExpressionNormalized, queryExpressionRangeLength)
 		message := createLogMessage("Cached a failed long running query", queryExpressionNormalized, -1, queryExpressionRangeLength, err)

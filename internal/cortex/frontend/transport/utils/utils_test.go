@@ -34,19 +34,16 @@ func verifyMetricCount(t *testing.T, reg *prometheus.Registry, expectedCount int
 
 func TestNewFailedQueryCache(t *testing.T) {
 	reg := prometheus.NewRegistry()
-	cache, err := NewFailedQueryCache(2, reg)
+	cache := NewFailedQueryCache(2, 0, reg)
 	if cache == nil {
 		t.Fatalf("Expected cache to be created, but got nil")
-	}
-	if err != nil {
-		t.Fatalf("Expected no error message, but got: %s", err.Error())
 	}
 	verifyMetricCount(t, reg, 2)
 }
 
 func TestUpdateFailedQueryCache(t *testing.T) {
 	reg := prometheus.NewRegistry()
-	cache, _ := NewFailedQueryCache(3, reg)
+	cache := NewFailedQueryCache(3, 0, reg)
 
 	tests := []struct {
 		name              string
@@ -206,7 +203,7 @@ func TestUpdateFailedQueryCache(t *testing.T) {
 // TestQueryHitCache tests the QueryHitCache method
 func TestQueryHitCache(t *testing.T) {
 	reg := prometheus.NewRegistry()
-	cache, _ := NewFailedQueryCache(2, reg)
+	cache := NewFailedQueryCache(2, 0, reg)
 	lruCache := cache.lruCache
 
 	lruCache.Add("test_query", 100)
@@ -289,7 +286,7 @@ func TestQueryHitCache(t *testing.T) {
 
 func TestCacheCounterVec(t *testing.T) {
 	reg := prometheus.NewRegistry()
-	cache, _ := NewFailedQueryCache(2, reg)
+	cache := NewFailedQueryCache(2, 0, reg)
 	lruCache := cache.lruCache
 
 	lruCache.Add("test_query", 100)
@@ -371,12 +368,12 @@ func TestCacheCounterVec(t *testing.T) {
 
 func TestCacheLongRunningFailedQuery(t *testing.T) {
 	reg := prometheus.NewRegistry()
-	cache, _ := NewFailedQueryCache(3, reg)
+	cache := NewFailedQueryCache(3, 0, reg)
 
 	tests := []struct {
-		name              string
-		err               error
-		query             url.Values
+		name  string
+		err   error
+		query url.Values
 	}{
 		{
 			name: "No error code in error message",
@@ -401,7 +398,7 @@ func TestCacheLongRunningFailedQuery(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Long running failed query without an error code
-			cached, _ := cache.UpdateFailedQueryCache(tt.err, tt.query, time.Second*(5 * 60 - 1))
+			cached, _ := cache.UpdateFailedQueryCache(tt.err, tt.query, time.Second*(5*60-1))
 			if !cached {
 				t.Errorf("Should cache short running failed query without an error code")
 			}

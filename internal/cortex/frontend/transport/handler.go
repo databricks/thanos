@@ -48,6 +48,7 @@ type HandlerConfig struct {
 	QueryStatsEnabled        bool          `yaml:"query_stats_enabled"`
 	LogFailedQueries         bool          `yaml:"log_failed_queries"`
 	FailedQueryCacheCapacity int           `yaml:"failed_query_cache_capacity"`
+	FailedQueryTTL           time.Duration `yaml:"failed_query_ttl"`
 }
 
 // Handler accepts queries and forwards them to RoundTripper. It can log slow queries,
@@ -76,11 +77,8 @@ func NewHandler(cfg HandlerConfig, roundTripper http.RoundTripper, log log.Logge
 	}
 
 	if cfg.FailedQueryCacheCapacity > 0 {
-		level.Info(log).Log("msg", "Creating failed query cache", "capacity", cfg.FailedQueryCacheCapacity)
-		FailedQueryCache, errQueryCache := utils.NewFailedQueryCache(cfg.FailedQueryCacheCapacity, reg)
-		if errQueryCache != nil {
-			level.Warn(log).Log(errQueryCache.Error())
-		}
+		level.Info(log).Log("msg", "Creating failed query cache", "capacity", cfg.FailedQueryCacheCapacity, "ttl", cfg.FailedQueryTTL.String())
+		FailedQueryCache := utils.NewFailedQueryCache(cfg.FailedQueryCacheCapacity, cfg.FailedQueryTTL, reg)
 		h.failedQueryCache = FailedQueryCache
 	}
 
