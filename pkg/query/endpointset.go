@@ -721,6 +721,7 @@ func (e *EndpointSet) GetEndpointStatus() []EndpointStatus {
 
 	statuses := make([]EndpointStatus, 0, len(e.endpoints))
 	for _, v := range e.endpoints {
+		v := v
 		v.mtx.RLock()
 		defer v.mtx.RUnlock()
 
