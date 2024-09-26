@@ -16,9 +16,9 @@ import (
 func detectCorruptLabels(lbls labels.Labels, matchers []storepb.LabelMatcher) bool {
 	for _, m := range matchers {
 		v := lbls.Get(m.Name)
-		if v == "" {
-			continue
-		}
+		//if v == "" {
+		//	continue
+		//}
 		if (m.Type == storepb.LabelMatcher_EQ && v != m.Value) ||
 			(m.Type == storepb.LabelMatcher_NEQ && v == m.Value) {
 			return true
