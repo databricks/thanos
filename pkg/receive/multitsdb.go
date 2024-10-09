@@ -414,10 +414,11 @@ func (t *MultiTSDB) Close() error {
 
 // Prune flushes and closes the TSDB for tenants that haven't received
 // any new samples for longer than the TSDB retention period.
-func (t *MultiTSDB) Prune(ctx context.Context) error {
+// Returns true if DB becomes empty after an effective prune, otherwise false.
+func (t *MultiTSDB) Prune(ctx context.Context) (bool, error) {
 	// Retention of 0 means infinite retention.
 	if t.tsdbOpts.RetentionDuration == 0 {
-		return nil
+		return false, nil
 	}
 	level.Info(t.logger).Log("msg", "Running pruning job")
 
@@ -461,8 +462,10 @@ func (t *MultiTSDB) Prune(ctx context.Context) error {
 		level.Info(t.logger).Log("msg", "Pruned tenant", "tenant", tenantID)
 		delete(t.tenants, tenantID)
 	}
-
-	return merr.Err()
+	if len(prunedTenants) != 0 && len(t.tenants) == 0 {
+		return true, merr.Err()
+	}
+	return false, merr.Err()
 }
 
 // pruneTSDB removes a TSDB if its past the retention period.

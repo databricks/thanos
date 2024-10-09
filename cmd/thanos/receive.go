@@ -434,8 +434,11 @@ func runReceive(
 				if currentTotalMinutes%int(pruneInterval.Minutes()) != 0 {
 					return nil
 				}
-				if err := dbs.Prune(ctx); err != nil {
+				empty, err := dbs.Prune(ctx)
+				if err != nil {
 					level.Error(logger).Log("err", err)
+				} else if empty && conf.exitOnEmptyDB {
+					return errors.New("DB becomes empty after an effective prune")
 				}
 				return nil
 			})
@@ -887,6 +890,7 @@ type receiveConfig struct {
 	topMetricsUpdateInterval     time.Duration
 
 	skipMatchExternalLabels bool
+	exitOnEmptyDB           bool
 }
 
 func (rc *receiveConfig) registerFlag(cmd extkingpin.FlagClause) {
@@ -1039,6 +1043,7 @@ func (rc *receiveConfig) registerFlag(cmd extkingpin.FlagClause) {
 	cmd.Flag("receive.top-metrics-update-interval", "The interval at which the top metrics are updated.").
 		Default("5m").DurationVar(&rc.topMetricsUpdateInterval)
 	cmd.Flag("tsdb.skip-match-external-labels", "If true, skip matching external labels for Series requests.").Default("false").BoolVar(&rc.skipMatchExternalLabels)
+	cmd.Flag("tsdb.exit-on-empty-db", "If true, exit after a prune when db becomes empty.").Default("false").BoolVar(&rc.exitOnEmptyDB)
 }
 
 // determineMode returns the ReceiverMode that this receiver is configured to run in.
