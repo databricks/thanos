@@ -470,7 +470,8 @@ func TestMultiTSDBPrune(t *testing.T) {
 				}()
 			}
 
-			testutil.Ok(t, m.Prune(ctx))
+			_, err := m.Prune(ctx)
+			testutil.Ok(t, err)
 			if test.bucket != nil {
 				_, err := m.Sync(ctx)
 				testutil.Ok(t, err)
@@ -524,7 +525,8 @@ func TestMultiTSDBRecreatePrunedTenant(t *testing.T) {
 	defer func() { testutil.Ok(t, m.Close()) }()
 
 	testutil.Ok(t, appendSample(m, "foo", time.UnixMilli(int64(10))))
-	testutil.Ok(t, m.Prune(context.Background()))
+	_, err := m.Prune(context.Background())
+	testutil.Ok(t, err)
 	testutil.Equals(t, 0, len(m.TSDBLocalClients()))
 
 	testutil.Ok(t, appendSample(m, "foo", time.UnixMilli(int64(10))))
