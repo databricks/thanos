@@ -106,6 +106,10 @@ func (t *MultiTSDB) SkipMatchExternalLabels() {
 	t.skipMatchExternalLabels = true
 }
 
+func (t *MultiTSDB) GetTenants() map[string]*tenant {
+	return t.tenants
+}
+
 type localClient struct {
 	store *store.TSDBStore
 }
