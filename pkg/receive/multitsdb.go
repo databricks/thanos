@@ -106,6 +106,12 @@ func (t *MultiTSDB) SkipMatchExternalLabels() {
 	t.skipMatchExternalLabels = true
 }
 
+func (t *MultiTSDB) GetTenantsLen() int {
+	t.mtx.RLock()
+	defer t.mtx.RUnlock()
+	return len(t.tenants)
+}
+
 type localClient struct {
 	store *store.TSDBStore
 }
