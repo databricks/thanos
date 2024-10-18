@@ -26,22 +26,32 @@ import (
 	"github.com/thanos-io/thanos/pkg/tracing"
 )
 
+type seriesStream interface {
+	Next() bool
+	At() *storepb.SeriesResponse
+}
+
 type responseDeduplicator struct {
-	h *losertree.Tree[*storepb.SeriesResponse, respSet]
+	h seriesStream
 
 	bufferedSameSeries []*storepb.SeriesResponse
 
 	bufferedResp []*storepb.SeriesResponse
 	buffRespI    int
 
-	prev             *storepb.SeriesResponse
-	ok               bool
+	prev *storepb.SeriesResponse
+	ok   bool
+
 	quorumChunkDedup bool
 }
 
 // NewResponseDeduplicator returns a wrapper around a loser tree that merges duplicated series messages into one.
 // It also deduplicates identical chunks identified by the same checksum from each series message.
-func NewResponseDeduplicator(h *losertree.Tree[*storepb.SeriesResponse, respSet]) *responseDeduplicator {
+func NewResponseDeduplicator(h seriesStream) *responseDeduplicator {
+	return NewResponseDeduplicatorInternal(h, false)
+}
+
+func NewResponseDeduplicatorInternal(h seriesStream, quorumChunkDedup bool) *responseDeduplicator {
 	ok := h.Next()
 	var prev *storepb.SeriesResponse
 	if ok {
@@ -74,7 +84,7 @@ func (d *responseDeduplicator) Next() bool {
 			d.ok = d.h.Next()
 			if !d.ok {
 				if len(d.bufferedSameSeries) > 0 {
-					d.bufferedResp = append(d.bufferedResp, chainSeriesAndRemIdenticalChunks(d.bufferedSameSeries, d.quorumChunkDedup))
+					d.bufferedResp = append(d.bufferedResp, d.chainSeriesAndRemIdenticalChunks(d.bufferedSameSeries))
 				}
 				return len(d.bufferedResp) > 0
 			}
@@ -102,14 +112,14 @@ func (d *responseDeduplicator) Next() bool {
 			continue
 		}
 
-		d.bufferedResp = append(d.bufferedResp, chainSeriesAndRemIdenticalChunks(d.bufferedSameSeries, d.quorumChunkDedup))
+		d.bufferedResp = append(d.bufferedResp, d.chainSeriesAndRemIdenticalChunks(d.bufferedSameSeries))
 		d.prev = s
 
 		return true
 	}
 }
 
-func chainSeriesAndRemIdenticalChunks(series []*storepb.SeriesResponse, quorum bool) *storepb.SeriesResponse {
+func (d *responseDeduplicator) chainSeriesAndRemIdenticalChunks(series []*storepb.SeriesResponse) *storepb.SeriesResponse {
 	chunkDedupMap := map[uint64]*storepb.AggrChunk{}
 	chunckCountMap := map[uint64]int{}
 
@@ -145,11 +155,11 @@ func chainSeriesAndRemIdenticalChunks(series []*storepb.SeriesResponse, quorum b
 
 	finalChunks := make([]storepb.AggrChunk, 0, len(chunkDedupMap))
 	for hash, chk := range chunkDedupMap {
-		if quorum {
+		if d.quorumChunkDedup {
 			// NB: this is specific to Databricks' setup where each time series is written to at least 2 out of 3 replicas.
 			// Each chunk should have 3 replicas in most cases, and 2 replicas in the worst acceptable cases.
 			// Quorum-based deduplication is used to pick the majority value among 3 replicas.
-			// If a chunck has only 2 identical replicas, there might be another chunk with corrupt data.
+			// If a chunk has only 2 identical replicas, there might be another chunk with corrupt data.
 			// We want to send those two identical replicas to the later quorum-based deduplication process to dominate any corrupt third replica.
 			if chunckCountMap[hash] >= 3 {
 				// Most of cases should hit this branch.
@@ -232,6 +242,7 @@ func (l *lazyRespSet) StoreLabels() map[string]struct{} {
 type lazyRespSet struct {
 	// Generic parameters.
 	span           opentracing.Span
+	cl             storepb.Store_SeriesClient
 	closeSeries    context.CancelFunc
 	storeName      string
 	storeLabelSets []labels.Labels
@@ -331,6 +342,7 @@ func newLazyRespSet(
 		frameTimeout:         frameTimeout,
 		storeName:            storeName,
 		storeLabelSets:       storeLabelSets,
+		cl:                   cl,
 		closeSeries:          closeSeries,
 		span:                 span,
 		dataOrFinishEvent:    dataAvailable,
@@ -354,9 +366,6 @@ func newLazyRespSet(
 			l.span.SetTag("processed.chunks", seriesStats.Chunks)
 			l.span.SetTag("processed.samples", seriesStats.Samples)
 			l.span.SetTag("processed.bytes", bytesProcessed)
-			if len(seriesStats.ChunkSt) > 0 {
-				l.span.SetTag("processed.chunk_stats", seriesStats.ChunkSt)
-			}
 			l.span.Finish()
 		}()
 
@@ -462,8 +471,10 @@ func newAsyncRespSet(
 	emptyStreamResponses prometheus.Counter,
 ) (respSet, error) {
 
-	var span opentracing.Span
-	var closeSeries context.CancelFunc
+	var (
+		span   opentracing.Span
+		cancel context.CancelFunc
+	)
 
 	storeID, storeAddr, isLocalStore := storeInfo(st)
 	seriesCtx := grpc_opentracing.ClientAddContextTags(ctx, opentracing.Tags{
@@ -475,7 +486,7 @@ func newAsyncRespSet(
 		"store.addr":     storeAddr,
 	})
 
-	seriesCtx, closeSeries = context.WithCancel(seriesCtx)
+	seriesCtx, cancel = context.WithCancel(seriesCtx)
 
 	shardMatcher := shardInfo.Matcher(buffers)
 
@@ -490,7 +501,7 @@ func newAsyncRespSet(
 
 		span.SetTag("err", err.Error())
 		span.Finish()
-		closeSeries()
+		cancel()
 		return nil, err
 	}
 
@@ -514,7 +525,7 @@ func newAsyncRespSet(
 			frameTimeout,
 			st.String(),
 			st.LabelSets(),
-			closeSeries,
+			cancel,
 			cl,
 			shardMatcher,
 			applySharding,
@@ -527,7 +538,7 @@ func newAsyncRespSet(
 			frameTimeout,
 			st.String(),
 			st.LabelSets(),
-			closeSeries,
+			cancel,
 			cl,
 			shardMatcher,
 			applySharding,
@@ -548,6 +559,7 @@ func (l *lazyRespSet) Close() {
 	l.dataOrFinishEvent.Signal()
 
 	l.shardMatcher.Close()
+	_ = l.cl.CloseSend()
 }
 
 // eagerRespSet is a SeriesSet that blocks until all data is retrieved from
@@ -557,6 +569,7 @@ type eagerRespSet struct {
 	// Generic parameters.
 	span opentracing.Span
 
+	cl           storepb.Store_SeriesClient
 	closeSeries  context.CancelFunc
 	frameTimeout time.Duration
 
@@ -587,6 +600,7 @@ func newEagerRespSet(
 ) respSet {
 	ret := &eagerRespSet{
 		span:              span,
+		cl:                cl,
 		closeSeries:       closeSeries,
 		frameTimeout:      frameTimeout,
 		bufferedResponses: []*storepb.SeriesResponse{},
@@ -615,9 +629,6 @@ func newEagerRespSet(
 			l.span.SetTag("processed.chunks", seriesStats.Chunks)
 			l.span.SetTag("processed.samples", seriesStats.Samples)
 			l.span.SetTag("processed.bytes", bytesProcessed)
-			if len(seriesStats.ChunkSt) > 0 {
-				l.span.SetTag("processed.chunk_stats", seriesStats.ChunkSt)
-			}
 			l.span.Finish()
 			ret.wg.Done()
 		}()
@@ -738,6 +749,7 @@ func (l *eagerRespSet) Close() {
 		l.closeSeries()
 	}
 	l.shardMatcher.Close()
+	_ = l.cl.CloseSend()
 }
 
 func (l *eagerRespSet) At() *storepb.SeriesResponse {
