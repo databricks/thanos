@@ -5,8 +5,10 @@ package main
 
 import (
 	"context"
+	"net/http"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -319,6 +321,15 @@ func runReceive(
 			httpserver.WithGracePeriod(time.Duration(*conf.httpGracePeriod)),
 			httpserver.WithTLSConfig(*conf.httpTLSConfig),
 		)
+		srv.Handle("/-/downscale", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			n := dbs.GetTenantsLen()
+			w.Header().Set("Tenant-Count", strconv.Itoa(n))
+			if n > 0 {
+				w.WriteHeader(http.StatusTooEarly)
+			} else {
+				w.WriteHeader(http.StatusOK)
+			}
+		}))
 		g.Add(func() error {
 			statusProber.Healthy()
 			return srv.ListenAndServe()
@@ -462,7 +473,7 @@ func runReceive(
 		ctx, cancel := context.WithCancel(context.Background())
 		g.Add(func() error {
 			return runutil.Repeat(conf.topMetricsUpdateInterval, ctx.Done(), func() error {
-				level.Info(logger).Log("msg", "getting top metrics")
+				level.Debug(logger).Log("msg", "getting top metrics")
 				for _, ts := range dbs.TenantStats(conf.numTopMetricsPerTenant, labels.MetricName) {
 					for _, ms := range ts.Stats.IndexPostingStats.CardinalityMetricsStats {
 						if ms.Count >= conf.topMetricsMinimumCardinality {
