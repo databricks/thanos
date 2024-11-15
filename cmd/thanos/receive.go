@@ -143,7 +143,10 @@ func runReceive(
 
 	level.Info(logger).Log("mode", receiveMode, "msg", "running receive")
 
-	multiTSDBOptions := []receive.MultiTSDBOption{}
+	multiTSDBOptions := []receive.MultiTSDBOption{
+		receive.WithHeadExpandedPostingsCacheSize(conf.headExpandedPostingsCacheSize),
+		receive.WithBlockExpandedPostingsCacheSize(conf.compactedBlocksExpandedPostingsCacheSize),
+	}
 	for _, feature := range *conf.featureList {
 		if feature == metricNamesFilter {
 			multiTSDBOptions = append(multiTSDBOptions, receive.WithMetricNameFilterEnabled())
@@ -1003,6 +1006,9 @@ type receiveConfig struct {
 	maxPendingGrpcWriteRequests   int
 
 	featureList *[]string
+
+	headExpandedPostingsCacheSize            uint64
+	compactedBlocksExpandedPostingsCacheSize uint64
 }
 
 func (rc *receiveConfig) registerFlag(cmd extkingpin.FlagClause) {
@@ -1114,6 +1120,9 @@ func (rc *receiveConfig) registerFlag(cmd extkingpin.FlagClause) {
 	cmd.Flag("tsdb.wal-compression", "Compress the tsdb WAL.").Default("true").BoolVar(&rc.walCompression)
 
 	cmd.Flag("tsdb.no-lockfile", "Do not create lockfile in TSDB data directory. In any case, the lockfiles will be deleted on next startup.").Default("false").BoolVar(&rc.noLockFile)
+
+	cmd.Flag("tsdb.head.expanded-postings-cache-size", "[EXPERIMENTAL] If non-zero, enables expanded postings cache for the head block.").Default("0").Uint64Var(&rc.headExpandedPostingsCacheSize)
+	cmd.Flag("tsdb.block.expanded-postings-cache-size", "[EXPERIMENTAL] If non-zero, enables expanded postings cache for compacted blocks.").Default("0").Uint64Var(&rc.compactedBlocksExpandedPostingsCacheSize)
 
 	cmd.Flag("tsdb.max-exemplars",
 		"Enables support for ingesting exemplars and sets the maximum number of exemplars that will be stored per tenant."+
