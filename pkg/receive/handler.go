@@ -863,6 +863,17 @@ func (h *Handler) fanoutForward(ctx context.Context, params remoteWriteParams) (
 	}
 }
 
+func printMap(data map[endpointReplica]map[string]trackedSeries) {
+	for key, innerMap := range data {
+		fmt.Printf("Endpoint: %s, Replica: %d\n", key.endpoint.Address, key.replica)
+		for strKey, series := range innerMap {
+			fmt.Printf("  Key: %s\n", strKey)
+			fmt.Printf("    SeriesIDs: %v\n", series.seriesIDs)
+			fmt.Printf("    TimeSeries length: %d\n", len(series.timeSeries))
+		}
+	}
+}
+
 // distributeTimeseriesToReplicas distributes the given timeseries from the tenant to different endpoints in a manner
 // that achieves the replication factor indicated by replicas.
 // The first return value are the series that should be written to the local node. The second return value are the
@@ -928,6 +939,10 @@ func (h *Handler) distributeTimeseriesToReplicas(
 	if h.receiverMode == IngestorOnly && len(remoteWrites) > 0 {
 		panic("ingestor only mode should not have any remote writes")
 	}
+	fmt.Println("localWrites:")
+	printMap(localWrites)
+	fmt.Println("remoteWrites:")
+	printMap(remoteWrites)
 	return localWrites, remoteWrites, nil
 }
 
