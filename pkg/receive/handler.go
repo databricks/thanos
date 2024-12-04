@@ -865,7 +865,7 @@ func (h *Handler) fanoutForward(ctx context.Context, params remoteWriteParams) (
 
 func printMap(data map[endpointReplica]map[string]trackedSeries) {
 	for key, innerMap := range data {
-		fmt.Printf("Endpoint: %s, Replica: %d\n", key.endpoint.Address, key.replica)
+		fmt.Printf("Endpoint: %s, CapNProtoAddress: %s, AZ: %s, Replica: %d\n", key.endpoint.Address, key.endpoint.CapNProtoAddress, key.endpoint.AZ, key.replica)
 		for strKey, series := range innerMap {
 			fmt.Printf("  Key: %s\n", strKey)
 			fmt.Printf("    SeriesIDs: %v\n", series.seriesIDs)
