@@ -849,7 +849,7 @@ func runQuery(
 
 		defaultEngineType := querypb.EngineType(querypb.EngineType_value[defaultEngine])
 		grpcAPI := apiv1.NewGRPCAPI(time.Now, queryReplicaLabels, queryableCreator, engineFactory, defaultEngineType, lookbackDeltaCreator, instantDefaultMaxSourceResolution)
-		s := grpcserver.New(logger, reg, tracer, grpcLogOpts, logFilterMethods, comp, grpcProbe,
+		s := grpcserver.New(logger, reg, tracer, grpcLogOpts, logFilterMethods, comp, grpcProbe, 0,
 			grpcserver.WithServer(apiv1.RegisterQueryServer(grpcAPI)),
 			grpcserver.WithServer(store.RegisterStoreServer(seriesProxy, logger)),
 			grpcserver.WithServer(rules.RegisterRulesServer(rulesProxy)),
