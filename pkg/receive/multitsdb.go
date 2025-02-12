@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -34,9 +35,13 @@ import (
 	"github.com/thanos-io/thanos/pkg/component"
 	"github.com/thanos-io/thanos/pkg/errutil"
 	"github.com/thanos-io/thanos/pkg/exemplars"
+	"github.com/thanos-io/thanos/pkg/extprom"
 	"github.com/thanos-io/thanos/pkg/info/infopb"
+	"github.com/thanos-io/thanos/pkg/logutil"
+	"github.com/thanos-io/thanos/pkg/receive/expandedpostingscache"
 	"github.com/thanos-io/thanos/pkg/shipper"
 	"github.com/thanos-io/thanos/pkg/store"
+	storecache "github.com/thanos-io/thanos/pkg/store/cache"
 	"github.com/thanos-io/thanos/pkg/store/labelpb"
 	"github.com/thanos-io/thanos/pkg/store/storepb"
 )
@@ -61,6 +66,8 @@ type MultiTSDB struct {
 	allowOutOfOrderUpload bool
 	hashFunc              metadata.HashFunc
 	hashringConfigs       []HashringConfig
+
+	matcherCache storecache.MatchersCache
 
 	tsdbClients     []store.Client
 	exemplarClients map[string]*exemplars.TSDB
@@ -118,6 +125,7 @@ func NewMultiTSDB(
 		bucket:                bucket,
 		allowOutOfOrderUpload: allowOutOfOrderUpload,
 		hashFunc:              hashFunc,
+		matcherCache:          storecache.NoopMatchersCache,
 	}
 
 	for _, option := range options {
@@ -710,9 +718,28 @@ func (t *MultiTSDB) startTSDB(logger log.Logger, tenantID string, tenant *tenant
 	dataDir := t.defaultTenantDataDir(tenantID)
 
 	level.Info(logger).Log("msg", "opening TSDB")
+
+	var expandedPostingsCache expandedpostingscache.ExpandedPostingsCache
+	if t.headExpandedPostingsCacheSize > 0 || t.blockExpandedPostingsCacheSize > 0 {
+		var expandedPostingsCacheMetrics = expandedpostingscache.NewPostingCacheMetrics(extprom.WrapRegistererWithPrefix("thanos_", reg))
+
+		expandedPostingsCache = expandedpostingscache.NewBlocksPostingsForMatchersCache(expandedPostingsCacheMetrics, t.headExpandedPostingsCacheSize, t.blockExpandedPostingsCacheSize, 0)
+	}
+
 	opts := *t.tsdbOpts
 	opts.BlocksToDelete = tenant.blocksToDelete
 	opts.EnableDelayedCompaction = true
+	opts.CompactionDelayMaxPercent = tsdb.DefaultCompactionDelayMaxPercent
+
+	opts.BlockChunkQuerierFunc = func(b tsdb.BlockReader, mint, maxt int64) (storage.ChunkQuerier, error) {
+		if expandedPostingsCache != nil {
+			return expandedpostingscache.NewCachedBlockChunkQuerier(expandedPostingsCache, b, mint, maxt)
+		}
+		return tsdb.NewBlockChunkQuerier(b, mint, maxt)
+	}
+	if expandedPostingsCache != nil {
+		opts.SeriesLifecycleCallback = expandedPostingsCache
+	}
 	tenant.blocksToDeleteFn = tsdb.DefaultBlocksToDelete
 
 	// NOTE(GiedriusS): always set to false to properly handle OOO samples - OOO samples are written into the WBL
@@ -722,7 +749,7 @@ func (t *MultiTSDB) startTSDB(logger log.Logger, tenantID string, tenant *tenant
 	opts.EnableOverlappingCompaction = false
 	s, err := tsdb.Open(
 		dataDir,
-		level.NewFilter(logger, level.AllowError()),
+		logutil.GoKitLogToSlog(logger),
 		reg,
 		&opts,
 		nil,

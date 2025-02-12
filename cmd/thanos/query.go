@@ -48,6 +48,7 @@ import (
 	"github.com/thanos-io/thanos/pkg/info"
 	"github.com/thanos-io/thanos/pkg/info/infopb"
 	"github.com/thanos-io/thanos/pkg/logging"
+	"github.com/thanos-io/thanos/pkg/logutil"
 	"github.com/thanos-io/thanos/pkg/metadata"
 	"github.com/thanos-io/thanos/pkg/prober"
 	"github.com/thanos-io/thanos/pkg/query"
@@ -244,6 +245,23 @@ func registerQuery(app *extkingpin.App) {
 	tenantCertField := cmd.Flag("query.tenant-certificate-field", "Use TLS client's certificate field to determine tenant for write requests. Must be one of "+tenancy.CertificateFieldOrganization+", "+tenancy.CertificateFieldOrganizationalUnit+" or "+tenancy.CertificateFieldCommonName+". This setting will cause the query.tenant-header flag value to be ignored.").Default("").Enum("", tenancy.CertificateFieldOrganization, tenancy.CertificateFieldOrganizationalUnit, tenancy.CertificateFieldCommonName)
 	enforceTenancy := cmd.Flag("query.enforce-tenancy", "Enforce tenancy on Query APIs. Responses are returned only if the label value of the configured tenant-label-name and the value of the tenant header matches.").Default("false").Bool()
 	tenantLabel := cmd.Flag("query.tenant-label-name", "Label name to use when enforcing tenancy (if --query.enforce-tenancy is enabled).").Default(tenancy.DefaultTenantLabel).String()
+	// TODO(bwplotka): Grab this from TTL at some point.
+	dnsSDInterval := extkingpin.ModelDuration(cmd.Flag("store.sd-dns-interval", "Interval between DNS resolutions.").
+		Default("30s"))
+
+	dnsSDResolver := cmd.Flag("store.sd-dns-resolver", fmt.Sprintf("Resolver to use. Possible options: [%s, %s]", dns.GolangResolverType, dns.MiekgdnsResolverType)).
+		Default(string(dns.MiekgdnsResolverType)).Hidden().String()
+
+	unhealthyStoreTimeout := extkingpin.ModelDuration(cmd.Flag("store.unhealthy-timeout", "Timeout before an unhealthy store is cleaned from the store UI page.").Default("5m"))
+
+	endpointInfoTimeout := extkingpin.ModelDuration(cmd.Flag("endpoint.info-timeout", "Timeout of gRPC Info requests.").Default("5s").Hidden())
+
+	endpointSetConfig := extflag.RegisterPathOrContent(cmd, "endpoint.sd-config", "Config File with endpoint definitions")
+
+	endpointSetConfigReloadInterval := extkingpin.ModelDuration(cmd.Flag("endpoint.sd-config-reload-interval", "Interval between endpoint config refreshes").Default("5m"))
+
+	legacyFileSDFiles := cmd.Flag("store.sd-files", "(Deprecated) Path to files that contain addresses of store API servers. The path can be a glob pattern (repeatable).").
+		PlaceHolder("<path>").Strings()
 
 	rewriteAggregationLabelTo := cmd.Flag("query.aggregation-label-value-override", "The value override for __rollup__ label for aggregated metrics. If set to x, all queries on aggregated metrics will have a __rollup__=x matcher. Leave empty to disable this behavior. Default is empty.").Default("").String()
 
@@ -308,10 +326,40 @@ func registerQuery(app *extkingpin.App) {
 			return err
 		}
 
+		dialOpts, err := grpcClientConfig.dialOptions(logger, reg, tracer)
+		if err != nil {
+			return err
+		}
+
+		endpointSet, err := setupEndpointSet(
+			g,
+			comp,
+			reg,
+			logger,
+			endpointSetConfig,
+			time.Duration(*endpointSetConfigReloadInterval),
+			*legacyFileSDFiles,
+			time.Duration(*legacyFileSDInterval),
+			*endpoints,
+			*endpointGroups,
+			*strictEndpoints,
+			*strictEndpointGroups,
+			*dnsSDResolver,
+			time.Duration(*dnsSDInterval),
+			time.Duration(*unhealthyStoreTimeout),
+			time.Duration(*endpointInfoTimeout),
+			dialOpts,
+			*queryConnMetricLabels...,
+		)
+		if err != nil {
+			return err
+		}
+
 		return runQuery(
 			g,
 			logger,
 			debugLogging,
+			endpointSet,
 			reg,
 			tracer,
 			httpLogOpts,
@@ -397,6 +445,7 @@ func runQuery(
 	g *run.Group,
 	logger log.Logger,
 	debugLogging bool,
+	endpointSet *query.EndpointSet,
 	reg *prometheus.Registry,
 	tracer opentracing.Tracer,
 	httpLogOpts []logging.Option,
@@ -693,24 +742,29 @@ func runQuery(
 		prober.NewInstrumentation(comp, logger, extprom.WrapRegistererWithPrefix("thanos_", reg)),
 	)
 
-	engineOpts := promql.EngineOpts{
-		Logger: logger,
-		Reg:    reg,
-		// TODO(bwplotka): Expose this as a flag: https://github.com/thanos-io/thanos/issues/703.
-		MaxSamples:    math.MaxInt32,
-		Timeout:       queryTimeout,
-		LookbackDelta: lookbackDelta,
-		NoStepSubqueryIntervalFn: func(int64) int64 {
-			return defaultEvaluationInterval.Milliseconds()
+	engineOpts := engine.Opts{
+		EngineOpts: promql.EngineOpts{
+			Logger: logutil.GoKitLogToSlog(logger),
+			Reg:    reg,
+			// TODO(bwplotka): Expose this as a flag: https://github.com/thanos-io/thanos/issues/703.
+			MaxSamples:    math.MaxInt32,
+			Timeout:       queryTimeout,
+			LookbackDelta: lookbackDelta,
+			NoStepSubqueryIntervalFn: func(int64) int64 {
+				return defaultEvaluationInterval.Milliseconds()
+			},
+			EnableNegativeOffset: true,
+			EnableAtModifier:     true,
 		},
-		EnableNegativeOffset: true,
-		EnableAtModifier:     true,
+		EnablePartialResponses: enableQueryPartialResponse,
+		EnableXFunctions:       extendedFunctionsEnabled,
+		EnableAnalysis:         true,
 	}
 
 	// An active query tracker will be added only if the user specifies a non-default path.
 	// Otherwise, the nil active query tracker from existing engine options will be used.
 	if activeQueryDir != "" {
-		engineOpts.ActiveQueryTracker = promql.NewActiveQueryTracker(activeQueryDir, maxConcurrentQueries, logger)
+		engineOpts.ActiveQueryTracker = promql.NewActiveQueryTracker(activeQueryDir, maxConcurrentQueries, logutil.GoKitLogToSlog(logger))
 	}
 
 	var remoteEngineEndpoints api.RemoteEndpoints
