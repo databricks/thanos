@@ -1611,6 +1611,7 @@ func (s *BucketStore) Series(req *storepb.SeriesRequest, seriesSrv storepb.Store
 						false,
 						s.metrics.emptyPostingCount.WithLabelValues(tenant),
 						nil,
+						nil,
 					)
 				} else {
 					resp = newLazyRespSet(

@@ -9,6 +9,7 @@ import (
 	"io"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cespare/xxhash/v2"
@@ -474,6 +475,7 @@ func newAsyncRespSet(
 	shardInfo *storepb.ShardInfo,
 	logger log.Logger,
 	emptyStreamResponses prometheus.Counter,
+	qg *quorumGroup,
 ) (respSet, error) {
 
 	var (
@@ -549,6 +551,7 @@ func newAsyncRespSet(
 			applySharding,
 			emptyStreamResponses,
 			labelsToRemove,
+			qg,
 		), nil
 	default:
 		panic(fmt.Sprintf("unsupported retrieval strategy %s", retrievalStrategy))
@@ -602,6 +605,7 @@ func newEagerRespSet(
 	applySharding bool,
 	emptyStreamResponses prometheus.Counter,
 	removeLabels map[string]struct{},
+	qg *quorumGroup,
 ) respSet {
 	ret := &eagerRespSet{
 		span:              span,
@@ -706,6 +710,10 @@ func newEagerRespSet(
 		// NOTE. Client is not guaranteed to give a sorted response when extLset is added
 		// Generally we need to resort here.
 		sortWithoutLabels(l.bufferedResponses, l.removeLabels)
+
+		if qg != nil && atomic.AddInt64(qg.quorumCounter, 1) == qg.quorumValue {
+			qg.cancel()
+		}
 
 	}(ret)
 
