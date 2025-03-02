@@ -399,9 +399,9 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 	quorumGroups := make(map[string]*quorumGroup)
 	for _, st := range stores {
 		if quorumGroups[st.GroupKey()] == nil {
-			context, cancel := context.WithCancel(ctx)
+			groupCtx, cancel := context.WithCancel(ctx)
 			quorumGroups[st.GroupKey()] = &quorumGroup{
-				context:        context,
+				context:        groupCtx,
 				cancel:         cancel,
 				quorumGroupKey: st.GroupKey(),
 				quorumValue:    2,
