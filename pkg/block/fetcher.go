@@ -407,7 +407,7 @@ func (f *ShadowLister) GetActiveAndPartialBlockIDs(ctx context.Context, ch chan<
 				}
 				mu.Lock()
 				if ok {
-					// Block is complete but the shadow meta file is missing. Two reasons for that:
+					// Block is complete but the shadow meta file is missing. Three reasons for that:
 					// 1. shadow meta file was not written yet (block is still being uploaded).
 					// 2. shadow meta file was deleted (block is being deleted).
 					// 3. an older version code uploaded the block.
@@ -472,6 +472,9 @@ func (f *ShadowLister) GetActiveAndPartialBlockIDs(ctx context.Context, ch chan<
 
 	if err := eg.Wait(); err != nil {
 		return nil, err
+	}
+	if f.logger != nil && missingSM > 0 {
+		level.Info(f.logger).Log("msg", "n>0 blocks are complete but with no shadow meta file", "n", missingSM)
 	}
 	return partialBlocks, nil
 }
