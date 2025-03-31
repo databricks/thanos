@@ -29,7 +29,7 @@ import (
 func TestShipperTimestamps(t *testing.T) {
 	dir := t.TempDir()
 
-	s := New(nil, nil, dir, nil, nil, metadata.TestSource, nil, false, metadata.NoneFunc, DefaultMetaFilename)
+	s := New(nil, nil, dir, nil, nil, metadata.TestSource, nil, false, metadata.NoneFunc, DefaultMetaFilename, false)
 
 	// Missing thanos meta file.
 	_, _, err := s.Timestamps()
@@ -122,7 +122,7 @@ func TestIterBlockMetas(t *testing.T) {
 		},
 	}.WriteToDir(log.NewNopLogger(), path.Join(dir, id3.String())))
 
-	shipper := New(nil, nil, dir, nil, nil, metadata.TestSource, nil, false, metadata.NoneFunc, DefaultMetaFilename)
+	shipper := New(nil, nil, dir, nil, nil, metadata.TestSource, nil, false, metadata.NoneFunc, DefaultMetaFilename, false)
 	metas, err := shipper.blockMetasFromOldest()
 	testutil.Ok(t, err)
 	testutil.Equals(t, sort.SliceIsSorted(metas, func(i, j int) bool {
@@ -153,7 +153,7 @@ func BenchmarkIterBlockMetas(b *testing.B) {
 	})
 	b.ResetTimer()
 
-	shipper := New(nil, nil, dir, nil, nil, metadata.TestSource, nil, false, metadata.NoneFunc, DefaultMetaFilename)
+	shipper := New(nil, nil, dir, nil, nil, metadata.TestSource, nil, false, metadata.NoneFunc, DefaultMetaFilename, false)
 
 	_, err := shipper.blockMetasFromOldest()
 	testutil.Ok(b, err)
@@ -165,7 +165,7 @@ func TestShipperAddsSegmentFiles(t *testing.T) {
 	inmemory := objstore.NewInMemBucket()
 
 	lbls := labels.FromStrings("test", "test")
-	s := New(nil, nil, dir, inmemory, func() labels.Labels { return lbls }, metadata.TestSource, nil, false, metadata.NoneFunc, DefaultMetaFilename)
+	s := New(nil, nil, dir, inmemory, func() labels.Labels { return lbls }, metadata.TestSource, nil, false, metadata.NoneFunc, DefaultMetaFilename, false)
 
 	id := ulid.MustNew(1, nil)
 	blockDir := path.Join(dir, id.String())
@@ -235,7 +235,7 @@ func TestShipperExistingThanosLabels(t *testing.T) {
 	inmemory := objstore.NewInMemBucket()
 
 	lbls := labels.FromStrings("test", "test")
-	s := New(nil, nil, dir, inmemory, func() labels.Labels { return lbls }, metadata.TestSource, nil, false, metadata.NoneFunc, DefaultMetaFilename)
+	s := New(nil, nil, dir, inmemory, func() labels.Labels { return lbls }, metadata.TestSource, nil, false, metadata.NoneFunc, DefaultMetaFilename, false)
 
 	id := ulid.MustNew(1, nil)
 	id2 := ulid.MustNew(2, nil)
