@@ -95,29 +95,16 @@ func Download(ctx context.Context, logger log.Logger, bucket objstore.Bucket, id
 }
 
 // Upload uploads a TSDB block to the object storage. It verifies basic
-// features of Thanos block.
-func Upload(ctx context.Context, logger log.Logger, bkt objstore.Bucket, bdir string, hf metadata.HashFunc, options ...objstore.UploadOption) error {
-	return upload(ctx, logger, bkt, bdir, hf, true, false, options...)
-}
-
-// UploadWithBirthstone uploads a TSDB block to the object storage. It verifies basic
-// features of Thanos block and uploads a birthstone file. Birthstone file is used to mark the completion of the block
+// features of Thanos block. If birthstone is enabled, a birthstone file is used to mark the completion of the block
 // upload and will be uploaded last.
-func UploadWithBirthstone(ctx context.Context, logger log.Logger, bkt objstore.Bucket, bdir string, hf metadata.HashFunc, options ...objstore.UploadOption) error {
-	return upload(ctx, logger, bkt, bdir, hf, true, true, options...)
+func Upload(ctx context.Context, logger log.Logger, bkt objstore.Bucket, bdir string, hf metadata.HashFunc, enableBirthstone bool, options ...objstore.UploadOption) error {
+	return upload(ctx, logger, bkt, bdir, hf, true, enableBirthstone, options...)
 }
 
 // UploadPromBlock uploads a TSDB block to the object storage. It assumes
 // the block is used in Prometheus so it doesn't check Thanos external labels.
-func UploadPromBlock(ctx context.Context, logger log.Logger, bkt objstore.Bucket, bdir string, hf metadata.HashFunc, options ...objstore.UploadOption) error {
-	return upload(ctx, logger, bkt, bdir, hf, false, false, options...)
-}
-
-// UploadPromBlock uploads a TSDB block to the object storage. It assumes
-// the block is used in Prometheus so it doesn't check Thanos external labels.
-// When the block upload is complete, a birthstone will be uploaded.
-func UploadPromBlockWithBirthstone(ctx context.Context, logger log.Logger, bkt objstore.Bucket, bdir string, hf metadata.HashFunc, options ...objstore.UploadOption) error {
-	return upload(ctx, logger, bkt, bdir, hf, false, true, options...)
+func UploadPromBlock(ctx context.Context, logger log.Logger, bkt objstore.Bucket, bdir string, hf metadata.HashFunc, enableBirthstone bool, options ...objstore.UploadOption) error {
+	return upload(ctx, logger, bkt, bdir, hf, false, enableBirthstone, options...)
 }
 
 // upload uploads block from given block dir that ends with block id.

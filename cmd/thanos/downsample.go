@@ -421,11 +421,7 @@ func processDownsampling(
 
 	begin = time.Now()
 
-	if enableBirthstone {
-		err = block.Upload(ctx, logger, bkt, resdir, hashFunc)
-	} else {
-		err = block.UploadWithBirthstone(ctx, logger, bkt, resdir, hashFunc)
-	}
+	err = block.Upload(ctx, logger, bkt, resdir, hashFunc, enableBirthstone)
 	if err != nil {
 		return compact.NewRetryError(errors.Wrapf(err, "upload downsampled block %s", id))
 	}

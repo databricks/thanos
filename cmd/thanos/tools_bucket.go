@@ -1314,14 +1314,8 @@ func registerBucketRewrite(app extkingpin.AppClause, objStoreConfig *extflag.Pat
 						}
 					}
 				} else {
-					if tbc.enableBirthstone {
-						if err := block.UploadWithBirthstone(ctx, logger, insBkt, filepath.Join(tbc.tmpDir, newID.String()), metadata.HashFunc(*hashFunc)); err != nil {
-							return errors.Wrap(err, "upload")
-						}
-					} else {
-						if err := block.Upload(ctx, logger, insBkt, filepath.Join(tbc.tmpDir, newID.String()), metadata.HashFunc(*hashFunc)); err != nil {
-							return errors.Wrap(err, "upload")
-						}
+					if err := block.Upload(ctx, logger, insBkt, filepath.Join(tbc.tmpDir, newID.String()), metadata.HashFunc(*hashFunc), tbc.enableBirthstone); err != nil {
+						return errors.Wrap(err, "upload")
 					}
 				}
 				level.Info(logger).Log("msg", "uploaded", "source", id, "new", newID)
