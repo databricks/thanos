@@ -80,6 +80,13 @@ func WithMetricNameFilterEnabled() MultiTSDBOption {
 	}
 }
 
+// WithBirthstoneEnabled enables birthstone during block upload.
+func WithBirthstoneEnabled() MultiTSDBOption {
+	return func(s *MultiTSDB) {
+		s.enableBirthstone = true
+	}
+}
+
 // WithMatcherConverter enables caching matcher converter consumed by children TSDB Stores.
 func WithMatcherConverter(mc *storepb.MatcherConverter) MultiTSDBOption {
 	return func(s *MultiTSDB) {
@@ -99,7 +106,6 @@ func NewMultiTSDB(
 	bucket objstore.Bucket,
 	allowOutOfOrderUpload bool,
 	hashFunc metadata.HashFunc,
-	enableBirthstone bool,
 	options ...MultiTSDBOption,
 ) *MultiTSDB {
 	if l == nil {
@@ -119,7 +125,6 @@ func NewMultiTSDB(
 		tenantLabelName:       tenantLabelName,
 		bucket:                bucket,
 		allowOutOfOrderUpload: allowOutOfOrderUpload,
-		enableBirthstone:      enableBirthstone,
 		hashFunc:              hashFunc,
 	}
 

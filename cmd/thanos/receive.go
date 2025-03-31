@@ -150,6 +150,9 @@ func runReceive(
 			level.Info(logger).Log("msg", "metric name filter feature enabled")
 		}
 	}
+	if conf.enableBirthstone {
+		multiTSDBOptions = append(multiTSDBOptions, receive.WithBirthstoneEnabled())
+	}
 
 	// Create a matcher converter if specified by command line to cache expensive regex matcher conversions.
 	// Proxy store and TSDB stores of all tenants share a single cache.
@@ -245,7 +248,6 @@ func runReceive(
 		bkt,
 		conf.allowOutOfOrderUpload,
 		hashFunc,
-		conf.enableBirthstone,
 		multiTSDBOptions...,
 	)
 	writer := receive.NewWriter(log.With(logger, "component", "receive-writer"), dbs, &receive.WriterOptions{
