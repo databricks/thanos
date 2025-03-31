@@ -270,6 +270,26 @@ func TestDelete(t *testing.T) {
 		testutil.Equals(t, 0, len(bkt.Objects()))
 	}
 	{
+		// Same as above, but with birthstone.
+		b1, err := e2eutil.CreateBlock(ctx, tmpDir, []labels.Labels{
+			labels.New(labels.Label{Name: "a", Value: "1"}),
+			labels.New(labels.Label{Name: "a", Value: "2"}),
+			labels.New(labels.Label{Name: "a", Value: "3"}),
+			labels.New(labels.Label{Name: "a", Value: "4"}),
+			labels.New(labels.Label{Name: "b", Value: "1"}),
+		}, 100, 0, 1000, labels.New(labels.Label{Name: "ext1", Value: "val1"}), 124, metadata.NoneFunc)
+		testutil.Ok(t, err)
+		testutil.Ok(t, Upload(ctx, log.NewNopLogger(), bkt, path.Join(tmpDir, b1.String()), metadata.NoneFunc, true))
+		testutil.Equals(t, 4, len(bkt.Objects()))
+
+		markedForDeletion := promauto.With(prometheus.NewRegistry()).NewCounter(prometheus.CounterOpts{Name: "test"})
+		testutil.Ok(t, MarkForDeletion(ctx, log.NewNopLogger(), bkt, b1, "", markedForDeletion))
+
+		// Full delete.
+		testutil.Ok(t, Delete(ctx, log.NewNopLogger(), bkt, b1))
+		testutil.Equals(t, 0, len(bkt.Objects()))
+	}
+	{
 		b2, err := e2eutil.CreateBlock(ctx, tmpDir, []labels.Labels{
 			labels.New(labels.Label{Name: "a", Value: "1"}),
 			labels.New(labels.Label{Name: "a", Value: "2"}),
