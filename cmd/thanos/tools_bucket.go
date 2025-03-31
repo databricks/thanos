@@ -397,7 +397,7 @@ func registerBucketVerify(app extkingpin.AppClause, objStoreConfig *extflag.Path
 			}
 		}
 
-		v := verifier.NewManager(reg, logger, insBkt, backupBkt, fetcher, time.Duration(*deleteDelay), r)
+		v := verifier.NewManager(reg, logger, insBkt, backupBkt, fetcher, time.Duration(*deleteDelay), tbc.enableBirthstone, r)
 		if tbc.repair {
 			return v.VerifyAndRepair(context.Background(), idMatcher)
 		}
