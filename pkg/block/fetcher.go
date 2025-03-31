@@ -233,11 +233,12 @@ func NewRecursiveLister(logger log.Logger, bkt objstore.InstrumentedBucketReader
 }
 
 func (f *RecursiveLister) GetActiveAndPartialBlockIDs(ctx context.Context, ch chan<- ulid.ULID) (partialBlocks map[ulid.ULID]bool, err error) {
+	totalBlocks := 0
 	if f.logger != nil {
 		level.Info(f.logger).Log("msg", "recursive block lister started")
 		start := time.Now()
 		defer func() {
-			level.Info(f.logger).Log("msg", "recursive block lister ended", "duration", time.Since(start))
+			level.Info(f.logger).Log("msg", "recursive block lister ended", "duration", time.Since(start), "total", totalBlocks, "partial", len(partialBlocks))
 		}()
 	}
 	partialBlocks = make(map[ulid.ULID]bool)
@@ -248,6 +249,7 @@ func (f *RecursiveLister) GetActiveAndPartialBlockIDs(ctx context.Context, ch ch
 		if !ok {
 			return nil
 		}
+		totalBlocks++
 		if _, ok := partialBlocks[id]; !ok {
 			partialBlocks[id] = true
 		}
@@ -284,11 +286,12 @@ func NewConcurrentLister(logger log.Logger, bkt objstore.InstrumentedBucketReade
 }
 
 func (f *ConcurrentLister) GetActiveAndPartialBlockIDs(ctx context.Context, ch chan<- ulid.ULID) (partialBlocks map[ulid.ULID]bool, err error) {
+	totalBlocks := 0
 	if f.logger != nil {
 		level.Info(f.logger).Log("msg", "concurrent block lister started")
 		start := time.Now()
 		defer func() {
-			level.Info(f.logger).Log("msg", "concurrent block lister end", "duration", time.Since(start))
+			level.Info(f.logger).Log("msg", "concurrent block lister end", "duration", time.Since(start), "total", totalBlocks, "partial", len(partialBlocks))
 		}()
 	}
 
@@ -339,6 +342,7 @@ func (f *ConcurrentLister) GetActiveAndPartialBlockIDs(ctx context.Context, ch c
 		if !ok {
 			return nil
 		}
+		totalBlocks++
 		select {
 		case <-gCtx.Done():
 			return gCtx.Err()
@@ -356,125 +360,73 @@ func (f *ConcurrentLister) GetActiveAndPartialBlockIDs(ctx context.Context, ch c
 	return partialBlocks, nil
 }
 
-// ShadowLister lists block IDs cheap and fast replying on shadow meta files.
-type ShadowLister struct {
+// BirthstoneLister lists block IDs. It checks complete blocks with birthstone instead of meta.
+type BirthstoneLister struct {
 	logger log.Logger
 	bkt    objstore.InstrumentedBucketReader
 }
 
-func NewShadowLister(logger log.Logger, bkt objstore.InstrumentedBucketReader) *ShadowLister {
+func NewBirthstoneLister(logger log.Logger, bkt objstore.InstrumentedBucketReader) *BirthstoneLister {
 	if logger != nil {
 		level.Info(logger).Log("msg", "Using recursive block lister")
 	}
-	return &ShadowLister{
+	return &BirthstoneLister{
 		logger: logger,
 		bkt:    bkt,
 	}
 }
 
-func (f *ShadowLister) GetActiveAndPartialBlockIDs(ctx context.Context, ch chan<- ulid.ULID) (partialBlocks map[ulid.ULID]bool, err error) {
+func (f *BirthstoneLister) GetActiveAndPartialBlockIDs(ctx context.Context, ch chan<- ulid.ULID) (partialBlocks map[ulid.ULID]bool, err error) {
+	totalBlocks := 0
 	if f.logger != nil {
-		level.Info(f.logger).Log("msg", "shadow block lister started")
+		level.Info(f.logger).Log("msg", "birthstone block lister started")
 		start := time.Now()
 		defer func() {
-			level.Info(f.logger).Log("msg", "shadow block lister ended", "duration", time.Since(start))
+			level.Info(f.logger).Log("msg", "birthstone block lister ended", "duration", time.Since(start), "total", totalBlocks, "partial", len(partialBlocks))
 		}()
 	}
-
-	const concurrency = 64
-
 	partialBlocks = make(map[ulid.ULID]bool)
 	var (
-		metaChan  = make(chan ulid.ULID, concurrency)
-		eg, gCtx  = errgroup.WithContext(ctx)
-		mu        sync.Mutex
-		missingSM = 0
+		eg, gCtx    = errgroup.WithContext(ctx)
+		allBlockIDs = make([]ulid.ULID, 0, 8192)
 	)
-	for i := 0; i < concurrency; i++ {
-		eg.Go(func() error {
-			for uid := range metaChan {
-				metaFile := path.Join(uid.String(), MetaFilename)
-				ok, err := f.bkt.Exists(gCtx, metaFile)
-				if err != nil {
-					if f.logger != nil {
-						level.Error(f.logger).Log(
-							"msg", "shadow block lister worker failed to check meta.json file existence",
-							"meta_file", metaFile,
-							"err", err,
-						)
-					}
-					return errors.Wrapf(err, "meta.json file exists: %v", uid)
-				}
-				mu.Lock()
-				if ok {
-					// Block is complete but the shadow meta file is missing. Three reasons for that:
-					// 1. shadow meta file was not written yet (block is still being uploaded).
-					// 2. shadow meta file was deleted (block is being deleted).
-					// 3. an older version code uploaded the block.
-					partialBlocks[uid] = false
-					missingSM++
-					mu.Unlock()
-					select {
-					case <-gCtx.Done():
-						return gCtx.Err()
-					case ch <- uid:
-					}
-				} else {
-					partialBlocks[uid] = true
-					mu.Unlock()
-				}
+
+	eg.Go(func() error {
+		return f.bkt.Iter(gCtx, BirthstoneDirname, func(name string) error {
+			id, ok := IsBlockDir(name)
+			if !ok {
+				return nil
+			}
+			// Block with a birthstone is considered complete.
+			partialBlocks[id] = false
+			return nil
+		})
+	})
+	eg.Go(func() error {
+		return f.bkt.Iter(gCtx, "", func(name string) error {
+			id, ok := IsBlockDir(name)
+			if !ok {
+				return nil
+			}
+			totalBlocks++
+			allBlockIDs = append(allBlockIDs, id)
+			select {
+			case <-gCtx.Done():
+				return gCtx.Err()
+			case ch <- id:
 			}
 			return nil
 		})
-	}
-
-	// Read all shadow meta files. If a shadow meta file exists, we're sure the block is complete.
-	if err = f.bkt.Iter(ctx, ShadowMetaDirname, func(name string) error {
-		id, ok := IsBlockDir(name)
-		if !ok {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case ch <- id:
-		}
-		// Goroutines are not editing the map yet, so we're good without a lock.
-		partialBlocks[id] = false
-		return nil
-	}); err != nil {
-		return nil, err
-	}
-
-	// If a shadow meta file does not exist, the block can be partial or complete. Fall back to checking the meta.json file.
-	if err = f.bkt.Iter(ctx, "", func(name string) error {
-		id, ok := IsBlockDir(name)
-		if !ok {
-			return nil
-		}
-		mu.Lock()
-		if p, ok := partialBlocks[id]; ok && !p {
-			// Block is already marked as complete by a shadow meta file.
-			mu.Unlock()
-			return nil
-		}
-		mu.Unlock()
-		select {
-		case <-gCtx.Done():
-			return gCtx.Err()
-		case metaChan <- id:
-		}
-		return nil
-	}); err != nil {
-		return nil, err
-	}
-	close(metaChan)
-
+	})
 	if err := eg.Wait(); err != nil {
 		return nil, err
 	}
-	if f.logger != nil && missingSM > 0 {
-		level.Info(f.logger).Log("msg", "n>0 blocks are complete but with no shadow meta file", "n", missingSM)
+
+	// Mark blocks that don't have birthstone entries as partial.
+	for _, id := range allBlockIDs {
+		if _, ok := partialBlocks[id]; !ok {
+			partialBlocks[id] = true
+		}
 	}
 	return partialBlocks, nil
 }

@@ -381,6 +381,7 @@ func runCompact(
 		metadata.HashFunc(conf.hashFunc),
 		conf.blockFilesConcurrency,
 		conf.compactBlocksFetchConcurrency,
+		conf.enableBirthstone,
 	)
 	var planner compact.Planner
 
@@ -409,6 +410,7 @@ func runCompact(
 		insBkt,
 		conf.compactionConcurrency,
 		conf.skipBlockWithOutOfOrderChunks,
+		conf.enableBirthstone,
 	)
 	if err != nil {
 		return errors.Wrap(err, "create bucket compactor")
@@ -518,6 +520,7 @@ func runCompact(
 				conf.blockFilesConcurrency,
 				metadata.HashFunc(conf.hashFunc),
 				conf.acceptMalformedIndex,
+				conf.enableBirthstone,
 			); err != nil {
 				return errors.Wrap(err, "first pass of downsampling failed")
 			}
@@ -547,6 +550,7 @@ func runCompact(
 				conf.blockFilesConcurrency,
 				metadata.HashFunc(conf.hashFunc),
 				conf.acceptMalformedIndex,
+				conf.enableBirthstone,
 			); err != nil {
 				return errors.Wrap(err, "second pass of downsampling failed")
 			}
@@ -792,6 +796,7 @@ type compactConfig struct {
 	progressCalculateInterval                      time.Duration
 	filterConf                                     *store.FilterConfig
 	disableAdminOperations                         bool
+	enableBirthstone                               bool
 }
 
 func (cc *compactConfig) registerFlag(cmd extkingpin.FlagClause) {
@@ -910,4 +915,7 @@ func (cc *compactConfig) registerFlag(cmd extkingpin.FlagClause) {
 	cmd.Flag("bucket-web-label", "External block label to use as group title in the bucket web UI").StringVar(&cc.label)
 
 	cmd.Flag("disable-admin-operations", "Disable UI/API admin operations like marking blocks for deletion and no compaction.").Default("false").BoolVar(&cc.disableAdminOperations)
+
+	cmd.Flag("enable-birthstone", "When set to true, upload and delete a birthstone file when block is created and deleted. Birthstone file marks the completeness of a block in bucket.").
+		Hidden().Default("false").BoolVar(&cc.enableBirthstone)
 }

@@ -78,6 +78,7 @@ func RunDownsample(
 	objStoreConfig *extflag.PathOrContent,
 	comp component.Component,
 	hashFunc metadata.HashFunc,
+	enableBirthstone bool,
 ) error {
 	confContentYaml, err := objStoreConfig.Content()
 	if err != nil {
@@ -134,7 +135,7 @@ func RunDownsample(
 					metrics.downsamples.WithLabelValues(resolutionLabel)
 					metrics.downsampleFailures.WithLabelValues(resolutionLabel)
 				}
-				if err := downsampleBucket(ctx, logger, metrics, insBkt, metas, dataDir, downsampleConcurrency, blockFilesConcurrency, hashFunc, false); err != nil {
+				if err := downsampleBucket(ctx, logger, metrics, insBkt, metas, dataDir, downsampleConcurrency, blockFilesConcurrency, hashFunc, false, enableBirthstone); err != nil {
 					return errors.Wrap(err, "downsampling failed")
 				}
 
@@ -143,7 +144,7 @@ func RunDownsample(
 				if err != nil {
 					return errors.Wrap(err, "sync before second pass of downsampling")
 				}
-				if err := downsampleBucket(ctx, logger, metrics, insBkt, metas, dataDir, downsampleConcurrency, blockFilesConcurrency, hashFunc, false); err != nil {
+				if err := downsampleBucket(ctx, logger, metrics, insBkt, metas, dataDir, downsampleConcurrency, blockFilesConcurrency, hashFunc, false, enableBirthstone); err != nil {
 					return errors.Wrap(err, "downsampling failed")
 				}
 				return nil
@@ -185,6 +186,7 @@ func downsampleBucket(
 	blockFilesConcurrency int,
 	hashFunc metadata.HashFunc,
 	acceptMalformedIndex bool,
+	enableBirthstone bool,
 ) (rerr error) {
 	if err := os.MkdirAll(dir, 0750); err != nil {
 		return errors.Wrap(err, "create dir")
@@ -262,7 +264,7 @@ func downsampleBucket(
 					resolution = downsample.ResLevel2
 					errMsg = "downsampling to 60 min"
 				}
-				if err := processDownsampling(workerCtx, logger, bkt, m, dir, resolution, hashFunc, metrics, acceptMalformedIndex, blockFilesConcurrency); err != nil {
+				if err := processDownsampling(workerCtx, logger, bkt, m, dir, resolution, hashFunc, metrics, acceptMalformedIndex, blockFilesConcurrency, enableBirthstone); err != nil {
 					metrics.downsampleFailures.WithLabelValues(m.Thanos.ResolutionString()).Inc()
 					errCh <- errors.Wrap(err, errMsg)
 
@@ -353,6 +355,7 @@ func processDownsampling(
 	metrics *DownsampleMetrics,
 	acceptMalformedIndex bool,
 	blockFilesConcurrency int,
+	enableBirthstone bool,
 ) error {
 	begin := time.Now()
 	bdir := filepath.Join(dir, m.ULID.String())
@@ -418,7 +421,11 @@ func processDownsampling(
 
 	begin = time.Now()
 
-	err = block.Upload(ctx, logger, bkt, resdir, hashFunc)
+	if enableBirthstone {
+		err = block.Upload(ctx, logger, bkt, resdir, hashFunc)
+	} else {
+		err = block.UploadWithBirthstone(ctx, logger, bkt, resdir, hashFunc)
+	}
 	if err != nil {
 		return compact.NewRetryError(errors.Wrapf(err, "upload downsampled block %s", id))
 	}

@@ -34,11 +34,12 @@ type VerifierRepairer interface {
 type Context struct {
 	context.Context
 
-	Logger      log.Logger
-	Bkt         objstore.Bucket
-	BackupBkt   objstore.Bucket
-	Fetcher     block.MetadataFetcher
-	DeleteDelay time.Duration
+	Logger           log.Logger
+	Bkt              objstore.Bucket
+	BackupBkt        objstore.Bucket
+	Fetcher          block.MetadataFetcher
+	DeleteDelay      time.Duration
+	EnableBirthstone bool
 
 	metrics *metrics
 }
@@ -112,14 +113,15 @@ idLoop:
 }
 
 // New returns verifier's manager.
-func NewManager(reg prometheus.Registerer, logger log.Logger, bkt, backupBkt objstore.Bucket, fetcher block.MetadataFetcher, deleteDelay time.Duration, vs Registry) *Manager {
+func NewManager(reg prometheus.Registerer, logger log.Logger, bkt, backupBkt objstore.Bucket, fetcher block.MetadataFetcher, deleteDelay time.Duration, enableBirthstone bool, vs Registry) *Manager {
 	return &Manager{
 		Context: Context{
-			Logger:      logger,
-			Bkt:         bkt,
-			BackupBkt:   backupBkt,
-			Fetcher:     fetcher,
-			DeleteDelay: deleteDelay,
+			Logger:           logger,
+			Bkt:              bkt,
+			BackupBkt:        backupBkt,
+			Fetcher:          fetcher,
+			DeleteDelay:      deleteDelay,
+			EnableBirthstone: enableBirthstone,
 
 			metrics: newVerifierMetrics(reg),
 		},

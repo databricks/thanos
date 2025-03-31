@@ -116,8 +116,14 @@ func repairIndex(stats block.HealthStats, ctx Context, id ulid.ULID, meta *metad
 	}
 
 	level.Info(ctx.Logger).Log("msg", "uploading repaired block", "newID", resid)
-	if err = block.Upload(ctx, ctx.Logger, ctx.Bkt, filepath.Join(dir, resid.String()), metadata.NoneFunc); err != nil {
-		return errors.Wrapf(err, "upload of %s failed", resid)
+	if ctx.EnableBirthstone {
+		if err = block.UploadWithBirthstone(ctx, ctx.Logger, ctx.Bkt, filepath.Join(dir, resid.String()), metadata.NoneFunc); err != nil {
+			return errors.Wrapf(err, "upload of %s failed", resid)
+		}
+	} else {
+		if err = block.Upload(ctx, ctx.Logger, ctx.Bkt, filepath.Join(dir, resid.String()), metadata.NoneFunc); err != nil {
+			return errors.Wrapf(err, "upload of %s failed", resid)
+		}
 	}
 
 	level.Info(ctx.Logger).Log("msg", "safe deleting broken block", "id", id, "issue")

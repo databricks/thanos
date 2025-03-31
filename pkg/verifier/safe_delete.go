@@ -67,7 +67,7 @@ func BackupAndDelete(ctx Context, id ulid.ULID) error {
 	}
 
 	// Backup the block.
-	if err := backupDownloaded(ctx, ctx.Logger, dir, ctx.BackupBkt, id); err != nil {
+	if err := backupDownloaded(ctx, ctx.Logger, dir, ctx.BackupBkt, id, ctx.EnableBirthstone); err != nil {
 		return err
 	}
 
@@ -103,7 +103,7 @@ func BackupAndDeleteDownloaded(ctx Context, bdir string, id ulid.ULID) error {
 	}
 
 	// Backup the block.
-	if err := backupDownloaded(ctx, ctx.Logger, bdir, ctx.BackupBkt, id); err != nil {
+	if err := backupDownloaded(ctx, ctx.Logger, bdir, ctx.BackupBkt, id, ctx.EnableBirthstone); err != nil {
 		return err
 	}
 
@@ -126,7 +126,7 @@ func BackupAndDeleteDownloaded(ctx Context, bdir string, id ulid.ULID) error {
 // backupDownloaded is a helper function that uploads a TSDB block
 // found on disk to the given bucket. An error is returned if any operation
 // fails.
-func backupDownloaded(ctx context.Context, logger log.Logger, bdir string, backupBkt objstore.Bucket, id ulid.ULID) error {
+func backupDownloaded(ctx context.Context, logger log.Logger, bdir string, backupBkt objstore.Bucket, id ulid.ULID, enableBirthstone bool) error {
 	// Safety checks.
 	if _, err := os.Stat(filepath.Join(bdir, "meta.json")); err != nil {
 		// If there is any error stat'ing meta.json inside the TSDB block
@@ -137,8 +137,14 @@ func backupDownloaded(ctx context.Context, logger log.Logger, bdir string, backu
 
 	// Upload the on disk TSDB block.
 	level.Info(logger).Log("msg", "Uploading block to backup bucket", "id", id.String())
-	if err := block.Upload(ctx, logger, backupBkt, bdir, metadata.NoneFunc); err != nil {
-		return errors.Wrap(err, "upload to backup")
+	if enableBirthstone {
+		if err := block.UploadWithBirthstone(ctx, logger, backupBkt, bdir, metadata.NoneFunc); err != nil {
+			return errors.Wrap(err, "upload to backup")
+		}
+	} else {
+		if err := block.Upload(ctx, logger, backupBkt, bdir, metadata.NoneFunc); err != nil {
+			return errors.Wrap(err, "upload to backup")
+		}
 	}
 
 	return nil

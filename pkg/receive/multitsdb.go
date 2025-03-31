@@ -67,6 +67,7 @@ type MultiTSDB struct {
 
 	metricNameFilterEnabled bool
 	matcherConverter        *storepb.MatcherConverter
+	enableBirthstone        bool
 }
 
 // MultiTSDBOption is a functional option for MultiTSDB.
@@ -98,6 +99,7 @@ func NewMultiTSDB(
 	bucket objstore.Bucket,
 	allowOutOfOrderUpload bool,
 	hashFunc metadata.HashFunc,
+	enableBirthstone bool,
 	options ...MultiTSDBOption,
 ) *MultiTSDB {
 	if l == nil {
@@ -117,6 +119,7 @@ func NewMultiTSDB(
 		tenantLabelName:       tenantLabelName,
 		bucket:                bucket,
 		allowOutOfOrderUpload: allowOutOfOrderUpload,
+		enableBirthstone:      enableBirthstone,
 		hashFunc:              hashFunc,
 	}
 
@@ -744,6 +747,7 @@ func (t *MultiTSDB) startTSDB(logger log.Logger, tenantID string, tenant *tenant
 			t.allowOutOfOrderUpload,
 			t.hashFunc,
 			shipper.DefaultMetaFilename,
+			t.enableBirthstone,
 		)
 	}
 	options := []store.TSDBStoreOption{}
