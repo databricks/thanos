@@ -406,10 +406,7 @@ func (s *Shipper) upload(ctx context.Context, meta *metadata.Meta) error {
 	if err := meta.WriteToDir(s.logger, updir); err != nil {
 		return errors.Wrap(err, "write meta file")
 	}
-	if s.enableBirthstone {
-		block.UploadWithBirthstone(ctx, s.logger, s.bucket, updir, s.hashFunc)
-	}
-	return block.Upload(ctx, s.logger, s.bucket, updir, s.hashFunc)
+	return block.Upload(ctx, s.logger, s.bucket, updir, s.hashFunc, s.enableBirthstone)
 }
 
 // blockMetasFromOldest returns the block meta of each block found in dir

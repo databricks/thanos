@@ -1136,14 +1136,8 @@ func RepairIssue347(ctx context.Context, logger log.Logger, bkt objstore.Bucket,
 	}
 
 	level.Info(logger).Log("msg", "uploading repaired block", "newID", resid)
-	if enableBirthstone {
-		if err = block.UploadWithBirthstone(ctx, logger, bkt, filepath.Join(tmpdir, resid.String()), metadata.NoneFunc); err != nil {
-			return retry(errors.Wrapf(err, "upload of %s failed", resid))
-		}
-	} else {
-		if err = block.Upload(ctx, logger, bkt, filepath.Join(tmpdir, resid.String()), metadata.NoneFunc); err != nil {
-			return retry(errors.Wrapf(err, "upload of %s failed", resid))
-		}
+	if err = block.Upload(ctx, logger, bkt, filepath.Join(tmpdir, resid.String()), metadata.NoneFunc, enableBirthstone); err != nil {
+		return retry(errors.Wrapf(err, "upload of %s failed", resid))
 	}
 
 	level.Info(logger).Log("msg", "deleting broken block", "id", ie.id)
@@ -1347,10 +1341,7 @@ func (cg *Group) compact(ctx context.Context, dir string, planner Planner, comp 
 		begin = time.Now()
 
 		err = tracing.DoInSpanWithErr(ctx, "compaction_block_upload", func(ctx context.Context) error {
-			if cg.enableBirthstone {
-				return block.UploadWithBirthstone(ctx, cg.logger, cg.bkt, bdir, cg.hashFunc, objstore.WithUploadConcurrency(cg.blockFilesConcurrency))
-			}
-			return block.Upload(ctx, cg.logger, cg.bkt, bdir, cg.hashFunc, objstore.WithUploadConcurrency(cg.blockFilesConcurrency))
+			return block.Upload(ctx, cg.logger, cg.bkt, bdir, cg.hashFunc, cg.enableBirthstone, objstore.WithUploadConcurrency(cg.blockFilesConcurrency))
 		})
 		if err != nil {
 			return false, nil, retry(errors.Wrapf(err, "upload of %s failed", compID))

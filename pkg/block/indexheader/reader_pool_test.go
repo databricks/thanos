@@ -52,7 +52,7 @@ func TestReaderPool_NewBinaryReader(t *testing.T) {
 		labels.FromStrings("a", "2"),
 	}, 100, 0, 1000, labels.FromStrings("ext1", "1"), 124, metadata.NoneFunc)
 	testutil.Ok(t, err)
-	testutil.Ok(t, block.Upload(ctx, log.NewNopLogger(), bkt, filepath.Join(tmpDir, blockID.String()), metadata.NoneFunc))
+	testutil.Ok(t, block.Upload(ctx, log.NewNopLogger(), bkt, filepath.Join(tmpDir, blockID.String()), metadata.NoneFunc, false))
 
 	meta, err := metadata.ReadFromDir(filepath.Join(tmpDir, blockID.String()))
 	testutil.Ok(t, err)
@@ -91,7 +91,7 @@ func TestReaderPool_ShouldCloseIdleLazyReaders(t *testing.T) {
 		labels.FromStrings("a", "2"),
 	}, 100, 0, 1000, labels.FromStrings("ext1", "1"), 124, metadata.NoneFunc)
 	testutil.Ok(t, err)
-	testutil.Ok(t, block.Upload(ctx, log.NewNopLogger(), bkt, filepath.Join(tmpDir, blockID.String()), metadata.NoneFunc))
+	testutil.Ok(t, block.Upload(ctx, log.NewNopLogger(), bkt, filepath.Join(tmpDir, blockID.String()), metadata.NoneFunc, false))
 	meta, err := metadata.ReadFromDir(filepath.Join(tmpDir, blockID.String()))
 	testutil.Ok(t, err)
 

@@ -974,7 +974,7 @@ func TestBucketStore_Acceptance(t *testing.T) {
 				}, nil)
 				testutil.Ok(tt, err)
 
-				testutil.Ok(tt, block.Upload(ctx, logger, bkt, auxBlockDir, metadata.NoneFunc))
+				testutil.Ok(tt, block.Upload(ctx, logger, bkt, auxBlockDir, metadata.NoneFunc, false))
 			}
 
 			chunkPool, err := NewDefaultChunkBytesPool(2e5)
@@ -1119,7 +1119,7 @@ func TestProxyStoreWithTSDBSelector_Acceptance(t *testing.T) {
 				}, nil)
 				testutil.Ok(tt, err)
 
-				testutil.Ok(tt, block.Upload(ctx, logger, bkt, auxBlockDir, metadata.NoneFunc))
+				testutil.Ok(tt, block.Upload(ctx, logger, bkt, auxBlockDir, metadata.NoneFunc, false))
 			}
 
 			chunkPool, err := NewDefaultChunkBytesPool(2e5)
