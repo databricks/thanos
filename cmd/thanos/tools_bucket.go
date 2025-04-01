@@ -12,10 +12,12 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"text/template"
 	"time"
 
@@ -35,6 +37,7 @@ import (
 	"github.com/prometheus/prometheus/model/relabel"
 	"github.com/prometheus/prometheus/tsdb"
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
+	"golang.org/x/sync/errgroup"
 	"golang.org/x/text/language"
 	"golang.org/x/text/message"
 	"gopkg.in/yaml.v3"
@@ -1494,4 +1497,105 @@ func registerBucketUploadBlocks(app extkingpin.AppClause, objStoreConfig *extfla
 
 		return nil
 	})
+}
+
+func registerBirthstoneUpload(app extkingpin.AppClause, objStoreConfig *extflag.PathOrContent) {
+	cmd := app.Command("birthstone-upload", "Create birthstones for blocks in the bucket. Should pause compaction first to avoid race conditions. Expected to be idempotent.")
+	cmd.Setup(func(g *run.Group, logger log.Logger, reg *prometheus.Registry, _ opentracing.Tracer, _ <-chan struct{}, _ bool) error {
+		confContentYaml, err := objStoreConfig.Content()
+		if err != nil {
+			return errors.Wrap(err, "unable to parse objstore config")
+		}
+		bkt, err := client.NewBucket(logger, confContentYaml, component.Upload.String(), nil)
+		if err != nil {
+			return errors.Wrap(err, "unable to create bucket")
+		}
+		defer runutil.CloseWithLogOnErr(logger, bkt, "bucket client")
+		bkt = objstoretracing.WrapWithTraces(objstore.WrapWithMetrics(bkt, extprom.WrapRegistererWithPrefix("thanos_", reg), bkt.Name()))
+		ctx, cancel := context.WithCancel(context.Background())
+		g.Add(func() error {
+			err := UploadBirthstone(ctx, logger, bkt)
+			if err != nil {
+				return errors.Wrap(err, "unable to upload birthstones")
+			}
+			return nil
+		}, func(error) {
+			cancel()
+		})
+		return nil
+	})
+}
+
+func UploadBirthstone(ctx context.Context, logger log.Logger, bkt objstore.Bucket) error {
+	totalBlocks := 0
+	partialBlocks := 0
+	if logger != nil {
+		level.Info(logger).Log("msg", "concurrent birthstone upload started")
+		start := time.Now()
+		defer func() {
+			level.Info(logger).Log("msg", "concurrent birthstone upload end", "duration", time.Since(start), "uploaded", totalBlocks, "partial", partialBlocks)
+		}()
+	}
+
+	const concurrency = 64
+	var (
+		ch       = make(chan ulid.ULID, concurrency)
+		eg, gCtx = errgroup.WithContext(ctx)
+		mu       sync.Mutex
+	)
+	for i := 0; i < concurrency; i++ {
+		eg.Go(func() error {
+			for uid := range ch {
+				select {
+				case <-gCtx.Done():
+					return gCtx.Err()
+				default:
+				}
+				metaFile := path.Join(uid.String(), block.MetaFilename)
+				ok, err := bkt.Exists(gCtx, metaFile)
+				if err != nil {
+					if logger != nil {
+						level.Error(logger).Log(
+							"msg", "concurrent block lister worker failed to check meta.json file existence",
+							"meta_file", metaFile,
+							"err", err,
+						)
+					}
+					return errors.Wrapf(err, "meta.json file exists: %v", uid)
+				}
+				if !ok {
+					mu.Lock()
+					partialBlocks++
+					mu.Unlock()
+					continue
+				}
+				if err := bkt.Upload(ctx, path.Join(block.BirthstoneDirname, uid.String()), strings.NewReader("")); err != nil {
+					return errors.Wrap(err, "upload birthstone file")
+				}
+			}
+			return nil
+		})
+	}
+
+	if err := bkt.Iter(ctx, "", func(name string) error {
+		id, ok := block.IsBlockDir(name)
+		if !ok {
+			return nil
+		}
+		totalBlocks++
+		select {
+		case <-gCtx.Done():
+			return gCtx.Err()
+		case ch <- id:
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	close(ch)
+
+	if err := eg.Wait(); err != nil {
+		return err
+	}
+	return nil
 }
