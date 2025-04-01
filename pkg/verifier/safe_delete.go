@@ -137,14 +137,8 @@ func backupDownloaded(ctx context.Context, logger log.Logger, bdir string, backu
 
 	// Upload the on disk TSDB block.
 	level.Info(logger).Log("msg", "Uploading block to backup bucket", "id", id.String())
-	if enableBirthstone {
-		if err := block.UploadWithBirthstone(ctx, logger, backupBkt, bdir, metadata.NoneFunc); err != nil {
-			return errors.Wrap(err, "upload to backup")
-		}
-	} else {
-		if err := block.Upload(ctx, logger, backupBkt, bdir, metadata.NoneFunc); err != nil {
-			return errors.Wrap(err, "upload to backup")
-		}
+	if err := block.Upload(ctx, logger, backupBkt, bdir, metadata.NoneFunc, enableBirthstone); err != nil {
+		return errors.Wrap(err, "upload to backup")
 	}
 
 	return nil
