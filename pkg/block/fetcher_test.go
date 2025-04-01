@@ -65,6 +65,9 @@ func ULIDs(is ...int) []ulid.ULID {
 }
 
 func TestMetaFetcher_Fetch(t *testing.T) {
+	const recursiveLister = "recursive"
+	const concurrentLister = "concurrent"
+	const birthstoneLister = "birthstone"
 	runTest := func(t *testing.T, lister string) {
 		objtesting.ForeachStore(t, func(t *testing.T, bkt objstore.Bucket) {
 			ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
@@ -77,12 +80,14 @@ func TestMetaFetcher_Fetch(t *testing.T) {
 			noopLogger := log.NewNopLogger()
 			insBkt := objstore.WithNoopInstr(bkt)
 			var baseBlockIDsFetcher Lister
-			if lister == "concurrent" {
+			if lister == concurrentLister {
 				baseBlockIDsFetcher = NewConcurrentLister(noopLogger, insBkt)
-			} else if lister == "recursive" {
+			} else if lister == recursiveLister {
 				baseBlockIDsFetcher = NewRecursiveLister(noopLogger, insBkt)
-			} else {
+			} else if lister == birthstoneLister {
 				baseBlockIDsFetcher = NewBirthstoneLister(noopLogger, insBkt)
+			} else {
+				t.Fatalf("unknown lister %v", lister)
 			}
 			baseFetcher, err := NewBaseFetcher(noopLogger, 20, insBkt, baseBlockIDsFetcher, dir, r)
 			testutil.Ok(t, err)
@@ -119,21 +124,21 @@ func TestMetaFetcher_Fetch(t *testing.T) {
 						var buf bytes.Buffer
 						testutil.Ok(t, json.NewEncoder(&buf).Encode(&meta))
 						testutil.Ok(t, bkt.Upload(ctx, path.Join(meta.ULID.String(), metadata.MetaFilename), &buf))
-						if lister == "birthstone" {
+						if lister == birthstoneLister {
 							testutil.Ok(t, bkt.Upload(ctx, path.Join(BirthstoneDirname, meta.ULID.String()), strings.NewReader("")))
 						}
 
 						meta.ULID = ULID(2)
 						testutil.Ok(t, json.NewEncoder(&buf).Encode(&meta))
 						testutil.Ok(t, bkt.Upload(ctx, path.Join(meta.ULID.String(), metadata.MetaFilename), &buf))
-						if lister == "birthstone" {
+						if lister == birthstoneLister {
 							testutil.Ok(t, bkt.Upload(ctx, path.Join(BirthstoneDirname, meta.ULID.String()), strings.NewReader("")))
 						}
 
 						meta.ULID = ULID(3)
 						testutil.Ok(t, json.NewEncoder(&buf).Encode(&meta))
 						testutil.Ok(t, bkt.Upload(ctx, path.Join(meta.ULID.String(), metadata.MetaFilename), &buf))
-						if lister == "birthstone" {
+						if lister == birthstoneLister {
 							testutil.Ok(t, bkt.Upload(ctx, path.Join(BirthstoneDirname, meta.ULID.String()), strings.NewReader("")))
 						}
 					},
@@ -193,7 +198,7 @@ func TestMetaFetcher_Fetch(t *testing.T) {
 					name: "corrupted meta.json",
 					do: func() {
 						testutil.Ok(t, bkt.Upload(ctx, path.Join(ULID(5).String(), MetaFilename), bytes.NewBuffer([]byte("{ not a json"))))
-						if lister == "birthstone" {
+						if lister == birthstoneLister {
 							testutil.Ok(t, bkt.Upload(ctx, path.Join(BirthstoneDirname, ULID(5).String()), strings.NewReader("")))
 						}
 					},
@@ -214,7 +219,7 @@ func TestMetaFetcher_Fetch(t *testing.T) {
 						var buf bytes.Buffer
 						testutil.Ok(t, json.NewEncoder(&buf).Encode(&meta))
 						testutil.Ok(t, bkt.Upload(ctx, path.Join(meta.ULID.String(), metadata.MetaFilename), &buf))
-						if lister == "birthstone" {
+						if lister == birthstoneLister {
 							testutil.Ok(t, bkt.Upload(ctx, path.Join(BirthstoneDirname, meta.ULID.String()), strings.NewReader("")))
 						}
 					},
@@ -252,7 +257,7 @@ func TestMetaFetcher_Fetch(t *testing.T) {
 						var buf bytes.Buffer
 						testutil.Ok(t, json.NewEncoder(&buf).Encode(&meta))
 						testutil.Ok(t, bkt.Upload(ctx, path.Join(meta.ULID.String(), metadata.MetaFilename), &buf))
-						if lister == "birthstone" {
+						if lister == birthstoneLister {
 							testutil.Ok(t, bkt.Upload(ctx, path.Join(BirthstoneDirname, meta.ULID.String()), strings.NewReader("")))
 						}
 					},
@@ -325,13 +330,13 @@ func TestMetaFetcher_Fetch(t *testing.T) {
 	}
 
 	t.Run("concurrentLister", func(t *testing.T) {
-		runTest(t, "concurrent")
+		runTest(t, concurrentLister)
 	})
 	t.Run("recursiveLister", func(t *testing.T) {
-		runTest(t, "recursive")
+		runTest(t, recursiveLister)
 	})
 	t.Run("birthstoneLister", func(t *testing.T) {
-		runTest(t, "birthstone")
+		runTest(t, birthstoneLister)
 	})
 }
 

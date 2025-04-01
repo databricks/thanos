@@ -316,6 +316,7 @@ func registerBucket(app extkingpin.AppClause) {
 	registerBucketRewrite(cmd, objStoreConfig)
 	registerBucketRetention(cmd, objStoreConfig)
 	registerBucketUploadBlocks(cmd, objStoreConfig)
+	registerBirthstoneUpload(cmd, objStoreConfig)
 }
 
 func registerBucketVerify(app extkingpin.AppClause, objStoreConfig *extflag.PathOrContent) {
