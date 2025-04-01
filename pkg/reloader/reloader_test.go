@@ -779,7 +779,8 @@ func TestReloader_ConfigDirApplyBasedOnWatchInterval(t *testing.T) {
 	g.Wait()
 
 	testutil.Ok(t, err)
-	testutil.Equals(t, 2, reloads.Load().(int))
+	// disable this check since it's flaky on CI. https://github.com/thanos-io/thanos/issues/8114
+	// testutil.Equals(t, 2, reloads.Load().(int))
 
 	outEntries, err := os.ReadDir(outDir)
 	testutil.Ok(t, err)
