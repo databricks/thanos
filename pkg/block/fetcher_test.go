@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -118,14 +119,23 @@ func TestMetaFetcher_Fetch(t *testing.T) {
 						var buf bytes.Buffer
 						testutil.Ok(t, json.NewEncoder(&buf).Encode(&meta))
 						testutil.Ok(t, bkt.Upload(ctx, path.Join(meta.ULID.String(), metadata.MetaFilename), &buf))
+						if lister == "birthstone" {
+							testutil.Ok(t, bkt.Upload(ctx, path.Join(BirthstoneDirname, meta.ULID.String()), strings.NewReader("")))
+						}
 
 						meta.ULID = ULID(2)
 						testutil.Ok(t, json.NewEncoder(&buf).Encode(&meta))
 						testutil.Ok(t, bkt.Upload(ctx, path.Join(meta.ULID.String(), metadata.MetaFilename), &buf))
+						if lister == "birthstone" {
+							testutil.Ok(t, bkt.Upload(ctx, path.Join(BirthstoneDirname, meta.ULID.String()), strings.NewReader("")))
+						}
 
 						meta.ULID = ULID(3)
 						testutil.Ok(t, json.NewEncoder(&buf).Encode(&meta))
 						testutil.Ok(t, bkt.Upload(ctx, path.Join(meta.ULID.String(), metadata.MetaFilename), &buf))
+						if lister == "birthstone" {
+							testutil.Ok(t, bkt.Upload(ctx, path.Join(BirthstoneDirname, meta.ULID.String()), strings.NewReader("")))
+						}
 					},
 
 					expectedMetas:         ULIDs(1, 2, 3),
@@ -183,6 +193,9 @@ func TestMetaFetcher_Fetch(t *testing.T) {
 					name: "corrupted meta.json",
 					do: func() {
 						testutil.Ok(t, bkt.Upload(ctx, path.Join(ULID(5).String(), MetaFilename), bytes.NewBuffer([]byte("{ not a json"))))
+						if lister == "birthstone" {
+							testutil.Ok(t, bkt.Upload(ctx, path.Join(BirthstoneDirname, ULID(5).String()), strings.NewReader("")))
+						}
 					},
 
 					expectedMetas:         ULIDs(1, 2, 3),
@@ -201,6 +214,9 @@ func TestMetaFetcher_Fetch(t *testing.T) {
 						var buf bytes.Buffer
 						testutil.Ok(t, json.NewEncoder(&buf).Encode(&meta))
 						testutil.Ok(t, bkt.Upload(ctx, path.Join(meta.ULID.String(), metadata.MetaFilename), &buf))
+						if lister == "birthstone" {
+							testutil.Ok(t, bkt.Upload(ctx, path.Join(BirthstoneDirname, meta.ULID.String()), strings.NewReader("")))
+						}
 					},
 
 					expectedMetas:         ULIDs(1, 3, 6),
@@ -236,6 +252,9 @@ func TestMetaFetcher_Fetch(t *testing.T) {
 						var buf bytes.Buffer
 						testutil.Ok(t, json.NewEncoder(&buf).Encode(&meta))
 						testutil.Ok(t, bkt.Upload(ctx, path.Join(meta.ULID.String(), metadata.MetaFilename), &buf))
+						if lister == "birthstone" {
+							testutil.Ok(t, bkt.Upload(ctx, path.Join(BirthstoneDirname, meta.ULID.String()), strings.NewReader("")))
+						}
 					},
 
 					expectedMetas:         ULIDs(1, 3, 6),
