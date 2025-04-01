@@ -1153,30 +1153,20 @@ func TestReadIndexCache_LoadSeries(t *testing.T) {
 func TestBucketIndexReader_ExpandedPostings(t *testing.T) {
 	t.Parallel()
 
-	runTest := func(t *testing.T, enableBirthstone bool) {
+	tb := testutil.NewTB(t)
 
-		tb := testutil.NewTB(t)
+	tmpDir := t.TempDir()
 
-		tmpDir := t.TempDir()
+	bkt, err := filesystem.NewBucket(filepath.Join(tmpDir, "bkt"))
+	testutil.Ok(tb, err)
+	defer func() { testutil.Ok(tb, bkt.Close()) }()
 
-		bkt, err := filesystem.NewBucket(filepath.Join(tmpDir, "bkt"))
-		testutil.Ok(tb, err)
-		defer func() { testutil.Ok(tb, bkt.Close()) }()
+	id := uploadTestBlock(tb, tmpDir, bkt, 500, false)
 
-		id := uploadTestBlock(tb, tmpDir, bkt, 500, enableBirthstone)
+	r, err := indexheader.NewBinaryReader(context.Background(), log.NewNopLogger(), bkt, tmpDir, id, DefaultPostingOffsetInMemorySampling, indexheader.NewBinaryReaderMetrics(nil))
+	testutil.Ok(tb, err)
 
-		r, err := indexheader.NewBinaryReader(context.Background(), log.NewNopLogger(), bkt, tmpDir, id, DefaultPostingOffsetInMemorySampling, indexheader.NewBinaryReaderMetrics(nil))
-		testutil.Ok(tb, err)
-
-		benchmarkExpandedPostings(tb, bkt, id, r, 500)
-	}
-
-	t.Run("enableBirthstone", func(t *testing.T) {
-		runTest(t, true)
-	})
-	t.Run("disableBirthstone", func(t *testing.T) {
-		runTest(t, false)
-	})
+	benchmarkExpandedPostings(tb, bkt, id, r, 500)
 }
 
 func BenchmarkBucketIndexReader_ExpandedPostings(b *testing.B) {
