@@ -1304,14 +1304,8 @@ func registerBucketRewrite(app extkingpin.AppClause, objStoreConfig *extflag.Pat
 
 				level.Info(logger).Log("msg", "uploading new block", "source", id, "new", newID)
 				if tbc.promBlocks {
-					if tbc.enableBirthstone {
-						if err := block.UploadPromBlockWithBirthstone(ctx, logger, insBkt, filepath.Join(tbc.tmpDir, newID.String()), metadata.HashFunc(*hashFunc)); err != nil {
-							return errors.Wrap(err, "upload")
-						}
-					} else {
-						if err := block.UploadPromBlock(ctx, logger, insBkt, filepath.Join(tbc.tmpDir, newID.String()), metadata.HashFunc(*hashFunc)); err != nil {
-							return errors.Wrap(err, "upload")
-						}
+					if err := block.UploadPromBlock(ctx, logger, insBkt, filepath.Join(tbc.tmpDir, newID.String()), metadata.HashFunc(*hashFunc), tbc.enableBirthstone); err != nil {
+						return errors.Wrap(err, "upload")
 					}
 				} else {
 					if err := block.Upload(ctx, logger, insBkt, filepath.Join(tbc.tmpDir, newID.String()), metadata.HashFunc(*hashFunc), tbc.enableBirthstone); err != nil {

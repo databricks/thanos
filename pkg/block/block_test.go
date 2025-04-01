@@ -79,75 +79,85 @@ func TestIsBlockDir(t *testing.T) {
 }
 
 func TestUpload(t *testing.T) {
-	defer custom.TolerantVerifyLeak(t)
+	runTest := func(t *testing.T, enableBirthstone bool) {
+		var filesPerBlock int
+		if enableBirthstone {
+			filesPerBlock = 4
+		} else {
+			filesPerBlock = 3
+		}
+		defer custom.TolerantVerifyLeak(t)
 
-	ctx := context.Background()
+		ctx := context.Background()
 
-	tmpDir := t.TempDir()
+		tmpDir := t.TempDir()
 
-	bkt := objstore.NewInMemBucket()
-	b1, err := e2eutil.CreateBlock(ctx, tmpDir, []labels.Labels{
-		labels.New(labels.Label{Name: "a", Value: "1"}),
-		labels.New(labels.Label{Name: "a", Value: "2"}),
-		labels.New(labels.Label{Name: "a", Value: "3"}),
-		labels.New(labels.Label{Name: "a", Value: "4"}),
-		labels.New(labels.Label{Name: "b", Value: "1"}),
-	}, 100, 0, 1000, labels.New(labels.Label{Name: "ext1", Value: "val1"}), 124, metadata.NoneFunc)
-	testutil.Ok(t, err)
-	testutil.Ok(t, os.MkdirAll(path.Join(tmpDir, "test", b1.String()), os.ModePerm))
+		bkt := objstore.NewInMemBucket()
+		b1, err := e2eutil.CreateBlock(ctx, tmpDir, []labels.Labels{
+			labels.New(labels.Label{Name: "a", Value: "1"}),
+			labels.New(labels.Label{Name: "a", Value: "2"}),
+			labels.New(labels.Label{Name: "a", Value: "3"}),
+			labels.New(labels.Label{Name: "a", Value: "4"}),
+			labels.New(labels.Label{Name: "b", Value: "1"}),
+		}, 100, 0, 1000, labels.New(labels.Label{Name: "ext1", Value: "val1"}), 124, metadata.NoneFunc)
+		testutil.Ok(t, err)
+		testutil.Ok(t, os.MkdirAll(path.Join(tmpDir, "test", b1.String()), os.ModePerm))
 
-	{
-		// Wrong dir.
-		err := Upload(ctx, log.NewNopLogger(), bkt, path.Join(tmpDir, "not-existing"), metadata.NoneFunc, false)
-		testutil.NotOk(t, err)
-		testutil.Assert(t, strings.HasSuffix(err.Error(), "/not-existing: no such file or directory"), "")
-	}
-	{
-		// Wrong existing dir (not a block).
-		err := Upload(ctx, log.NewNopLogger(), bkt, path.Join(tmpDir, "test"), metadata.NoneFunc, false)
-		testutil.NotOk(t, err)
-		testutil.Equals(t, "not a block dir: ulid: bad data size when unmarshaling", err.Error())
-	}
-	{
-		// Empty block dir.
-		err := Upload(ctx, log.NewNopLogger(), bkt, path.Join(tmpDir, "test", b1.String()), metadata.NoneFunc, false)
-		testutil.NotOk(t, err)
-		testutil.Assert(t, strings.HasSuffix(err.Error(), "/meta.json: no such file or directory"), "")
-	}
-	e2eutil.Copy(t, path.Join(tmpDir, b1.String(), MetaFilename), path.Join(tmpDir, "test", b1.String(), MetaFilename))
-	{
-		// Missing chunks.
-		err := Upload(ctx, log.NewNopLogger(), bkt, path.Join(tmpDir, "test", b1.String()), metadata.NoneFunc, false)
-		testutil.NotOk(t, err)
-		testutil.Assert(t, strings.HasSuffix(err.Error(), "/chunks: no such file or directory"), err.Error())
-	}
-	testutil.Ok(t, os.MkdirAll(path.Join(tmpDir, "test", b1.String(), ChunksDirname), os.ModePerm))
-	e2eutil.Copy(t, path.Join(tmpDir, b1.String(), ChunksDirname, "000001"), path.Join(tmpDir, "test", b1.String(), ChunksDirname, "000001"))
-	{
-		// Missing index file.
-		err := Upload(ctx, log.NewNopLogger(), bkt, path.Join(tmpDir, "test", b1.String()), metadata.NoneFunc, false)
-		testutil.NotOk(t, err)
-		testutil.Assert(t, strings.HasSuffix(err.Error(), "/index: no such file or directory"), "")
-	}
-	e2eutil.Copy(t, path.Join(tmpDir, b1.String(), IndexFilename), path.Join(tmpDir, "test", b1.String(), IndexFilename))
-	testutil.Ok(t, os.Remove(path.Join(tmpDir, "test", b1.String(), MetaFilename)))
-	{
-		// Missing meta.json file.
-		err := Upload(ctx, log.NewNopLogger(), bkt, path.Join(tmpDir, "test", b1.String()), metadata.NoneFunc, false)
-		testutil.NotOk(t, err)
-		testutil.Assert(t, strings.HasSuffix(err.Error(), "/meta.json: no such file or directory"), "")
-	}
-	e2eutil.Copy(t, path.Join(tmpDir, b1.String(), MetaFilename), path.Join(tmpDir, "test", b1.String(), MetaFilename))
-	{
-		// Full block.
-		testutil.Ok(t, Upload(ctx, log.NewNopLogger(), bkt, path.Join(tmpDir, "test", b1.String()), metadata.NoneFunc, false))
-		testutil.Equals(t, 3, len(bkt.Objects()))
-		testutil.Equals(t, 3727, len(bkt.Objects()[path.Join(b1.String(), ChunksDirname, "000001")]))
-		testutil.Equals(t, 401, len(bkt.Objects()[path.Join(b1.String(), IndexFilename)]))
-		testutil.Equals(t, 595, len(bkt.Objects()[path.Join(b1.String(), MetaFilename)]))
+		{
+			// Wrong dir.
+			err := Upload(ctx, log.NewNopLogger(), bkt, path.Join(tmpDir, "not-existing"), metadata.NoneFunc, enableBirthstone)
+			testutil.NotOk(t, err)
+			testutil.Assert(t, strings.HasSuffix(err.Error(), "/not-existing: no such file or directory"), "")
+		}
+		{
+			// Wrong existing dir (not a block).
+			err := Upload(ctx, log.NewNopLogger(), bkt, path.Join(tmpDir, "test"), metadata.NoneFunc, enableBirthstone)
+			testutil.NotOk(t, err)
+			testutil.Equals(t, "not a block dir: ulid: bad data size when unmarshaling", err.Error())
+		}
+		{
+			// Empty block dir.
+			err := Upload(ctx, log.NewNopLogger(), bkt, path.Join(tmpDir, "test", b1.String()), metadata.NoneFunc, enableBirthstone)
+			testutil.NotOk(t, err)
+			testutil.Assert(t, strings.HasSuffix(err.Error(), "/meta.json: no such file or directory"), "")
+		}
+		e2eutil.Copy(t, path.Join(tmpDir, b1.String(), MetaFilename), path.Join(tmpDir, "test", b1.String(), MetaFilename))
+		{
+			// Missing chunks.
+			err := Upload(ctx, log.NewNopLogger(), bkt, path.Join(tmpDir, "test", b1.String()), metadata.NoneFunc, enableBirthstone)
+			testutil.NotOk(t, err)
+			testutil.Assert(t, strings.HasSuffix(err.Error(), "/chunks: no such file or directory"), err.Error())
+		}
+		testutil.Ok(t, os.MkdirAll(path.Join(tmpDir, "test", b1.String(), ChunksDirname), os.ModePerm))
+		e2eutil.Copy(t, path.Join(tmpDir, b1.String(), ChunksDirname, "000001"), path.Join(tmpDir, "test", b1.String(), ChunksDirname, "000001"))
+		{
+			// Missing index file.
+			err := Upload(ctx, log.NewNopLogger(), bkt, path.Join(tmpDir, "test", b1.String()), metadata.NoneFunc, enableBirthstone)
+			testutil.NotOk(t, err)
+			testutil.Assert(t, strings.HasSuffix(err.Error(), "/index: no such file or directory"), "")
+		}
+		e2eutil.Copy(t, path.Join(tmpDir, b1.String(), IndexFilename), path.Join(tmpDir, "test", b1.String(), IndexFilename))
+		testutil.Ok(t, os.Remove(path.Join(tmpDir, "test", b1.String(), MetaFilename)))
+		{
+			// Missing meta.json file.
+			err := Upload(ctx, log.NewNopLogger(), bkt, path.Join(tmpDir, "test", b1.String()), metadata.NoneFunc, enableBirthstone)
+			testutil.NotOk(t, err)
+			testutil.Assert(t, strings.HasSuffix(err.Error(), "/meta.json: no such file or directory"), "")
+		}
+		e2eutil.Copy(t, path.Join(tmpDir, b1.String(), MetaFilename), path.Join(tmpDir, "test", b1.String(), MetaFilename))
+		{
+			// Full block.
+			testutil.Ok(t, Upload(ctx, log.NewNopLogger(), bkt, path.Join(tmpDir, "test", b1.String()), metadata.NoneFunc, enableBirthstone))
+			testutil.Equals(t, filesPerBlock, len(bkt.Objects()))
+			testutil.Equals(t, 3727, len(bkt.Objects()[path.Join(b1.String(), ChunksDirname, "000001")]))
+			testutil.Equals(t, 401, len(bkt.Objects()[path.Join(b1.String(), IndexFilename)]))
+			testutil.Equals(t, 595, len(bkt.Objects()[path.Join(b1.String(), MetaFilename)]))
+			if enableBirthstone {
+				testutil.Equals(t, 0, len(bkt.Objects()[path.Join(BirthstoneDirname, b1.String())]))
+			}
 
-		// File stats are gathered.
-		testutil.Equals(t, fmt.Sprintf(`{
+			// File stats are gathered.
+			testutil.Equals(t, fmt.Sprintf(`{
 	"ulid": "%s",
 	"minTime": 0,
 	"maxTime": 1000,
@@ -190,331 +200,364 @@ func TestUpload(t *testing.T) {
 	}
 }
 `, b1.String(), b1.String()), string(bkt.Objects()[path.Join(b1.String(), MetaFilename)]))
+		}
+		{
+			// Test Upload is idempotent.
+			testutil.Ok(t, Upload(ctx, log.NewNopLogger(), bkt, path.Join(tmpDir, "test", b1.String()), metadata.NoneFunc, enableBirthstone))
+			testutil.Equals(t, filesPerBlock, len(bkt.Objects()))
+			testutil.Equals(t, 3727, len(bkt.Objects()[path.Join(b1.String(), ChunksDirname, "000001")]))
+			testutil.Equals(t, 401, len(bkt.Objects()[path.Join(b1.String(), IndexFilename)]))
+			testutil.Equals(t, 595, len(bkt.Objects()[path.Join(b1.String(), MetaFilename)]))
+			if enableBirthstone {
+				testutil.Equals(t, 0, len(bkt.Objects()[path.Join(BirthstoneDirname, b1.String())]))
+			}
+		}
+		{
+			// Upload with no external labels should be blocked.
+			b2, err := e2eutil.CreateBlock(ctx, tmpDir, []labels.Labels{
+				labels.New(labels.Label{Name: "a", Value: "1"}),
+				labels.New(labels.Label{Name: "a", Value: "2"}),
+				labels.New(labels.Label{Name: "a", Value: "3"}),
+				labels.New(labels.Label{Name: "a", Value: "4"}),
+				labels.New(labels.Label{Name: "b", Value: "1"}),
+			}, 100, 0, 1000, labels.EmptyLabels(), 124, metadata.NoneFunc)
+			testutil.Ok(t, err)
+			err = Upload(ctx, log.NewNopLogger(), bkt, path.Join(tmpDir, b2.String()), metadata.NoneFunc, enableBirthstone)
+			testutil.NotOk(t, err)
+			testutil.Equals(t, "empty external labels are not allowed for Thanos block.", err.Error())
+			testutil.Equals(t, filesPerBlock, len(bkt.Objects()))
+		}
+		{
+			// No external labels with UploadPromBlocks.
+			b2, err := e2eutil.CreateBlock(ctx, tmpDir, []labels.Labels{
+				labels.New(labels.Label{Name: "a", Value: "1"}),
+				labels.New(labels.Label{Name: "a", Value: "2"}),
+				labels.New(labels.Label{Name: "a", Value: "3"}),
+				labels.New(labels.Label{Name: "a", Value: "4"}),
+				labels.New(labels.Label{Name: "b", Value: "1"}),
+			}, 100, 0, 1000, labels.EmptyLabels(), 124, metadata.NoneFunc)
+			testutil.Ok(t, err)
+			err = UploadPromBlock(ctx, log.NewNopLogger(), bkt, path.Join(tmpDir, b2.String()), metadata.NoneFunc, enableBirthstone)
+			testutil.Ok(t, err)
+			testutil.Equals(t, 2*filesPerBlock, len(bkt.Objects()))
+			testutil.Equals(t, 3727, len(bkt.Objects()[path.Join(b2.String(), ChunksDirname, "000001")]))
+			testutil.Equals(t, 401, len(bkt.Objects()[path.Join(b2.String(), IndexFilename)]))
+			testutil.Equals(t, 574, len(bkt.Objects()[path.Join(b2.String(), MetaFilename)]))
+			if enableBirthstone {
+				testutil.Equals(t, 0, len(bkt.Objects()[path.Join(BirthstoneDirname, b2.String())]))
+			}
+		}
 	}
-	{
-		// Test Upload is idempotent.
-		testutil.Ok(t, Upload(ctx, log.NewNopLogger(), bkt, path.Join(tmpDir, "test", b1.String()), metadata.NoneFunc, false))
-		testutil.Equals(t, 3, len(bkt.Objects()))
-		testutil.Equals(t, 3727, len(bkt.Objects()[path.Join(b1.String(), ChunksDirname, "000001")]))
-		testutil.Equals(t, 401, len(bkt.Objects()[path.Join(b1.String(), IndexFilename)]))
-		testutil.Equals(t, 595, len(bkt.Objects()[path.Join(b1.String(), MetaFilename)]))
-	}
-	{
-		// Reset bucket to test fresh upload with enableBirthstone.
-		bkt = objstore.NewInMemBucket()
-		testutil.Ok(t, Upload(ctx, log.NewNopLogger(), bkt, path.Join(tmpDir, "test", b1.String()), metadata.NoneFunc, true))
-		testutil.Equals(t, 4, len(bkt.Objects()))
-		testutil.Equals(t, 3727, len(bkt.Objects()[path.Join(b1.String(), ChunksDirname, "000001")]))
-		testutil.Equals(t, 401, len(bkt.Objects()[path.Join(b1.String(), IndexFilename)]))
-		testutil.Equals(t, 595, len(bkt.Objects()[path.Join(b1.String(), MetaFilename)]))
-		testutil.Equals(t, 0, len(bkt.Objects()[path.Join(BirthstoneDirname, b1.String())]))
-	}
-	{
-		// Upload with no external labels should be blocked.
-		b2, err := e2eutil.CreateBlock(ctx, tmpDir, []labels.Labels{
-			labels.New(labels.Label{Name: "a", Value: "1"}),
-			labels.New(labels.Label{Name: "a", Value: "2"}),
-			labels.New(labels.Label{Name: "a", Value: "3"}),
-			labels.New(labels.Label{Name: "a", Value: "4"}),
-			labels.New(labels.Label{Name: "b", Value: "1"}),
-		}, 100, 0, 1000, labels.EmptyLabels(), 124, metadata.NoneFunc)
-		testutil.Ok(t, err)
-		err = Upload(ctx, log.NewNopLogger(), bkt, path.Join(tmpDir, b2.String()), metadata.NoneFunc, false)
-		testutil.NotOk(t, err)
-		testutil.Equals(t, "empty external labels are not allowed for Thanos block.", err.Error())
-		testutil.Equals(t, 4, len(bkt.Objects()))
-	}
-	{
-		// No external labels with UploadPromBlocks.
-		b2, err := e2eutil.CreateBlock(ctx, tmpDir, []labels.Labels{
-			labels.New(labels.Label{Name: "a", Value: "1"}),
-			labels.New(labels.Label{Name: "a", Value: "2"}),
-			labels.New(labels.Label{Name: "a", Value: "3"}),
-			labels.New(labels.Label{Name: "a", Value: "4"}),
-			labels.New(labels.Label{Name: "b", Value: "1"}),
-		}, 100, 0, 1000, labels.EmptyLabels(), 124, metadata.NoneFunc)
-		testutil.Ok(t, err)
-		err = UploadPromBlock(ctx, log.NewNopLogger(), bkt, path.Join(tmpDir, b2.String()), metadata.NoneFunc, false)
-		testutil.Ok(t, err)
-		testutil.Equals(t, 7, len(bkt.Objects()))
-		testutil.Equals(t, 3727, len(bkt.Objects()[path.Join(b2.String(), ChunksDirname, "000001")]))
-		testutil.Equals(t, 401, len(bkt.Objects()[path.Join(b2.String(), IndexFilename)]))
-		testutil.Equals(t, 574, len(bkt.Objects()[path.Join(b2.String(), MetaFilename)]))
-	}
+
+	t.Run("enableBirthstone", func(t *testing.T) {
+		runTest(t, true)
+	})
+	t.Run("disableBirthstone", func(t *testing.T) {
+		runTest(t, false)
+	})
 }
 
 func TestDelete(t *testing.T) {
-	defer custom.TolerantVerifyLeak(t)
-	ctx := context.Background()
+	runTest := func(t *testing.T, enableBirthstone bool) {
+		var filesPerBlock int
+		if enableBirthstone {
+			filesPerBlock = 4
+		} else {
+			filesPerBlock = 3
+		}
+		defer custom.TolerantVerifyLeak(t)
+		ctx := context.Background()
 
-	tmpDir := t.TempDir()
+		tmpDir := t.TempDir()
 
-	bkt := objstore.NewInMemBucket()
-	{
-		b1, err := e2eutil.CreateBlock(ctx, tmpDir, []labels.Labels{
-			labels.New(labels.Label{Name: "a", Value: "1"}),
-			labels.New(labels.Label{Name: "a", Value: "2"}),
-			labels.New(labels.Label{Name: "a", Value: "3"}),
-			labels.New(labels.Label{Name: "a", Value: "4"}),
-			labels.New(labels.Label{Name: "b", Value: "1"}),
-		}, 100, 0, 1000, labels.New(labels.Label{Name: "ext1", Value: "val1"}), 124, metadata.NoneFunc)
-		testutil.Ok(t, err)
-		testutil.Ok(t, Upload(ctx, log.NewNopLogger(), bkt, path.Join(tmpDir, b1.String()), metadata.NoneFunc, false))
-		testutil.Equals(t, 3, len(bkt.Objects()))
+		bkt := objstore.NewInMemBucket()
+		{
+			b1, err := e2eutil.CreateBlock(ctx, tmpDir, []labels.Labels{
+				labels.New(labels.Label{Name: "a", Value: "1"}),
+				labels.New(labels.Label{Name: "a", Value: "2"}),
+				labels.New(labels.Label{Name: "a", Value: "3"}),
+				labels.New(labels.Label{Name: "a", Value: "4"}),
+				labels.New(labels.Label{Name: "b", Value: "1"}),
+			}, 100, 0, 1000, labels.New(labels.Label{Name: "ext1", Value: "val1"}), 124, metadata.NoneFunc)
+			testutil.Ok(t, err)
+			testutil.Ok(t, Upload(ctx, log.NewNopLogger(), bkt, path.Join(tmpDir, b1.String()), metadata.NoneFunc, enableBirthstone))
+			testutil.Equals(t, filesPerBlock, len(bkt.Objects()))
 
-		markedForDeletion := promauto.With(prometheus.NewRegistry()).NewCounter(prometheus.CounterOpts{Name: "test"})
-		testutil.Ok(t, MarkForDeletion(ctx, log.NewNopLogger(), bkt, b1, "", markedForDeletion))
+			markedForDeletion := promauto.With(prometheus.NewRegistry()).NewCounter(prometheus.CounterOpts{Name: "test"})
+			testutil.Ok(t, MarkForDeletion(ctx, log.NewNopLogger(), bkt, b1, "", markedForDeletion))
 
-		// Full delete.
-		testutil.Ok(t, Delete(ctx, log.NewNopLogger(), bkt, b1))
-		testutil.Equals(t, 0, len(bkt.Objects()))
+			// Full delete.
+			testutil.Ok(t, Delete(ctx, log.NewNopLogger(), bkt, b1))
+			testutil.Equals(t, 0, len(bkt.Objects()))
+		}
+		{
+			b2, err := e2eutil.CreateBlock(ctx, tmpDir, []labels.Labels{
+				labels.New(labels.Label{Name: "a", Value: "1"}),
+				labels.New(labels.Label{Name: "a", Value: "2"}),
+				labels.New(labels.Label{Name: "a", Value: "3"}),
+				labels.New(labels.Label{Name: "a", Value: "4"}),
+				labels.New(labels.Label{Name: "b", Value: "1"}),
+			}, 100, 0, 1000, labels.New(labels.Label{Name: "ext1", Value: "val1"}), 124, metadata.NoneFunc)
+			testutil.Ok(t, err)
+			testutil.Ok(t, Upload(ctx, log.NewNopLogger(), bkt, path.Join(tmpDir, b2.String()), metadata.NoneFunc, enableBirthstone))
+			testutil.Equals(t, filesPerBlock, len(bkt.Objects()))
+
+			// Remove meta.json and check if delete can delete it.
+			testutil.Ok(t, bkt.Delete(ctx, path.Join(b2.String(), MetaFilename)))
+			testutil.Ok(t, Delete(ctx, log.NewNopLogger(), bkt, b2))
+			testutil.Equals(t, 0, len(bkt.Objects()))
+		}
 	}
-	{
-		// Same as above, but with birthstone.
-		b1, err := e2eutil.CreateBlock(ctx, tmpDir, []labels.Labels{
-			labels.New(labels.Label{Name: "a", Value: "1"}),
-			labels.New(labels.Label{Name: "a", Value: "2"}),
-			labels.New(labels.Label{Name: "a", Value: "3"}),
-			labels.New(labels.Label{Name: "a", Value: "4"}),
-			labels.New(labels.Label{Name: "b", Value: "1"}),
-		}, 100, 0, 1000, labels.New(labels.Label{Name: "ext1", Value: "val1"}), 124, metadata.NoneFunc)
-		testutil.Ok(t, err)
-		testutil.Ok(t, Upload(ctx, log.NewNopLogger(), bkt, path.Join(tmpDir, b1.String()), metadata.NoneFunc, true))
-		testutil.Equals(t, 4, len(bkt.Objects()))
 
-		markedForDeletion := promauto.With(prometheus.NewRegistry()).NewCounter(prometheus.CounterOpts{Name: "test"})
-		testutil.Ok(t, MarkForDeletion(ctx, log.NewNopLogger(), bkt, b1, "", markedForDeletion))
-
-		// Full delete.
-		testutil.Ok(t, Delete(ctx, log.NewNopLogger(), bkt, b1))
-		testutil.Equals(t, 0, len(bkt.Objects()))
-	}
-	{
-		b2, err := e2eutil.CreateBlock(ctx, tmpDir, []labels.Labels{
-			labels.New(labels.Label{Name: "a", Value: "1"}),
-			labels.New(labels.Label{Name: "a", Value: "2"}),
-			labels.New(labels.Label{Name: "a", Value: "3"}),
-			labels.New(labels.Label{Name: "a", Value: "4"}),
-			labels.New(labels.Label{Name: "b", Value: "1"}),
-		}, 100, 0, 1000, labels.New(labels.Label{Name: "ext1", Value: "val1"}), 124, metadata.NoneFunc)
-		testutil.Ok(t, err)
-		testutil.Ok(t, Upload(ctx, log.NewNopLogger(), bkt, path.Join(tmpDir, b2.String()), metadata.NoneFunc, false))
-		testutil.Equals(t, 3, len(bkt.Objects()))
-
-		// Remove meta.json and check if delete can delete it.
-		testutil.Ok(t, bkt.Delete(ctx, path.Join(b2.String(), MetaFilename)))
-		testutil.Ok(t, Delete(ctx, log.NewNopLogger(), bkt, b2))
-		testutil.Equals(t, 0, len(bkt.Objects()))
-	}
+	t.Run("enableBirthstone", func(t *testing.T) {
+		runTest(t, true)
+	})
+	t.Run("disableBirthstone", func(t *testing.T) {
+		runTest(t, false)
+	})
 }
 
 func TestMarkForDeletion(t *testing.T) {
-	defer custom.TolerantVerifyLeak(t)
-	ctx := context.Background()
+	runTest := func(t *testing.T, enableBirthstone bool) {
+		defer custom.TolerantVerifyLeak(t)
+		ctx := context.Background()
 
-	tmpDir := t.TempDir()
+		tmpDir := t.TempDir()
 
-	for _, tcase := range []struct {
-		name      string
-		preUpload func(t testing.TB, id ulid.ULID, bkt objstore.Bucket)
+		for _, tcase := range []struct {
+			name      string
+			preUpload func(t testing.TB, id ulid.ULID, bkt objstore.Bucket)
 
-		blocksMarked int
-	}{
-		{
-			name:         "block marked for deletion",
-			preUpload:    func(t testing.TB, id ulid.ULID, bkt objstore.Bucket) {},
-			blocksMarked: 1,
-		},
-		{
-			name: "block with deletion mark already, expected log and no metric increment",
-			preUpload: func(t testing.TB, id ulid.ULID, bkt objstore.Bucket) {
-				deletionMark, err := json.Marshal(metadata.DeletionMark{
-					ID:           id,
-					DeletionTime: time.Now().Unix(),
-					Version:      metadata.DeletionMarkVersion1,
-				})
-				testutil.Ok(t, err)
-				testutil.Ok(t, bkt.Upload(ctx, path.Join(id.String(), metadata.DeletionMarkFilename), bytes.NewReader(deletionMark)))
+			blocksMarked int
+		}{
+			{
+				name:         "block marked for deletion",
+				preUpload:    func(t testing.TB, id ulid.ULID, bkt objstore.Bucket) {},
+				blocksMarked: 1,
 			},
-			blocksMarked: 0,
-		},
-	} {
-		t.Run(tcase.name, func(t *testing.T) {
-			bkt := objstore.NewInMemBucket()
-			id, err := e2eutil.CreateBlock(ctx, tmpDir, []labels.Labels{
-				labels.New(labels.Label{Name: "a", Value: "1"}),
-				labels.New(labels.Label{Name: "a", Value: "2"}),
-				labels.New(labels.Label{Name: "a", Value: "3"}),
-				labels.New(labels.Label{Name: "a", Value: "4"}),
-				labels.New(labels.Label{Name: "b", Value: "1"}),
-			}, 100, 0, 1000, labels.New(labels.Label{Name: "ext1", Value: "val1"}), 124, metadata.NoneFunc)
-			testutil.Ok(t, err)
+			{
+				name: "block with deletion mark already, expected log and no metric increment",
+				preUpload: func(t testing.TB, id ulid.ULID, bkt objstore.Bucket) {
+					deletionMark, err := json.Marshal(metadata.DeletionMark{
+						ID:           id,
+						DeletionTime: time.Now().Unix(),
+						Version:      metadata.DeletionMarkVersion1,
+					})
+					testutil.Ok(t, err)
+					testutil.Ok(t, bkt.Upload(ctx, path.Join(id.String(), metadata.DeletionMarkFilename), bytes.NewReader(deletionMark)))
+				},
+				blocksMarked: 0,
+			},
+		} {
+			t.Run(tcase.name, func(t *testing.T) {
+				bkt := objstore.NewInMemBucket()
+				id, err := e2eutil.CreateBlock(ctx, tmpDir, []labels.Labels{
+					labels.New(labels.Label{Name: "a", Value: "1"}),
+					labels.New(labels.Label{Name: "a", Value: "2"}),
+					labels.New(labels.Label{Name: "a", Value: "3"}),
+					labels.New(labels.Label{Name: "a", Value: "4"}),
+					labels.New(labels.Label{Name: "b", Value: "1"}),
+				}, 100, 0, 1000, labels.New(labels.Label{Name: "ext1", Value: "val1"}), 124, metadata.NoneFunc)
+				testutil.Ok(t, err)
 
-			tcase.preUpload(t, id, bkt)
+				tcase.preUpload(t, id, bkt)
 
-			testutil.Ok(t, Upload(ctx, log.NewNopLogger(), bkt, path.Join(tmpDir, id.String()), metadata.NoneFunc, false))
+				testutil.Ok(t, Upload(ctx, log.NewNopLogger(), bkt, path.Join(tmpDir, id.String()), metadata.NoneFunc, enableBirthstone))
 
-			c := promauto.With(nil).NewCounter(prometheus.CounterOpts{})
-			err = MarkForDeletion(ctx, log.NewNopLogger(), bkt, id, "", c)
-			testutil.Ok(t, err)
-			testutil.Equals(t, float64(tcase.blocksMarked), promtest.ToFloat64(c))
-		})
+				c := promauto.With(nil).NewCounter(prometheus.CounterOpts{})
+				err = MarkForDeletion(ctx, log.NewNopLogger(), bkt, id, "", c)
+				testutil.Ok(t, err)
+				testutil.Equals(t, float64(tcase.blocksMarked), promtest.ToFloat64(c))
+			})
+		}
 	}
+
+	t.Run("enableBirthstone", func(t *testing.T) {
+		runTest(t, true)
+	})
+	t.Run("disableBirthstone", func(t *testing.T) {
+		runTest(t, false)
+	})
+
 }
 
 func TestMarkForNoCompact(t *testing.T) {
-	defer custom.TolerantVerifyLeak(t)
-	ctx := context.Background()
+	runTest := func(t *testing.T, enableBirthstone bool) {
+		defer custom.TolerantVerifyLeak(t)
+		ctx := context.Background()
 
-	tmpDir := t.TempDir()
+		tmpDir := t.TempDir()
 
-	for _, tcase := range []struct {
-		name      string
-		preUpload func(t testing.TB, id ulid.ULID, bkt objstore.Bucket)
+		for _, tcase := range []struct {
+			name      string
+			preUpload func(t testing.TB, id ulid.ULID, bkt objstore.Bucket)
 
-		blocksMarked int
-	}{
-		{
-			name:         "block marked",
-			preUpload:    func(t testing.TB, id ulid.ULID, bkt objstore.Bucket) {},
-			blocksMarked: 1,
-		},
-		{
-			name: "block with no-compact mark already, expected log and no metric increment",
-			preUpload: func(t testing.TB, id ulid.ULID, bkt objstore.Bucket) {
-				m, err := json.Marshal(metadata.NoCompactMark{
-					ID:            id,
-					NoCompactTime: time.Now().Unix(),
-					Version:       metadata.NoCompactMarkVersion1,
-				})
-				testutil.Ok(t, err)
-				testutil.Ok(t, bkt.Upload(ctx, path.Join(id.String(), metadata.NoCompactMarkFilename), bytes.NewReader(m)))
+			blocksMarked int
+		}{
+			{
+				name:         "block marked",
+				preUpload:    func(t testing.TB, id ulid.ULID, bkt objstore.Bucket) {},
+				blocksMarked: 1,
 			},
-			blocksMarked: 0,
-		},
-	} {
-		t.Run(tcase.name, func(t *testing.T) {
-			bkt := objstore.NewInMemBucket()
-			id, err := e2eutil.CreateBlock(ctx, tmpDir, []labels.Labels{
-				labels.New(labels.Label{Name: "a", Value: "1"}),
-				labels.New(labels.Label{Name: "a", Value: "2"}),
-				labels.New(labels.Label{Name: "a", Value: "3"}),
-				labels.New(labels.Label{Name: "a", Value: "4"}),
-				labels.New(labels.Label{Name: "b", Value: "1"}),
-			}, 100, 0, 1000, labels.New(labels.Label{Name: "ext1", Value: "val1"}), 124, metadata.NoneFunc)
-			testutil.Ok(t, err)
+			{
+				name: "block with no-compact mark already, expected log and no metric increment",
+				preUpload: func(t testing.TB, id ulid.ULID, bkt objstore.Bucket) {
+					m, err := json.Marshal(metadata.NoCompactMark{
+						ID:            id,
+						NoCompactTime: time.Now().Unix(),
+						Version:       metadata.NoCompactMarkVersion1,
+					})
+					testutil.Ok(t, err)
+					testutil.Ok(t, bkt.Upload(ctx, path.Join(id.String(), metadata.NoCompactMarkFilename), bytes.NewReader(m)))
+				},
+				blocksMarked: 0,
+			},
+		} {
+			t.Run(tcase.name, func(t *testing.T) {
+				bkt := objstore.NewInMemBucket()
+				id, err := e2eutil.CreateBlock(ctx, tmpDir, []labels.Labels{
+					labels.New(labels.Label{Name: "a", Value: "1"}),
+					labels.New(labels.Label{Name: "a", Value: "2"}),
+					labels.New(labels.Label{Name: "a", Value: "3"}),
+					labels.New(labels.Label{Name: "a", Value: "4"}),
+					labels.New(labels.Label{Name: "b", Value: "1"}),
+				}, 100, 0, 1000, labels.New(labels.Label{Name: "ext1", Value: "val1"}), 124, metadata.NoneFunc)
+				testutil.Ok(t, err)
 
-			tcase.preUpload(t, id, bkt)
+				tcase.preUpload(t, id, bkt)
 
-			testutil.Ok(t, Upload(ctx, log.NewNopLogger(), bkt, path.Join(tmpDir, id.String()), metadata.NoneFunc, false))
+				testutil.Ok(t, Upload(ctx, log.NewNopLogger(), bkt, path.Join(tmpDir, id.String()), metadata.NoneFunc, enableBirthstone))
 
-			c := promauto.With(nil).NewCounter(prometheus.CounterOpts{})
-			err = MarkForNoCompact(ctx, log.NewNopLogger(), bkt, id, metadata.ManualNoCompactReason, "", c)
-			testutil.Ok(t, err)
-			testutil.Equals(t, float64(tcase.blocksMarked), promtest.ToFloat64(c))
-		})
+				c := promauto.With(nil).NewCounter(prometheus.CounterOpts{})
+				err = MarkForNoCompact(ctx, log.NewNopLogger(), bkt, id, metadata.ManualNoCompactReason, "", c)
+				testutil.Ok(t, err)
+				testutil.Equals(t, float64(tcase.blocksMarked), promtest.ToFloat64(c))
+			})
+		}
 	}
+
+	t.Run("enableBirthstone", func(t *testing.T) {
+		runTest(t, true)
+	})
+	t.Run("disableBirthstone", func(t *testing.T) {
+		runTest(t, false)
+	})
 }
 
 func TestMarkForNoDownsample(t *testing.T) {
+	runTest := func(t *testing.T, enableBirthstone bool) {
+		defer custom.TolerantVerifyLeak(t)
+		ctx := context.Background()
 
-	defer custom.TolerantVerifyLeak(t)
-	ctx := context.Background()
+		tmpDir := t.TempDir()
 
-	tmpDir := t.TempDir()
+		for _, tcase := range []struct {
+			name      string
+			preUpload func(t testing.TB, id ulid.ULID, bkt objstore.Bucket)
 
-	for _, tcase := range []struct {
-		name      string
-		preUpload func(t testing.TB, id ulid.ULID, bkt objstore.Bucket)
-
-		blocksMarked int
-	}{
-		{
-			name:         "block marked",
-			preUpload:    func(t testing.TB, id ulid.ULID, bkt objstore.Bucket) {},
-			blocksMarked: 1,
-		},
-		{
-			name: "block with no-downsample mark already, expected log and no metric increment",
-			preUpload: func(t testing.TB, id ulid.ULID, bkt objstore.Bucket) {
-				m, err := json.Marshal(metadata.NoDownsampleMark{
-					ID:               id,
-					NoDownsampleTime: time.Now().Unix(),
-					Version:          metadata.NoDownsampleMarkVersion1,
-				})
-				testutil.Ok(t, err)
-				testutil.Ok(t, bkt.Upload(ctx, path.Join(id.String(), metadata.NoDownsampleMarkFilename), bytes.NewReader(m)))
+			blocksMarked int
+		}{
+			{
+				name:         "block marked",
+				preUpload:    func(t testing.TB, id ulid.ULID, bkt objstore.Bucket) {},
+				blocksMarked: 1,
 			},
-			blocksMarked: 0,
-		},
-	} {
-		t.Run(tcase.name, func(t *testing.T) {
-			bkt := objstore.NewInMemBucket()
-			id, err := e2eutil.CreateBlock(ctx, tmpDir, []labels.Labels{
-				labels.New(labels.Label{Name: "a", Value: "1"}),
-				labels.New(labels.Label{Name: "a", Value: "2"}),
-				labels.New(labels.Label{Name: "a", Value: "3"}),
-				labels.New(labels.Label{Name: "a", Value: "4"}),
-				labels.New(labels.Label{Name: "b", Value: "1"}),
-			}, 100, 0, 1000, labels.New(labels.Label{Name: "ext1", Value: "val1"}), 124, metadata.NoneFunc)
-			testutil.Ok(t, err)
+			{
+				name: "block with no-downsample mark already, expected log and no metric increment",
+				preUpload: func(t testing.TB, id ulid.ULID, bkt objstore.Bucket) {
+					m, err := json.Marshal(metadata.NoDownsampleMark{
+						ID:               id,
+						NoDownsampleTime: time.Now().Unix(),
+						Version:          metadata.NoDownsampleMarkVersion1,
+					})
+					testutil.Ok(t, err)
+					testutil.Ok(t, bkt.Upload(ctx, path.Join(id.String(), metadata.NoDownsampleMarkFilename), bytes.NewReader(m)))
+				},
+				blocksMarked: 0,
+			},
+		} {
+			t.Run(tcase.name, func(t *testing.T) {
+				bkt := objstore.NewInMemBucket()
+				id, err := e2eutil.CreateBlock(ctx, tmpDir, []labels.Labels{
+					labels.New(labels.Label{Name: "a", Value: "1"}),
+					labels.New(labels.Label{Name: "a", Value: "2"}),
+					labels.New(labels.Label{Name: "a", Value: "3"}),
+					labels.New(labels.Label{Name: "a", Value: "4"}),
+					labels.New(labels.Label{Name: "b", Value: "1"}),
+				}, 100, 0, 1000, labels.New(labels.Label{Name: "ext1", Value: "val1"}), 124, metadata.NoneFunc)
+				testutil.Ok(t, err)
 
-			tcase.preUpload(t, id, bkt)
+				tcase.preUpload(t, id, bkt)
 
-			testutil.Ok(t, Upload(ctx, log.NewNopLogger(), bkt, path.Join(tmpDir, id.String()), metadata.NoneFunc, false))
+				testutil.Ok(t, Upload(ctx, log.NewNopLogger(), bkt, path.Join(tmpDir, id.String()), metadata.NoneFunc, enableBirthstone))
 
-			c := promauto.With(nil).NewCounter(prometheus.CounterOpts{})
-			err = MarkForNoDownsample(ctx, log.NewNopLogger(), bkt, id, metadata.ManualNoDownsampleReason, "", c)
-			testutil.Ok(t, err)
-			testutil.Equals(t, float64(tcase.blocksMarked), promtest.ToFloat64(c))
-		})
+				c := promauto.With(nil).NewCounter(prometheus.CounterOpts{})
+				err = MarkForNoDownsample(ctx, log.NewNopLogger(), bkt, id, metadata.ManualNoDownsampleReason, "", c)
+				testutil.Ok(t, err)
+				testutil.Equals(t, float64(tcase.blocksMarked), promtest.ToFloat64(c))
+			})
+		}
 	}
+
+	t.Run("enableBirthstone", func(t *testing.T) {
+		runTest(t, true)
+	})
+	t.Run("disableBirthstone", func(t *testing.T) {
+		runTest(t, false)
+	})
 }
 
 // TestHashDownload uploads an empty block to in-memory storage
 // and tries to download it to the same dir. It should not try
 // to download twice.
 func TestHashDownload(t *testing.T) {
-	defer custom.TolerantVerifyLeak(t)
-
-	ctx := context.Background()
-
-	tmpDir := t.TempDir()
-
-	bkt := objstore.NewInMemBucket()
-	r := prometheus.NewRegistry()
-	instrumentedBkt := objstore.WrapWithMetrics(bkt, extprom.WrapRegistererWithPrefix("thanos_", r), "test")
-
-	b1, err := e2eutil.CreateBlockWithTombstone(ctx, tmpDir, []labels.Labels{
-		labels.New(labels.Label{Name: "a", Value: "1"}),
-	}, 100, 0, 1000, labels.New(labels.Label{Name: "ext1", Value: "val1"}), 42, metadata.SHA256Func)
-	testutil.Ok(t, err)
-
-	testutil.Ok(t, Upload(ctx, log.NewNopLogger(), instrumentedBkt, path.Join(tmpDir, b1.String()), metadata.SHA256Func, false))
-	testutil.Equals(t, 3, len(bkt.Objects()))
-
-	m, err := DownloadMeta(ctx, log.NewNopLogger(), bkt, b1)
-	testutil.Ok(t, err)
-
-	for _, fl := range m.Thanos.Files {
-		if fl.RelPath == MetaFilename {
-			continue
+	runTest := func(t *testing.T, enableBirthstone bool) {
+		var filesPerBlock int
+		if enableBirthstone {
+			filesPerBlock = 4
+		} else {
+			filesPerBlock = 3
 		}
-		testutil.Assert(t, fl.Hash != nil, "expected a hash for %s but got nil", fl.RelPath)
-	}
+		defer custom.TolerantVerifyLeak(t)
 
-	// Remove the hash from one file to check if we always download it.
-	m.Thanos.Files[1].Hash = nil
+		ctx := context.Background()
 
-	metaEncoded := strings.Builder{}
-	testutil.Ok(t, m.Write(&metaEncoded))
-	testutil.Ok(t, bkt.Upload(ctx, path.Join(b1.String(), MetaFilename), strings.NewReader(metaEncoded.String())))
+		tmpDir := t.TempDir()
 
-	// Only downloads MetaFile and IndexFile.
-	{
-		err = Download(ctx, log.NewNopLogger(), instrumentedBkt, m.ULID, path.Join(tmpDir, b1.String()))
+		bkt := objstore.NewInMemBucket()
+		r := prometheus.NewRegistry()
+		instrumentedBkt := objstore.WrapWithMetrics(bkt, extprom.WrapRegistererWithPrefix("thanos_", r), "test")
+
+		b1, err := e2eutil.CreateBlockWithTombstone(ctx, tmpDir, []labels.Labels{
+			labels.New(labels.Label{Name: "a", Value: "1"}),
+		}, 100, 0, 1000, labels.New(labels.Label{Name: "ext1", Value: "val1"}), 42, metadata.SHA256Func)
 		testutil.Ok(t, err)
-		testutil.Ok(t, promtest.GatherAndCompare(r, strings.NewReader(`
+
+		testutil.Ok(t, Upload(ctx, log.NewNopLogger(), instrumentedBkt, path.Join(tmpDir, b1.String()), metadata.SHA256Func, enableBirthstone))
+		testutil.Equals(t, filesPerBlock, len(bkt.Objects()))
+
+		m, err := DownloadMeta(ctx, log.NewNopLogger(), bkt, b1)
+		testutil.Ok(t, err)
+
+		for _, fl := range m.Thanos.Files {
+			if fl.RelPath == MetaFilename {
+				continue
+			}
+			testutil.Assert(t, fl.Hash != nil, "expected a hash for %s but got nil", fl.RelPath)
+		}
+
+		// Remove the hash from one file to check if we always download it.
+		m.Thanos.Files[1].Hash = nil
+
+		metaEncoded := strings.Builder{}
+		testutil.Ok(t, m.Write(&metaEncoded))
+		testutil.Ok(t, bkt.Upload(ctx, path.Join(b1.String(), MetaFilename), strings.NewReader(metaEncoded.String())))
+
+		// Only downloads MetaFile and IndexFile.
+		{
+			err = Download(ctx, log.NewNopLogger(), instrumentedBkt, m.ULID, path.Join(tmpDir, b1.String()))
+			testutil.Ok(t, err)
+			testutil.Ok(t, promtest.GatherAndCompare(r, strings.NewReader(fmt.Sprintf(`
 		# HELP thanos_objstore_bucket_operations_total Total number of all attempted operations against a bucket.
         # TYPE thanos_objstore_bucket_operations_total counter
         thanos_objstore_bucket_operations_total{bucket="test",operation="attributes"} 0
@@ -523,16 +566,16 @@ func TestHashDownload(t *testing.T) {
         thanos_objstore_bucket_operations_total{bucket="test",operation="get"} 2
         thanos_objstore_bucket_operations_total{bucket="test",operation="get_range"} 0
         thanos_objstore_bucket_operations_total{bucket="test",operation="iter"} 2
-        thanos_objstore_bucket_operations_total{bucket="test",operation="upload"} 3
-		`), `thanos_objstore_bucket_operations_total`))
-	}
+        thanos_objstore_bucket_operations_total{bucket="test",operation="upload"} %v
+		`, filesPerBlock)), `thanos_objstore_bucket_operations_total`))
+		}
 
-	// Ensures that we always download MetaFile.
-	{
-		testutil.Ok(t, os.Remove(path.Join(tmpDir, b1.String(), MetaFilename)))
-		err = Download(ctx, log.NewNopLogger(), instrumentedBkt, m.ULID, path.Join(tmpDir, b1.String()))
-		testutil.Ok(t, err)
-		testutil.Ok(t, promtest.GatherAndCompare(r, strings.NewReader(`
+		// Ensures that we always download MetaFile.
+		{
+			testutil.Ok(t, os.Remove(path.Join(tmpDir, b1.String(), MetaFilename)))
+			err = Download(ctx, log.NewNopLogger(), instrumentedBkt, m.ULID, path.Join(tmpDir, b1.String()))
+			testutil.Ok(t, err)
+			testutil.Ok(t, promtest.GatherAndCompare(r, strings.NewReader(fmt.Sprintf(`
 		# HELP thanos_objstore_bucket_operations_total Total number of all attempted operations against a bucket.
         # TYPE thanos_objstore_bucket_operations_total counter
         thanos_objstore_bucket_operations_total{bucket="test",operation="attributes"} 0
@@ -541,18 +584,18 @@ func TestHashDownload(t *testing.T) {
         thanos_objstore_bucket_operations_total{bucket="test",operation="get"} 4
         thanos_objstore_bucket_operations_total{bucket="test",operation="get_range"} 0
         thanos_objstore_bucket_operations_total{bucket="test",operation="iter"} 4
-        thanos_objstore_bucket_operations_total{bucket="test",operation="upload"} 3
-		`), `thanos_objstore_bucket_operations_total`))
-	}
+        thanos_objstore_bucket_operations_total{bucket="test",operation="upload"} %v
+		`, filesPerBlock)), `thanos_objstore_bucket_operations_total`))
+		}
 
-	// Remove chunks => gets redownloaded.
-	// Always downloads MetaFile.
-	// Finally, downloads the IndexFile since we have removed its hash.
-	{
-		testutil.Ok(t, os.RemoveAll(path.Join(tmpDir, b1.String(), ChunksDirname)))
-		err = Download(ctx, log.NewNopLogger(), instrumentedBkt, m.ULID, path.Join(tmpDir, b1.String()))
-		testutil.Ok(t, err)
-		testutil.Ok(t, promtest.GatherAndCompare(r, strings.NewReader(`
+		// Remove chunks => gets redownloaded.
+		// Always downloads MetaFile.
+		// Finally, downloads the IndexFile since we have removed its hash.
+		{
+			testutil.Ok(t, os.RemoveAll(path.Join(tmpDir, b1.String(), ChunksDirname)))
+			err = Download(ctx, log.NewNopLogger(), instrumentedBkt, m.ULID, path.Join(tmpDir, b1.String()))
+			testutil.Ok(t, err)
+			testutil.Ok(t, promtest.GatherAndCompare(r, strings.NewReader(fmt.Sprintf(`
 			# HELP thanos_objstore_bucket_operations_total Total number of all attempted operations against a bucket.
 			# TYPE thanos_objstore_bucket_operations_total counter
 			thanos_objstore_bucket_operations_total{bucket="test",operation="attributes"} 0
@@ -561,52 +604,69 @@ func TestHashDownload(t *testing.T) {
 			thanos_objstore_bucket_operations_total{bucket="test",operation="get"} 7
 			thanos_objstore_bucket_operations_total{bucket="test",operation="get_range"} 0
 			thanos_objstore_bucket_operations_total{bucket="test",operation="iter"} 6
-			thanos_objstore_bucket_operations_total{bucket="test",operation="upload"} 3
-			`), `thanos_objstore_bucket_operations_total`))
+			thanos_objstore_bucket_operations_total{bucket="test",operation="upload"} %v
+			`, filesPerBlock)), `thanos_objstore_bucket_operations_total`))
+		}
 	}
+
+	t.Run("enableBirthstone", func(t *testing.T) {
+		runTest(t, true)
+	})
+	t.Run("disableBirthstone", func(t *testing.T) {
+		runTest(t, false)
+	})
 }
 
 func TestUploadCleanup(t *testing.T) {
-	defer custom.TolerantVerifyLeak(t)
+	runTest := func(t *testing.T, enableBirthstone bool) {
+		defer custom.TolerantVerifyLeak(t)
 
-	ctx := context.Background()
+		ctx := context.Background()
 
-	tmpDir := t.TempDir()
+		tmpDir := t.TempDir()
 
-	bkt := objstore.NewInMemBucket()
-	b1, err := e2eutil.CreateBlock(ctx, tmpDir, []labels.Labels{
-		labels.New(labels.Label{Name: "a", Value: "1"}),
-		labels.New(labels.Label{Name: "a", Value: "2"}),
-		labels.New(labels.Label{Name: "a", Value: "3"}),
-		labels.New(labels.Label{Name: "a", Value: "4"}),
-		labels.New(labels.Label{Name: "b", Value: "1"}),
-	}, 100, 0, 1000, labels.New(labels.Label{Name: "ext1", Value: "val1"}), 124, metadata.NoneFunc)
-	testutil.Ok(t, err)
+		bkt := objstore.NewInMemBucket()
+		b1, err := e2eutil.CreateBlock(ctx, tmpDir, []labels.Labels{
+			labels.New(labels.Label{Name: "a", Value: "1"}),
+			labels.New(labels.Label{Name: "a", Value: "2"}),
+			labels.New(labels.Label{Name: "a", Value: "3"}),
+			labels.New(labels.Label{Name: "a", Value: "4"}),
+			labels.New(labels.Label{Name: "b", Value: "1"}),
+		}, 100, 0, 1000, labels.New(labels.Label{Name: "ext1", Value: "val1"}), 124, metadata.NoneFunc)
+		testutil.Ok(t, err)
 
-	{
-		errBkt := errBucket{Bucket: bkt, failSuffix: "/index"}
+		{
+			errBkt := errBucket{Bucket: bkt, failSuffix: "/index"}
 
-		uploadErr := Upload(ctx, log.NewNopLogger(), errBkt, path.Join(tmpDir, b1.String()), metadata.NoneFunc, false)
-		testutil.Assert(t, errors.Is(uploadErr, errUploadFailed))
+			uploadErr := Upload(ctx, log.NewNopLogger(), errBkt, path.Join(tmpDir, b1.String()), metadata.NoneFunc, enableBirthstone)
+			testutil.Assert(t, errors.Is(uploadErr, errUploadFailed))
 
-		// If upload of index fails, block is deleted.
-		testutil.Equals(t, 0, len(bkt.Objects()))
-		testutil.Assert(t, len(bkt.Objects()[path.Join(DebugMetas, fmt.Sprintf("%s.json", b1.String()))]) == 0)
+			// If upload of index fails, block is deleted.
+			testutil.Equals(t, 0, len(bkt.Objects()))
+			testutil.Assert(t, len(bkt.Objects()[path.Join(DebugMetas, fmt.Sprintf("%s.json", b1.String()))]) == 0)
+		}
+
+		{
+			errBkt := errBucket{Bucket: bkt, failSuffix: "/meta.json"}
+
+			uploadErr := Upload(ctx, log.NewNopLogger(), errBkt, path.Join(tmpDir, b1.String()), metadata.NoneFunc, enableBirthstone)
+			testutil.Assert(t, errors.Is(uploadErr, errUploadFailed))
+
+			// If upload of meta.json fails, nothing is cleaned up.
+			testutil.Equals(t, 3, len(bkt.Objects()))
+			testutil.Assert(t, len(bkt.Objects()[path.Join(b1.String(), ChunksDirname, "000001")]) > 0)
+			testutil.Assert(t, len(bkt.Objects()[path.Join(b1.String(), IndexFilename)]) > 0)
+			testutil.Assert(t, len(bkt.Objects()[path.Join(b1.String(), MetaFilename)]) > 0)
+			testutil.Assert(t, len(bkt.Objects()[path.Join(DebugMetas, fmt.Sprintf("%s.json", b1.String()))]) == 0)
+		}
 	}
 
-	{
-		errBkt := errBucket{Bucket: bkt, failSuffix: "/meta.json"}
-
-		uploadErr := Upload(ctx, log.NewNopLogger(), errBkt, path.Join(tmpDir, b1.String()), metadata.NoneFunc, false)
-		testutil.Assert(t, errors.Is(uploadErr, errUploadFailed))
-
-		// If upload of meta.json fails, nothing is cleaned up.
-		testutil.Equals(t, 3, len(bkt.Objects()))
-		testutil.Assert(t, len(bkt.Objects()[path.Join(b1.String(), ChunksDirname, "000001")]) > 0)
-		testutil.Assert(t, len(bkt.Objects()[path.Join(b1.String(), IndexFilename)]) > 0)
-		testutil.Assert(t, len(bkt.Objects()[path.Join(b1.String(), MetaFilename)]) > 0)
-		testutil.Assert(t, len(bkt.Objects()[path.Join(DebugMetas, fmt.Sprintf("%s.json", b1.String()))]) == 0)
-	}
+	t.Run("enableBirthstone", func(t *testing.T) {
+		runTest(t, true)
+	})
+	t.Run("disableBirthstone", func(t *testing.T) {
+		runTest(t, false)
+	})
 }
 
 var errUploadFailed = errors.New("upload failed")
