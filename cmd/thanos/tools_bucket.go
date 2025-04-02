@@ -316,7 +316,7 @@ func registerBucket(app extkingpin.AppClause) {
 	registerBucketRewrite(cmd, objStoreConfig)
 	registerBucketRetention(cmd, objStoreConfig)
 	registerBucketUploadBlocks(cmd, objStoreConfig)
-	registerBirthstoneUpload(cmd, objStoreConfig)
+	registerBucketUploadBirthstone(cmd, objStoreConfig)
 }
 
 func registerBucketVerify(app extkingpin.AppClause, objStoreConfig *extflag.PathOrContent) {
@@ -1500,8 +1500,8 @@ func registerBucketUploadBlocks(app extkingpin.AppClause, objStoreConfig *extfla
 	})
 }
 
-func registerBirthstoneUpload(app extkingpin.AppClause, objStoreConfig *extflag.PathOrContent) {
-	cmd := app.Command("birthstone-upload", "Create birthstones for blocks in the bucket. Should pause compaction first to avoid race conditions. Expected to be idempotent.")
+func registerBucketUploadBirthstone(app extkingpin.AppClause, objStoreConfig *extflag.PathOrContent) {
+	cmd := app.Command("upload-birthstones", "Create birthstones for blocks in the bucket. Should pause compaction first to avoid race conditions. Expected to be idempotent.")
 	cmd.Setup(func(g *run.Group, logger log.Logger, reg *prometheus.Registry, _ opentracing.Tracer, _ <-chan struct{}, _ bool) error {
 		confContentYaml, err := objStoreConfig.Content()
 		if err != nil {
