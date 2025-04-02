@@ -618,6 +618,7 @@ func TestReloader_ConfigDirApply(t *testing.T) {
 }
 
 func TestReloader_ConfigDirApplyBasedOnWatchInterval(t *testing.T) {
+	t.Skip("flaky on CI. https://github.com/thanos-io/thanos/issues/8114")
 	t.Parallel()
 
 	l, err := net.Listen("tcp", "localhost:0")
@@ -779,8 +780,7 @@ func TestReloader_ConfigDirApplyBasedOnWatchInterval(t *testing.T) {
 	g.Wait()
 
 	testutil.Ok(t, err)
-	// disable this check since it's flaky on CI. https://github.com/thanos-io/thanos/issues/8114
-	// testutil.Equals(t, 2, reloads.Load().(int))
+	testutil.Equals(t, 2, reloads.Load().(int))
 
 	outEntries, err := os.ReadDir(outDir)
 	testutil.Ok(t, err)
