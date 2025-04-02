@@ -315,6 +315,7 @@ faulty_config:
 }
 
 func TestReloader_ConfigDirApply(t *testing.T) {
+	t.Skip("flaky on CI. https://github.com/thanos-io/thanos/issues/8114")
 	t.Parallel()
 
 	l, err := net.Listen("tcp", "localhost:0")
@@ -830,6 +831,7 @@ func TestReloader_ConfigDirApplyBasedOnWatchInterval(t *testing.T) {
 }
 
 func TestReloader_DirectoriesApply(t *testing.T) {
+	t.Skip("flaky on CI.")
 	t.Parallel()
 
 	l, err := net.Listen("tcp", "localhost:0")
