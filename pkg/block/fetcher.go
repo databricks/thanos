@@ -399,6 +399,11 @@ func (f *BirthstoneLister) GetActiveAndPartialBlockIDs(ctx context.Context, ch c
 			}
 			// Block with a birthstone is considered complete.
 			partialBlocks[id] = false
+			select {
+			case <-gCtx.Done():
+				return gCtx.Err()
+			case ch <- id:
+			}
 			return nil
 		})
 	})
@@ -413,9 +418,9 @@ func (f *BirthstoneLister) GetActiveAndPartialBlockIDs(ctx context.Context, ch c
 			select {
 			case <-gCtx.Done():
 				return gCtx.Err()
-			case ch <- id:
+			default:
+				return nil
 			}
-			return nil
 		})
 	})
 	if err := eg.Wait(); err != nil {
