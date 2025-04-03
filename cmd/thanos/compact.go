@@ -247,6 +247,8 @@ func runCompact(
 		blockLister = block.NewConcurrentLister(logger, insBkt)
 	case recursiveDiscovery:
 		blockLister = block.NewRecursiveLister(logger, insBkt)
+	case birthstoneDiscovery:
+		blockLister = block.NewBirthstoneLister(logger, insBkt)
 	default:
 		return errors.Errorf("unknown sync strategy %s", conf.blockListStrategy)
 	}
@@ -837,7 +839,7 @@ func (cc *compactConfig) registerFlag(cmd extkingpin.FlagClause) {
 		"as querying long time ranges without non-downsampled data is not efficient and useful e.g it is not possible to render all samples for a human eye anyway").
 		Default("false").BoolVar(&cc.disableDownsampling)
 
-	strategies := strings.Join([]string{string(concurrentDiscovery), string(recursiveDiscovery)}, ", ")
+	strategies := strings.Join([]string{string(concurrentDiscovery), string(recursiveDiscovery), string(birthstoneDiscovery)}, ", ")
 	cmd.Flag("block-discovery-strategy", "One of "+strategies+". When set to concurrent, stores will concurrently issue one call per directory to discover active blocks in the bucket. The recursive strategy iterates through all objects in the bucket, recursively traversing into each directory. This avoids N+1 calls at the expense of having slower bucket iterations.").
 		Default(string(concurrentDiscovery)).StringVar(&cc.blockListStrategy)
 	cmd.Flag("block-meta-fetch-concurrency", "Number of goroutines to use when fetching block metadata from object storage.").

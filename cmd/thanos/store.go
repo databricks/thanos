@@ -64,6 +64,7 @@ type syncStrategy string
 const (
 	concurrentDiscovery syncStrategy = "concurrent"
 	recursiveDiscovery  syncStrategy = "recursive"
+	birthstoneDiscovery syncStrategy = "birthstone"
 )
 
 type storeConfig struct {
