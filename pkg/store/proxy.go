@@ -274,6 +274,15 @@ func (s *ProxyStore) TSDBInfos() []infopb.TSDBInfo {
 	return infos
 }
 
+type quorumGroup struct {
+	quorumGroupKey string
+	context        context.Context
+	cancel         context.CancelFunc
+	quorumValue    int64
+	quorumCounter  *int64
+	replicas       int
+}
+
 func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.Store_SeriesServer) error {
 	// TODO(bwplotka): This should be part of request logger, otherwise it does not make much sense. Also, could be
 	// triggered by tracing span to reduce cognitive load.
@@ -386,10 +395,32 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 	}
 	defer logGroupReplicaErrors()
 
+	level.Debug(reqLogger).Log("s.retrievalStrategy", s.retrievalStrategy)
+
+	quorumGroups := make(map[string]*quorumGroup)
+	for _, st := range stores {
+		if quorumGroups[st.GroupKey()] == nil {
+			groupCtx, cancel := context.WithCancel(ctx)
+			quorumGroups[st.GroupKey()] = &quorumGroup{
+				context:        groupCtx,
+				cancel:         cancel,
+				quorumGroupKey: st.GroupKey(),
+				quorumValue:    2,
+				quorumCounter:  new(int64),
+				replicas:       1,
+			}
+		} else {
+			quorumGroups[st.GroupKey()].replicas++
+		}
+	}
+	level.Debug(reqLogger).Log("quorumGroups", quorumGroups)
+
 	for _, st := range stores {
 		st := st
-
-		respSet, err := newAsyncRespSet(ctx, st, r, s.responseTimeout, s.retrievalStrategy, &s.buffers, r.ShardInfo, reqLogger, s.metrics.emptyStreamResponses)
+		level.Debug(reqLogger).Log("store", st.String(), "store.group", st.GroupKey(), "store.replica", st.ReplicaKey())
+		level.Debug(reqLogger).Log("store response timeout", s.responseTimeout)
+		qg := quorumGroups[st.GroupKey()]
+		respSet, err := newAsyncRespSet(qg.context, st, r, s.responseTimeout, s.retrievalStrategy, &s.buffers, r.ShardInfo, reqLogger, s.metrics.emptyStreamResponses, qg)
 		if err != nil {
 			level.Warn(s.logger).Log("msg", "Store failure", "group", st.GroupKey(), "replica", st.ReplicaKey(), "err", err)
 			s.metrics.storeFailureCount.WithLabelValues(st.GroupKey(), st.ReplicaKey()).Inc()
@@ -419,6 +450,7 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 	level.Debug(reqLogger).Log("msg", "Series: started fanout streams", "status", strings.Join(storeDebugMsgs, ";"))
 
 	var respHeap seriesStream = NewProxyResponseLoserTree(storeResponses...)
+
 	if s.enableDedup {
 		respHeap = NewResponseDeduplicatorInternal(respHeap, s.quorumChunkDedup)
 	}
