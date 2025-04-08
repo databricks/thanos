@@ -12,10 +12,12 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"text/template"
 	"time"
 
@@ -35,6 +37,7 @@ import (
 	"github.com/prometheus/prometheus/model/relabel"
 	"github.com/prometheus/prometheus/tsdb"
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
+	"golang.org/x/sync/errgroup"
 	"golang.org/x/text/language"
 	"golang.org/x/text/message"
 	"gopkg.in/yaml.v3"
@@ -89,11 +92,12 @@ const (
 )
 
 type bucketRewriteConfig struct {
-	blockIDs     []string
-	tmpDir       string
-	dryRun       bool
-	promBlocks   bool
-	deleteBlocks bool
+	blockIDs         []string
+	tmpDir           string
+	dryRun           bool
+	promBlocks       bool
+	deleteBlocks     bool
+	enableBirthstone bool
 }
 
 type bucketInspectConfig struct {
@@ -103,9 +107,10 @@ type bucketInspectConfig struct {
 }
 
 type bucketVerifyConfig struct {
-	repair         bool
-	ids            []string
-	issuesToVerify []string
+	repair           bool
+	ids              []string
+	issuesToVerify   []string
+	enableBirthstone bool
 }
 
 type bucketLsConfig struct {
@@ -139,6 +144,7 @@ type bucketDownsampleConfig struct {
 	blockFilesConcurrency int
 	dataDir               string
 	hashFunc              string
+	enableBirthstone      bool
 }
 
 type bucketCleanupConfig struct {
@@ -176,6 +182,8 @@ func (tbc *bucketVerifyConfig) registerBucketVerifyFlag(cmd extkingpin.FlagClaus
 
 	cmd.Flag("id", "Block IDs to verify (and optionally repair) only. "+
 		"If none is specified, all blocks will be verified. Repeated field").StringsVar(&tbc.ids)
+
+	cmd.Flag("enable-birthstone", "Upload birthstone to mark block completion.").Default("false").BoolVar(&tbc.enableBirthstone)
 	return tbc
 }
 
@@ -238,6 +246,7 @@ func (tbc *bucketRewriteConfig) registerBucketRewriteFlag(cmd extkingpin.FlagCla
 	cmd.Flag("dry-run", "Prints the series changes instead of doing them. Defaults to true, for user to double check. (: Pass --no-dry-run to skip this.").Default("true").BoolVar(&tbc.dryRun)
 	cmd.Flag("prom-blocks", "If specified, we assume the blocks to be uploaded are only used with Prometheus so we don't check external labels in this case.").Default("false").BoolVar(&tbc.promBlocks)
 	cmd.Flag("delete-blocks", "Whether to delete the original blocks after rewriting blocks successfully. Available in non dry-run mode only.").Default("false").BoolVar(&tbc.deleteBlocks)
+	cmd.Flag("enable-birthstone", "Upload birthstone to mark block completion.").Default("false").BoolVar(&tbc.enableBirthstone)
 
 	return tbc
 }
@@ -253,6 +262,7 @@ func (tbc *bucketDownsampleConfig) registerBucketDownsampleFlag(cmd extkingpin.F
 		Default("./data").StringVar(&tbc.dataDir)
 	cmd.Flag("hash-func", "Specify which hash function to use when calculating the hashes of produced files. If no function has been specified, it does not happen. This permits avoiding downloading some files twice albeit at some performance cost. Possible values are: \"\", \"SHA256\".").
 		Default("").EnumVar(&tbc.hashFunc, "SHA256", "")
+	cmd.Flag("enable-birthstone", "Upload birthstone to mark block completion.").Default("false").BoolVar(&tbc.enableBirthstone)
 
 	return tbc
 }
@@ -306,6 +316,7 @@ func registerBucket(app extkingpin.AppClause) {
 	registerBucketRewrite(cmd, objStoreConfig)
 	registerBucketRetention(cmd, objStoreConfig)
 	registerBucketUploadBlocks(cmd, objStoreConfig)
+	registerBucketUploadBirthstone(cmd, objStoreConfig)
 }
 
 func registerBucketVerify(app extkingpin.AppClause, objStoreConfig *extflag.PathOrContent) {
@@ -390,7 +401,7 @@ func registerBucketVerify(app extkingpin.AppClause, objStoreConfig *extflag.Path
 			}
 		}
 
-		v := verifier.NewManager(reg, logger, insBkt, backupBkt, fetcher, time.Duration(*deleteDelay), r)
+		v := verifier.NewManager(reg, logger, insBkt, backupBkt, fetcher, time.Duration(*deleteDelay), tbc.enableBirthstone, r)
 		if tbc.repair {
 			return v.VerifyAndRepair(context.Background(), idMatcher)
 		}
@@ -799,7 +810,7 @@ func registerBucketDownsample(app extkingpin.AppClause, objStoreConfig *extflag.
 
 	cmd.Setup(func(g *run.Group, logger log.Logger, reg *prometheus.Registry, tracer opentracing.Tracer, _ <-chan struct{}, _ bool) error {
 		return RunDownsample(g, logger, reg, *httpAddr, *httpTLSConfig, time.Duration(*httpGracePeriod), tbc.dataDir,
-			tbc.waitInterval, tbc.downsampleConcurrency, tbc.blockFilesConcurrency, objStoreConfig, component.Downsample, metadata.HashFunc(tbc.hashFunc))
+			tbc.waitInterval, tbc.downsampleConcurrency, tbc.blockFilesConcurrency, objStoreConfig, component.Downsample, metadata.HashFunc(tbc.hashFunc), tbc.enableBirthstone)
 	})
 }
 
@@ -1297,11 +1308,11 @@ func registerBucketRewrite(app extkingpin.AppClause, objStoreConfig *extflag.Pat
 
 				level.Info(logger).Log("msg", "uploading new block", "source", id, "new", newID)
 				if tbc.promBlocks {
-					if err := block.UploadPromBlock(ctx, logger, insBkt, filepath.Join(tbc.tmpDir, newID.String()), metadata.HashFunc(*hashFunc)); err != nil {
+					if err := block.UploadPromBlock(ctx, logger, insBkt, filepath.Join(tbc.tmpDir, newID.String()), metadata.HashFunc(*hashFunc), tbc.enableBirthstone); err != nil {
 						return errors.Wrap(err, "upload")
 					}
 				} else {
-					if err := block.Upload(ctx, logger, insBkt, filepath.Join(tbc.tmpDir, newID.String()), metadata.HashFunc(*hashFunc)); err != nil {
+					if err := block.Upload(ctx, logger, insBkt, filepath.Join(tbc.tmpDir, newID.String()), metadata.HashFunc(*hashFunc), tbc.enableBirthstone); err != nil {
 						return errors.Wrap(err, "upload")
 					}
 				}
@@ -1471,7 +1482,7 @@ func registerBucketUploadBlocks(app extkingpin.AppClause, objStoreConfig *extfla
 		bkt = objstoretracing.WrapWithTraces(objstore.WrapWithMetrics(bkt, extprom.WrapRegistererWithPrefix("thanos_", reg), bkt.Name()))
 
 		s := shipper.New(logger, reg, tbc.path, bkt, func() labels.Labels { return lset }, metadata.BucketUploadSource,
-			nil, false, metadata.HashFunc(""), shipper.DefaultMetaFilename)
+			nil, false, metadata.HashFunc(""), shipper.DefaultMetaFilename, false)
 
 		ctx, cancel := context.WithCancel(context.Background())
 		g.Add(func() error {
@@ -1487,4 +1498,105 @@ func registerBucketUploadBlocks(app extkingpin.AppClause, objStoreConfig *extfla
 
 		return nil
 	})
+}
+
+func registerBucketUploadBirthstone(app extkingpin.AppClause, objStoreConfig *extflag.PathOrContent) {
+	cmd := app.Command("upload-birthstones", "Create birthstones for blocks in the bucket. Should pause compaction first to avoid race conditions. Expected to be idempotent.")
+	cmd.Setup(func(g *run.Group, logger log.Logger, reg *prometheus.Registry, _ opentracing.Tracer, _ <-chan struct{}, _ bool) error {
+		confContentYaml, err := objStoreConfig.Content()
+		if err != nil {
+			return errors.Wrap(err, "unable to parse objstore config")
+		}
+		bkt, err := client.NewBucket(logger, confContentYaml, component.Upload.String(), nil)
+		if err != nil {
+			return errors.Wrap(err, "unable to create bucket")
+		}
+		defer runutil.CloseWithLogOnErr(logger, bkt, "bucket client")
+		bkt = objstoretracing.WrapWithTraces(objstore.WrapWithMetrics(bkt, extprom.WrapRegistererWithPrefix("thanos_", reg), bkt.Name()))
+		ctx, cancel := context.WithCancel(context.Background())
+		g.Add(func() error {
+			err := UploadBirthstone(ctx, logger, bkt)
+			if err != nil {
+				return errors.Wrap(err, "unable to upload birthstones")
+			}
+			return nil
+		}, func(error) {
+			cancel()
+		})
+		return nil
+	})
+}
+
+func UploadBirthstone(ctx context.Context, logger log.Logger, bkt objstore.Bucket) error {
+	totalBlocks := 0
+	partialBlocks := 0
+	if logger != nil {
+		level.Info(logger).Log("msg", "concurrent birthstone upload started")
+		start := time.Now()
+		defer func() {
+			level.Info(logger).Log("msg", "concurrent birthstone upload end", "duration", time.Since(start), "uploaded", totalBlocks, "partial", partialBlocks)
+		}()
+	}
+
+	const concurrency = 64
+	var (
+		ch       = make(chan ulid.ULID, concurrency)
+		eg, gCtx = errgroup.WithContext(ctx)
+		mu       sync.Mutex
+	)
+	for i := 0; i < concurrency; i++ {
+		eg.Go(func() error {
+			for uid := range ch {
+				select {
+				case <-gCtx.Done():
+					return gCtx.Err()
+				default:
+				}
+				metaFile := path.Join(uid.String(), block.MetaFilename)
+				ok, err := bkt.Exists(gCtx, metaFile)
+				if err != nil {
+					if logger != nil {
+						level.Error(logger).Log(
+							"msg", "concurrent block lister worker failed to check meta.json file existence",
+							"meta_file", metaFile,
+							"err", err,
+						)
+					}
+					return errors.Wrapf(err, "meta.json file exists: %v", uid)
+				}
+				if !ok {
+					mu.Lock()
+					partialBlocks++
+					mu.Unlock()
+					continue
+				}
+				if err := bkt.Upload(ctx, path.Join(block.BirthstoneDirname, uid.String()), strings.NewReader("")); err != nil {
+					return errors.Wrap(err, "upload birthstone file")
+				}
+			}
+			return nil
+		})
+	}
+
+	if err := bkt.Iter(ctx, "", func(name string) error {
+		id, ok := block.IsBlockDir(name)
+		if !ok {
+			return nil
+		}
+		totalBlocks++
+		select {
+		case <-gCtx.Done():
+			return gCtx.Err()
+		case ch <- id:
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	close(ch)
+
+	if err := eg.Wait(); err != nil {
+		return err
+	}
+	return nil
 }

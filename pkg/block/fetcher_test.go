@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -64,236 +65,278 @@ func ULIDs(is ...int) []ulid.ULID {
 }
 
 func TestMetaFetcher_Fetch(t *testing.T) {
-	objtesting.ForeachStore(t, func(t *testing.T, bkt objstore.Bucket) {
-		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-		defer cancel()
+	const recursiveLister = "recursive"
+	const concurrentLister = "concurrent"
+	const birthstoneLister = "birthstone"
+	runTest := func(t *testing.T, lister string) {
+		objtesting.ForeachStore(t, func(t *testing.T, bkt objstore.Bucket) {
+			ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+			defer cancel()
 
-		dir := t.TempDir()
+			dir := t.TempDir()
 
-		var ulidToDelete ulid.ULID
-		r := prometheus.NewRegistry()
-		noopLogger := log.NewNopLogger()
-		insBkt := objstore.WithNoopInstr(bkt)
-		baseBlockIDsFetcher := NewConcurrentLister(noopLogger, insBkt)
-		baseFetcher, err := NewBaseFetcher(noopLogger, 20, insBkt, baseBlockIDsFetcher, dir, r)
-		testutil.Ok(t, err)
-
-		fetcher := baseFetcher.NewMetaFetcher(r, []MetadataFilter{
-			&ulidFilter{ulidToDelete: &ulidToDelete},
-		}, nil)
-
-		for i, tcase := range []struct {
-			name                  string
-			do                    func()
-			filterULID            ulid.ULID
-			expectedMetas         []ulid.ULID
-			expectedCorruptedMeta []ulid.ULID
-			expectedNoMeta        []ulid.ULID
-			expectedFiltered      int
-			expectedMetaErr       error
-		}{
-			{
-				name: "empty bucket",
-				do:   func() {},
-
-				expectedMetas:         ULIDs(),
-				expectedCorruptedMeta: ULIDs(),
-				expectedNoMeta:        ULIDs(),
-			},
-			{
-				name: "3 metas in bucket",
-				do: func() {
-					var meta metadata.Meta
-					meta.Version = 1
-					meta.ULID = ULID(1)
-
-					var buf bytes.Buffer
-					testutil.Ok(t, json.NewEncoder(&buf).Encode(&meta))
-					testutil.Ok(t, bkt.Upload(ctx, path.Join(meta.ULID.String(), metadata.MetaFilename), &buf))
-
-					meta.ULID = ULID(2)
-					testutil.Ok(t, json.NewEncoder(&buf).Encode(&meta))
-					testutil.Ok(t, bkt.Upload(ctx, path.Join(meta.ULID.String(), metadata.MetaFilename), &buf))
-
-					meta.ULID = ULID(3)
-					testutil.Ok(t, json.NewEncoder(&buf).Encode(&meta))
-					testutil.Ok(t, bkt.Upload(ctx, path.Join(meta.ULID.String(), metadata.MetaFilename), &buf))
-				},
-
-				expectedMetas:         ULIDs(1, 2, 3),
-				expectedCorruptedMeta: ULIDs(),
-				expectedNoMeta:        ULIDs(),
-			},
-			{
-				name: "nothing changed",
-				do:   func() {},
-
-				expectedMetas:         ULIDs(1, 2, 3),
-				expectedCorruptedMeta: ULIDs(),
-				expectedNoMeta:        ULIDs(),
-			},
-			{
-				name: "fresh cache",
-				do: func() {
-					baseFetcher.cached = map[ulid.ULID]*metadata.Meta{}
-				},
-
-				expectedMetas:         ULIDs(1, 2, 3),
-				expectedCorruptedMeta: ULIDs(),
-				expectedNoMeta:        ULIDs(),
-			},
-			{
-				name: "fresh cache: meta 2 and 3 have corrupted data on disk ",
-				do: func() {
-					baseFetcher.cached = map[ulid.ULID]*metadata.Meta{}
-
-					testutil.Ok(t, os.Remove(filepath.Join(dir, "meta-syncer", ULID(2).String(), MetaFilename)))
-
-					f, err := os.OpenFile(filepath.Join(dir, "meta-syncer", ULID(3).String(), MetaFilename), os.O_WRONLY, os.ModePerm)
-					testutil.Ok(t, err)
-
-					_, err = f.WriteString("{ almost")
-					testutil.Ok(t, err)
-					testutil.Ok(t, f.Close())
-				},
-
-				expectedMetas:         ULIDs(1, 2, 3),
-				expectedCorruptedMeta: ULIDs(),
-				expectedNoMeta:        ULIDs(),
-			},
-			{
-				name: "block without meta",
-				do: func() {
-					testutil.Ok(t, bkt.Upload(ctx, path.Join(ULID(4).String(), "some-file"), bytes.NewBuffer([]byte("something"))))
-				},
-
-				expectedMetas:         ULIDs(1, 2, 3),
-				expectedCorruptedMeta: ULIDs(),
-				expectedNoMeta:        ULIDs(4),
-			},
-			{
-				name: "corrupted meta.json",
-				do: func() {
-					testutil.Ok(t, bkt.Upload(ctx, path.Join(ULID(5).String(), MetaFilename), bytes.NewBuffer([]byte("{ not a json"))))
-				},
-
-				expectedMetas:         ULIDs(1, 2, 3),
-				expectedCorruptedMeta: ULIDs(5),
-				expectedNoMeta:        ULIDs(4),
-			},
-			{
-				name: "some added some deleted",
-				do: func() {
-					testutil.Ok(t, Delete(ctx, log.NewNopLogger(), bkt, ULID(2)))
-
-					var meta metadata.Meta
-					meta.Version = 1
-					meta.ULID = ULID(6)
-
-					var buf bytes.Buffer
-					testutil.Ok(t, json.NewEncoder(&buf).Encode(&meta))
-					testutil.Ok(t, bkt.Upload(ctx, path.Join(meta.ULID.String(), metadata.MetaFilename), &buf))
-				},
-
-				expectedMetas:         ULIDs(1, 3, 6),
-				expectedCorruptedMeta: ULIDs(5),
-				expectedNoMeta:        ULIDs(4),
-			},
-			{
-				name:       "filter not existing ulid",
-				do:         func() {},
-				filterULID: ULID(10),
-
-				expectedMetas:         ULIDs(1, 3, 6),
-				expectedCorruptedMeta: ULIDs(5),
-				expectedNoMeta:        ULIDs(4),
-			},
-			{
-				name:       "filter ulid 1",
-				do:         func() {},
-				filterULID: ULID(1),
-
-				expectedMetas:         ULIDs(3, 6),
-				expectedCorruptedMeta: ULIDs(5),
-				expectedNoMeta:        ULIDs(4),
-				expectedFiltered:      1,
-			},
-			{
-				name: "error: not supported meta version",
-				do: func() {
-					var meta metadata.Meta
-					meta.Version = 20
-					meta.ULID = ULID(7)
-
-					var buf bytes.Buffer
-					testutil.Ok(t, json.NewEncoder(&buf).Encode(&meta))
-					testutil.Ok(t, bkt.Upload(ctx, path.Join(meta.ULID.String(), metadata.MetaFilename), &buf))
-				},
-
-				expectedMetas:         ULIDs(1, 3, 6),
-				expectedCorruptedMeta: ULIDs(5),
-				expectedNoMeta:        ULIDs(4),
-				expectedMetaErr:       errors.New("incomplete view: unexpected meta file: 00000000070000000000000000/meta.json version: 20"),
-			},
-		} {
-			if ok := t.Run(tcase.name, func(t *testing.T) {
-				tcase.do()
-
-				ulidToDelete = tcase.filterULID
-				metas, partial, err := fetcher.Fetch(ctx)
-				if tcase.expectedMetaErr != nil {
-					testutil.NotOk(t, err)
-					testutil.Equals(t, tcase.expectedMetaErr.Error(), err.Error())
-				} else {
-					testutil.Ok(t, err)
-				}
-
-				{
-					metasSlice := make([]ulid.ULID, 0, len(metas))
-					for id, m := range metas {
-						testutil.Assert(t, m != nil, "meta is nil")
-						metasSlice = append(metasSlice, id)
-					}
-					sort.Slice(metasSlice, func(i, j int) bool {
-						return metasSlice[i].Compare(metasSlice[j]) < 0
-					})
-					testutil.Equals(t, tcase.expectedMetas, metasSlice)
-				}
-
-				{
-					partialSlice := make([]ulid.ULID, 0, len(partial))
-					for id := range partial {
-
-						partialSlice = append(partialSlice, id)
-					}
-					sort.Slice(partialSlice, func(i, j int) bool {
-						return partialSlice[i].Compare(partialSlice[j]) >= 0
-					})
-					expected := append([]ulid.ULID{}, tcase.expectedCorruptedMeta...)
-					expected = append(expected, tcase.expectedNoMeta...)
-					sort.Slice(expected, func(i, j int) bool {
-						return expected[i].Compare(expected[j]) >= 0
-					})
-					testutil.Equals(t, expected, partialSlice)
-				}
-
-				expectedFailures := 0
-				if tcase.expectedMetaErr != nil {
-					expectedFailures = 1
-				}
-				testutil.Equals(t, float64(i+1), promtest.ToFloat64(baseFetcher.metrics.Syncs))
-				testutil.Equals(t, float64(i+1), promtest.ToFloat64(fetcher.metrics.Syncs))
-				testutil.Equals(t, float64(len(tcase.expectedMetas)), promtest.ToFloat64(fetcher.metrics.Synced.WithLabelValues(LoadedMeta)))
-				testutil.Equals(t, float64(len(tcase.expectedNoMeta)), promtest.ToFloat64(fetcher.metrics.Synced.WithLabelValues(NoMeta)))
-				testutil.Equals(t, float64(tcase.expectedFiltered), promtest.ToFloat64(fetcher.metrics.Synced.WithLabelValues("filtered")))
-				testutil.Equals(t, 0.0, promtest.ToFloat64(fetcher.metrics.Synced.WithLabelValues(labelExcludedMeta)))
-				testutil.Equals(t, 0.0, promtest.ToFloat64(fetcher.metrics.Synced.WithLabelValues(timeExcludedMeta)))
-				testutil.Equals(t, float64(expectedFailures), promtest.ToFloat64(fetcher.metrics.Synced.WithLabelValues(FailedMeta)))
-				testutil.Equals(t, 0.0, promtest.ToFloat64(fetcher.metrics.Synced.WithLabelValues(tooFreshMeta)))
-			}); !ok {
-				return
+			var ulidToDelete ulid.ULID
+			r := prometheus.NewRegistry()
+			noopLogger := log.NewNopLogger()
+			insBkt := objstore.WithNoopInstr(bkt)
+			var baseBlockIDsFetcher Lister
+			if lister == concurrentLister {
+				baseBlockIDsFetcher = NewConcurrentLister(noopLogger, insBkt)
+			} else if lister == recursiveLister {
+				baseBlockIDsFetcher = NewRecursiveLister(noopLogger, insBkt)
+			} else if lister == birthstoneLister {
+				baseBlockIDsFetcher = NewBirthstoneLister(noopLogger, insBkt)
+			} else {
+				t.Fatalf("unknown lister %v", lister)
 			}
-		}
+			baseFetcher, err := NewBaseFetcher(noopLogger, 20, insBkt, baseBlockIDsFetcher, dir, r)
+			testutil.Ok(t, err)
+
+			fetcher := baseFetcher.NewMetaFetcher(r, []MetadataFilter{
+				&ulidFilter{ulidToDelete: &ulidToDelete},
+			}, nil)
+
+			for i, tcase := range []struct {
+				name                  string
+				do                    func()
+				filterULID            ulid.ULID
+				expectedMetas         []ulid.ULID
+				expectedCorruptedMeta []ulid.ULID
+				expectedNoMeta        []ulid.ULID
+				expectedFiltered      int
+				expectedMetaErr       error
+			}{
+				{
+					name: "empty bucket",
+					do:   func() {},
+
+					expectedMetas:         ULIDs(),
+					expectedCorruptedMeta: ULIDs(),
+					expectedNoMeta:        ULIDs(),
+				},
+				{
+					name: "3 metas in bucket",
+					do: func() {
+						var meta metadata.Meta
+						meta.Version = 1
+						meta.ULID = ULID(1)
+
+						var buf bytes.Buffer
+						testutil.Ok(t, json.NewEncoder(&buf).Encode(&meta))
+						testutil.Ok(t, bkt.Upload(ctx, path.Join(meta.ULID.String(), metadata.MetaFilename), &buf))
+						if lister == birthstoneLister {
+							testutil.Ok(t, bkt.Upload(ctx, path.Join(BirthstoneDirname, meta.ULID.String()), strings.NewReader("")))
+						}
+
+						meta.ULID = ULID(2)
+						testutil.Ok(t, json.NewEncoder(&buf).Encode(&meta))
+						testutil.Ok(t, bkt.Upload(ctx, path.Join(meta.ULID.String(), metadata.MetaFilename), &buf))
+						if lister == birthstoneLister {
+							testutil.Ok(t, bkt.Upload(ctx, path.Join(BirthstoneDirname, meta.ULID.String()), strings.NewReader("")))
+						}
+
+						meta.ULID = ULID(3)
+						testutil.Ok(t, json.NewEncoder(&buf).Encode(&meta))
+						testutil.Ok(t, bkt.Upload(ctx, path.Join(meta.ULID.String(), metadata.MetaFilename), &buf))
+						if lister == birthstoneLister {
+							testutil.Ok(t, bkt.Upload(ctx, path.Join(BirthstoneDirname, meta.ULID.String()), strings.NewReader("")))
+						}
+					},
+
+					expectedMetas:         ULIDs(1, 2, 3),
+					expectedCorruptedMeta: ULIDs(),
+					expectedNoMeta:        ULIDs(),
+				},
+				{
+					name: "nothing changed",
+					do:   func() {},
+
+					expectedMetas:         ULIDs(1, 2, 3),
+					expectedCorruptedMeta: ULIDs(),
+					expectedNoMeta:        ULIDs(),
+				},
+				{
+					name: "fresh cache",
+					do: func() {
+						baseFetcher.cached = map[ulid.ULID]*metadata.Meta{}
+					},
+
+					expectedMetas:         ULIDs(1, 2, 3),
+					expectedCorruptedMeta: ULIDs(),
+					expectedNoMeta:        ULIDs(),
+				},
+				{
+					name: "fresh cache: meta 2 and 3 have corrupted data on disk ",
+					do: func() {
+						baseFetcher.cached = map[ulid.ULID]*metadata.Meta{}
+
+						testutil.Ok(t, os.Remove(filepath.Join(dir, "meta-syncer", ULID(2).String(), MetaFilename)))
+
+						f, err := os.OpenFile(filepath.Join(dir, "meta-syncer", ULID(3).String(), MetaFilename), os.O_WRONLY, os.ModePerm)
+						testutil.Ok(t, err)
+
+						_, err = f.WriteString("{ almost")
+						testutil.Ok(t, err)
+						testutil.Ok(t, f.Close())
+					},
+
+					expectedMetas:         ULIDs(1, 2, 3),
+					expectedCorruptedMeta: ULIDs(),
+					expectedNoMeta:        ULIDs(),
+				},
+				{
+					name: "block without meta",
+					do: func() {
+						testutil.Ok(t, bkt.Upload(ctx, path.Join(ULID(4).String(), "some-file"), bytes.NewBuffer([]byte("something"))))
+					},
+
+					expectedMetas:         ULIDs(1, 2, 3),
+					expectedCorruptedMeta: ULIDs(),
+					expectedNoMeta:        ULIDs(4),
+				},
+				{
+					name: "corrupted meta.json",
+					do: func() {
+						testutil.Ok(t, bkt.Upload(ctx, path.Join(ULID(5).String(), MetaFilename), bytes.NewBuffer([]byte("{ not a json"))))
+						if lister == birthstoneLister {
+							testutil.Ok(t, bkt.Upload(ctx, path.Join(BirthstoneDirname, ULID(5).String()), strings.NewReader("")))
+						}
+					},
+
+					expectedMetas:         ULIDs(1, 2, 3),
+					expectedCorruptedMeta: ULIDs(5),
+					expectedNoMeta:        ULIDs(4),
+				},
+				{
+					name: "some added some deleted",
+					do: func() {
+						testutil.Ok(t, Delete(ctx, log.NewNopLogger(), bkt, ULID(2)))
+
+						var meta metadata.Meta
+						meta.Version = 1
+						meta.ULID = ULID(6)
+
+						var buf bytes.Buffer
+						testutil.Ok(t, json.NewEncoder(&buf).Encode(&meta))
+						testutil.Ok(t, bkt.Upload(ctx, path.Join(meta.ULID.String(), metadata.MetaFilename), &buf))
+						if lister == birthstoneLister {
+							testutil.Ok(t, bkt.Upload(ctx, path.Join(BirthstoneDirname, meta.ULID.String()), strings.NewReader("")))
+						}
+					},
+
+					expectedMetas:         ULIDs(1, 3, 6),
+					expectedCorruptedMeta: ULIDs(5),
+					expectedNoMeta:        ULIDs(4),
+				},
+				{
+					name:       "filter not existing ulid",
+					do:         func() {},
+					filterULID: ULID(10),
+
+					expectedMetas:         ULIDs(1, 3, 6),
+					expectedCorruptedMeta: ULIDs(5),
+					expectedNoMeta:        ULIDs(4),
+				},
+				{
+					name:       "filter ulid 1",
+					do:         func() {},
+					filterULID: ULID(1),
+
+					expectedMetas:         ULIDs(3, 6),
+					expectedCorruptedMeta: ULIDs(5),
+					expectedNoMeta:        ULIDs(4),
+					expectedFiltered:      1,
+				},
+				{
+					name: "error: not supported meta version",
+					do: func() {
+						var meta metadata.Meta
+						meta.Version = 20
+						meta.ULID = ULID(7)
+
+						var buf bytes.Buffer
+						testutil.Ok(t, json.NewEncoder(&buf).Encode(&meta))
+						testutil.Ok(t, bkt.Upload(ctx, path.Join(meta.ULID.String(), metadata.MetaFilename), &buf))
+						if lister == birthstoneLister {
+							testutil.Ok(t, bkt.Upload(ctx, path.Join(BirthstoneDirname, meta.ULID.String()), strings.NewReader("")))
+						}
+					},
+
+					expectedMetas:         ULIDs(1, 3, 6),
+					expectedCorruptedMeta: ULIDs(5),
+					expectedNoMeta:        ULIDs(4),
+					expectedMetaErr:       errors.New("incomplete view: unexpected meta file: 00000000070000000000000000/meta.json version: 20"),
+				},
+			} {
+				if ok := t.Run(tcase.name, func(t *testing.T) {
+					tcase.do()
+
+					ulidToDelete = tcase.filterULID
+					metas, partial, err := fetcher.Fetch(ctx)
+					if tcase.expectedMetaErr != nil {
+						testutil.NotOk(t, err)
+						testutil.Equals(t, tcase.expectedMetaErr.Error(), err.Error())
+					} else {
+						testutil.Ok(t, err)
+					}
+
+					{
+						metasSlice := make([]ulid.ULID, 0, len(metas))
+						for id, m := range metas {
+							testutil.Assert(t, m != nil, "meta is nil")
+							metasSlice = append(metasSlice, id)
+						}
+						sort.Slice(metasSlice, func(i, j int) bool {
+							return metasSlice[i].Compare(metasSlice[j]) < 0
+						})
+						testutil.Equals(t, tcase.expectedMetas, metasSlice)
+					}
+
+					{
+						partialSlice := make([]ulid.ULID, 0, len(partial))
+						for id := range partial {
+
+							partialSlice = append(partialSlice, id)
+						}
+						sort.Slice(partialSlice, func(i, j int) bool {
+							return partialSlice[i].Compare(partialSlice[j]) >= 0
+						})
+						expected := append([]ulid.ULID{}, tcase.expectedCorruptedMeta...)
+						expected = append(expected, tcase.expectedNoMeta...)
+						sort.Slice(expected, func(i, j int) bool {
+							return expected[i].Compare(expected[j]) >= 0
+						})
+						testutil.Equals(t, expected, partialSlice)
+					}
+
+					expectedFailures := 0
+					if tcase.expectedMetaErr != nil {
+						expectedFailures = 1
+					}
+					testutil.Equals(t, float64(i+1), promtest.ToFloat64(baseFetcher.metrics.Syncs))
+					testutil.Equals(t, float64(i+1), promtest.ToFloat64(fetcher.metrics.Syncs))
+					testutil.Equals(t, float64(len(tcase.expectedMetas)), promtest.ToFloat64(fetcher.metrics.Synced.WithLabelValues(LoadedMeta)))
+					testutil.Equals(t, float64(len(tcase.expectedNoMeta)), promtest.ToFloat64(fetcher.metrics.Synced.WithLabelValues(NoMeta)))
+					testutil.Equals(t, float64(tcase.expectedFiltered), promtest.ToFloat64(fetcher.metrics.Synced.WithLabelValues("filtered")))
+					testutil.Equals(t, 0.0, promtest.ToFloat64(fetcher.metrics.Synced.WithLabelValues(labelExcludedMeta)))
+					testutil.Equals(t, 0.0, promtest.ToFloat64(fetcher.metrics.Synced.WithLabelValues(timeExcludedMeta)))
+					testutil.Equals(t, float64(expectedFailures), promtest.ToFloat64(fetcher.metrics.Synced.WithLabelValues(FailedMeta)))
+					testutil.Equals(t, 0.0, promtest.ToFloat64(fetcher.metrics.Synced.WithLabelValues(tooFreshMeta)))
+				}); !ok {
+					return
+				}
+			}
+		})
+	}
+
+	t.Run("concurrentLister", func(t *testing.T) {
+		runTest(t, concurrentLister)
+	})
+	t.Run("recursiveLister", func(t *testing.T) {
+		runTest(t, recursiveLister)
+	})
+	t.Run("birthstoneLister", func(t *testing.T) {
+		runTest(t, birthstoneLister)
 	})
 }
 

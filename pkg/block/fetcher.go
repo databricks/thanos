@@ -233,11 +233,12 @@ func NewRecursiveLister(logger log.Logger, bkt objstore.InstrumentedBucketReader
 }
 
 func (f *RecursiveLister) GetActiveAndPartialBlockIDs(ctx context.Context, ch chan<- ulid.ULID) (partialBlocks map[ulid.ULID]bool, err error) {
+	totalBlocks := 0
 	if f.logger != nil {
 		level.Info(f.logger).Log("msg", "recursive block lister started")
 		start := time.Now()
 		defer func() {
-			level.Info(f.logger).Log("msg", "recursive block lister ended", "duration", time.Since(start))
+			level.Info(f.logger).Log("msg", "recursive block lister ended", "duration", time.Since(start), "total", totalBlocks, "partial", len(partialBlocks))
 		}()
 	}
 	partialBlocks = make(map[ulid.ULID]bool)
@@ -248,6 +249,7 @@ func (f *RecursiveLister) GetActiveAndPartialBlockIDs(ctx context.Context, ch ch
 		if !ok {
 			return nil
 		}
+		totalBlocks++
 		if _, ok := partialBlocks[id]; !ok {
 			partialBlocks[id] = true
 		}
@@ -284,11 +286,12 @@ func NewConcurrentLister(logger log.Logger, bkt objstore.InstrumentedBucketReade
 }
 
 func (f *ConcurrentLister) GetActiveAndPartialBlockIDs(ctx context.Context, ch chan<- ulid.ULID) (partialBlocks map[ulid.ULID]bool, err error) {
+	totalBlocks := 0
 	if f.logger != nil {
 		level.Info(f.logger).Log("msg", "concurrent block lister started")
 		start := time.Now()
 		defer func() {
-			level.Info(f.logger).Log("msg", "concurrent block lister end", "duration", time.Since(start))
+			level.Info(f.logger).Log("msg", "concurrent block lister end", "duration", time.Since(start), "total", totalBlocks, "partial", len(partialBlocks))
 		}()
 	}
 
@@ -339,6 +342,7 @@ func (f *ConcurrentLister) GetActiveAndPartialBlockIDs(ctx context.Context, ch c
 		if !ok {
 			return nil
 		}
+		totalBlocks++
 		select {
 		case <-gCtx.Done():
 			return gCtx.Err()
@@ -352,6 +356,82 @@ func (f *ConcurrentLister) GetActiveAndPartialBlockIDs(ctx context.Context, ch c
 
 	if err := eg.Wait(); err != nil {
 		return nil, err
+	}
+	return partialBlocks, nil
+}
+
+// BirthstoneLister lists block IDs. It checks complete blocks with birthstone instead of meta.
+type BirthstoneLister struct {
+	logger log.Logger
+	bkt    objstore.InstrumentedBucketReader
+}
+
+func NewBirthstoneLister(logger log.Logger, bkt objstore.InstrumentedBucketReader) *BirthstoneLister {
+	if logger != nil {
+		level.Info(logger).Log("msg", "Using recursive block lister")
+	}
+	return &BirthstoneLister{
+		logger: logger,
+		bkt:    bkt,
+	}
+}
+
+func (f *BirthstoneLister) GetActiveAndPartialBlockIDs(ctx context.Context, ch chan<- ulid.ULID) (partialBlocks map[ulid.ULID]bool, err error) {
+	totalBlocks := 0
+	if f.logger != nil {
+		level.Info(f.logger).Log("msg", "birthstone block lister started")
+		start := time.Now()
+		defer func() {
+			level.Info(f.logger).Log("msg", "birthstone block lister ended", "duration", time.Since(start), "total", totalBlocks, "partial", len(partialBlocks))
+		}()
+	}
+	partialBlocks = make(map[ulid.ULID]bool)
+	var (
+		eg, gCtx    = errgroup.WithContext(ctx)
+		allBlockIDs = make([]ulid.ULID, 0, 8192)
+	)
+
+	eg.Go(func() error {
+		return f.bkt.Iter(gCtx, BirthstoneDirname, func(name string) error {
+			id, ok := IsBlockDir(name)
+			if !ok {
+				return nil
+			}
+			// Block with a birthstone is considered complete.
+			partialBlocks[id] = false
+			select {
+			case <-gCtx.Done():
+				return gCtx.Err()
+			case ch <- id:
+			}
+			return nil
+		})
+	})
+	eg.Go(func() error {
+		return f.bkt.Iter(gCtx, "", func(name string) error {
+			id, ok := IsBlockDir(name)
+			if !ok {
+				return nil
+			}
+			totalBlocks++
+			allBlockIDs = append(allBlockIDs, id)
+			select {
+			case <-gCtx.Done():
+				return gCtx.Err()
+			default:
+				return nil
+			}
+		})
+	})
+	if err := eg.Wait(); err != nil {
+		return nil, err
+	}
+
+	// Mark blocks that don't have birthstone entries as partial.
+	for _, id := range allBlockIDs {
+		if _, ok := partialBlocks[id]; !ok {
+			partialBlocks[id] = true
+		}
 	}
 	return partialBlocks, nil
 }

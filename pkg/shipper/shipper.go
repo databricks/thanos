@@ -78,6 +78,7 @@ type Shipper struct {
 
 	uploadCompactedFunc    func() bool
 	allowOutOfOrderUploads bool
+	enableBirthstone       bool
 	hashFunc               metadata.HashFunc
 
 	labels func() labels.Labels
@@ -98,6 +99,7 @@ func New(
 	allowOutOfOrderUploads bool,
 	hashFunc metadata.HashFunc,
 	metaFileName string,
+	enableBirthstone bool,
 ) *Shipper {
 	if logger == nil {
 		logger = log.NewNopLogger()
@@ -123,6 +125,7 @@ func New(
 		metrics:                newMetrics(r),
 		source:                 source,
 		allowOutOfOrderUploads: allowOutOfOrderUploads,
+		enableBirthstone:       enableBirthstone,
 		uploadCompactedFunc:    uploadCompactedFunc,
 		hashFunc:               hashFunc,
 		metadataFilePath:       filepath.Join(dir, filepath.Clean(metaFileName)),
@@ -403,7 +406,7 @@ func (s *Shipper) upload(ctx context.Context, meta *metadata.Meta) error {
 	if err := meta.WriteToDir(s.logger, updir); err != nil {
 		return errors.Wrap(err, "write meta file")
 	}
-	return block.Upload(ctx, s.logger, s.bucket, updir, s.hashFunc)
+	return block.Upload(ctx, s.logger, s.bucket, updir, s.hashFunc, s.enableBirthstone)
 }
 
 // blockMetasFromOldest returns the block meta of each block found in dir

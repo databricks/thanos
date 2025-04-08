@@ -116,7 +116,7 @@ func repairIndex(stats block.HealthStats, ctx Context, id ulid.ULID, meta *metad
 	}
 
 	level.Info(ctx.Logger).Log("msg", "uploading repaired block", "newID", resid)
-	if err = block.Upload(ctx, ctx.Logger, ctx.Bkt, filepath.Join(dir, resid.String()), metadata.NoneFunc); err != nil {
+	if err = block.Upload(ctx, ctx.Logger, ctx.Bkt, filepath.Join(dir, resid.String()), metadata.NoneFunc, ctx.EnableBirthstone); err != nil {
 		return errors.Wrapf(err, "upload of %s failed", resid)
 	}
 

@@ -150,6 +150,9 @@ func runReceive(
 			level.Info(logger).Log("msg", "metric name filter feature enabled")
 		}
 	}
+	if conf.enableBirthstone {
+		multiTSDBOptions = append(multiTSDBOptions, receive.WithBirthstoneEnabled())
+	}
 
 	// Create a matcher converter if specified by command line to cache expensive regex matcher conversions.
 	// Proxy store and TSDB stores of all tenants share a single cache.
@@ -985,6 +988,7 @@ type receiveConfig struct {
 
 	ignoreBlockSize       bool
 	allowOutOfOrderUpload bool
+	enableBirthstone      bool
 
 	reqLogConfig             *extflag.PathOrContent
 	relabelConfigPath        *extflag.PathOrContent
@@ -1152,6 +1156,10 @@ func (rc *receiveConfig) registerFlag(cmd extkingpin.FlagClause) {
 			"This can trigger compaction without those blocks and as a result will create an overlap situation. Set it to true if you have vertical compaction enabled and wish to upload blocks as soon as possible without caring"+
 			"about order.").
 		Default("false").Hidden().BoolVar(&rc.allowOutOfOrderUpload)
+
+	cmd.Flag("shipper.enable-birthstone",
+		"If true, shipper will upload a birthstone for each complete block to bucket.").
+		Default("false").Hidden().BoolVar(&rc.enableBirthstone)
 
 	rc.reqLogConfig = extkingpin.RegisterRequestLoggingFlags(cmd)
 

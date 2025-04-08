@@ -65,7 +65,7 @@ func TestNewLazyBinaryReader_ShouldBuildIndexHeaderFromBucket(t *testing.T) {
 				labels.FromStrings("a", "2"),
 			}, 100, 0, 1000, labels.FromStrings("ext1", "1"), 124, metadata.NoneFunc)
 			testutil.Ok(t, err)
-			testutil.Ok(t, block.Upload(ctx, log.NewNopLogger(), bkt, filepath.Join(tmpDir, blockID.String()), metadata.NoneFunc))
+			testutil.Ok(t, block.Upload(ctx, log.NewNopLogger(), bkt, filepath.Join(tmpDir, blockID.String()), metadata.NoneFunc, false))
 
 			m := NewLazyBinaryReaderMetrics(nil)
 			bm := NewBinaryReaderMetrics(nil)
@@ -116,7 +116,7 @@ func TestNewLazyBinaryReader_ShouldRebuildCorruptedIndexHeader(t *testing.T) {
 		labels.FromStrings("a", "2"),
 	}, 100, 0, 1000, labels.FromStrings("ext1", "1"), 124, metadata.NoneFunc)
 	testutil.Ok(t, err)
-	testutil.Ok(t, block.Upload(ctx, log.NewNopLogger(), bkt, filepath.Join(tmpDir, blockID.String()), metadata.NoneFunc))
+	testutil.Ok(t, block.Upload(ctx, log.NewNopLogger(), bkt, filepath.Join(tmpDir, blockID.String()), metadata.NoneFunc, false))
 
 	// Write a corrupted index-header for the block.
 	headerFilename := filepath.Join(tmpDir, blockID.String(), block.IndexHeaderFilename)
@@ -159,7 +159,7 @@ func TestLazyBinaryReader_ShouldReopenOnUsageAfterClose(t *testing.T) {
 		labels.FromStrings("a", "2"),
 	}, 100, 0, 1000, labels.FromStrings("ext1", "1"), 124, metadata.NoneFunc)
 	testutil.Ok(t, err)
-	testutil.Ok(t, block.Upload(ctx, log.NewNopLogger(), bkt, filepath.Join(tmpDir, blockID.String()), metadata.NoneFunc))
+	testutil.Ok(t, block.Upload(ctx, log.NewNopLogger(), bkt, filepath.Join(tmpDir, blockID.String()), metadata.NoneFunc, false))
 
 	for _, lazyDownload := range []bool{false, true} {
 		t.Run(fmt.Sprintf("lazyDownload=%v", lazyDownload), func(t *testing.T) {
@@ -214,7 +214,7 @@ func TestLazyBinaryReader_unload_ShouldReturnErrorIfNotIdle(t *testing.T) {
 		labels.FromStrings("a", "2"),
 	}, 100, 0, 1000, labels.FromStrings("ext1", "1"), 124, metadata.NoneFunc)
 	testutil.Ok(t, err)
-	testutil.Ok(t, block.Upload(ctx, log.NewNopLogger(), bkt, filepath.Join(tmpDir, blockID.String()), metadata.NoneFunc))
+	testutil.Ok(t, block.Upload(ctx, log.NewNopLogger(), bkt, filepath.Join(tmpDir, blockID.String()), metadata.NoneFunc, false))
 
 	for _, lazyDownload := range []bool{false, true} {
 		t.Run(fmt.Sprintf("lazyDownload=%v", lazyDownload), func(t *testing.T) {
@@ -268,7 +268,7 @@ func TestLazyBinaryReader_LoadUnloadRaceCondition(t *testing.T) {
 		labels.FromStrings("a", "2"),
 	}, 100, 0, 1000, labels.FromStrings("ext1", "1"), 124, metadata.NoneFunc)
 	testutil.Ok(t, err)
-	testutil.Ok(t, block.Upload(ctx, log.NewNopLogger(), bkt, filepath.Join(tmpDir, blockID.String()), metadata.NoneFunc))
+	testutil.Ok(t, block.Upload(ctx, log.NewNopLogger(), bkt, filepath.Join(tmpDir, blockID.String()), metadata.NoneFunc, false))
 
 	for _, lazyDownload := range []bool{false, true} {
 		t.Run(fmt.Sprintf("lazyDownload=%v", lazyDownload), func(t *testing.T) {

@@ -138,7 +138,7 @@ func TestRegression4960_Deadlock(t *testing.T) {
 			labels.Labels{{Name: "e1", Value: "1"}},
 			downsample.ResLevel0, metadata.NoneFunc)
 		testutil.Ok(t, err)
-		testutil.Ok(t, block.Upload(ctx, logger, bkt, path.Join(dir, id.String()), metadata.NoneFunc))
+		testutil.Ok(t, block.Upload(ctx, logger, bkt, path.Join(dir, id.String()), metadata.NoneFunc, false))
 	}
 	{
 		id2, err = e2eutil.CreateBlock(
@@ -149,7 +149,7 @@ func TestRegression4960_Deadlock(t *testing.T) {
 			labels.Labels{{Name: "e1", Value: "2"}},
 			downsample.ResLevel0, metadata.NoneFunc)
 		testutil.Ok(t, err)
-		testutil.Ok(t, block.Upload(ctx, logger, bkt, path.Join(dir, id2.String()), metadata.NoneFunc))
+		testutil.Ok(t, block.Upload(ctx, logger, bkt, path.Join(dir, id2.String()), metadata.NoneFunc, false))
 	}
 	{
 		id3, err = e2eutil.CreateBlock(
@@ -160,7 +160,7 @@ func TestRegression4960_Deadlock(t *testing.T) {
 			labels.Labels{{Name: "e1", Value: "2"}},
 			downsample.ResLevel0, metadata.NoneFunc)
 		testutil.Ok(t, err)
-		testutil.Ok(t, block.Upload(ctx, logger, bkt, path.Join(dir, id3.String()), metadata.NoneFunc))
+		testutil.Ok(t, block.Upload(ctx, logger, bkt, path.Join(dir, id3.String()), metadata.NoneFunc, false))
 	}
 
 	meta, err := block.DownloadMeta(ctx, logger, bkt, id)
@@ -174,7 +174,7 @@ func TestRegression4960_Deadlock(t *testing.T) {
 
 	metas, _, err := metaFetcher.Fetch(ctx)
 	testutil.Ok(t, err)
-	err = downsampleBucket(ctx, logger, metrics, bkt, metas, dir, 1, 1, metadata.NoneFunc, false)
+	err = downsampleBucket(ctx, logger, metrics, bkt, metas, dir, 1, 1, metadata.NoneFunc, false, false)
 	testutil.NotOk(t, err)
 
 	testutil.Assert(t, strings.Contains(err.Error(), "some random error has occurred"))
@@ -200,7 +200,7 @@ func TestCleanupDownsampleCacheFolder(t *testing.T) {
 			labels.Labels{{Name: "e1", Value: "1"}},
 			downsample.ResLevel0, metadata.NoneFunc)
 		testutil.Ok(t, err)
-		testutil.Ok(t, block.Upload(ctx, logger, bkt, path.Join(dir, id.String()), metadata.NoneFunc))
+		testutil.Ok(t, block.Upload(ctx, logger, bkt, path.Join(dir, id.String()), metadata.NoneFunc, false))
 	}
 
 	meta, err := block.DownloadMeta(ctx, logger, bkt, id)
@@ -214,7 +214,7 @@ func TestCleanupDownsampleCacheFolder(t *testing.T) {
 
 	metas, _, err := metaFetcher.Fetch(ctx)
 	testutil.Ok(t, err)
-	testutil.Ok(t, downsampleBucket(ctx, logger, metrics, bkt, metas, dir, 1, 1, metadata.NoneFunc, false))
+	testutil.Ok(t, downsampleBucket(ctx, logger, metrics, bkt, metas, dir, 1, 1, metadata.NoneFunc, false, false))
 	testutil.Equals(t, 1.0, promtest.ToFloat64(metrics.downsamples.WithLabelValues(meta.Thanos.ResolutionString())))
 
 	_, err = os.Stat(dir)

@@ -110,7 +110,8 @@ func TestMarkBlockEndpoint(t *testing.T) {
 	// upload block
 	bkt := objstore.WithNoopInstr(objstore.NewInMemBucket())
 	logger := log.NewNopLogger()
-	testutil.Ok(t, block.Upload(ctx, logger, bkt, path.Join(tmpDir, b1.String()), metadata.NoneFunc))
+	// this test is invariant to enableBirthstone flag, setting false here
+	testutil.Ok(t, block.Upload(ctx, logger, bkt, path.Join(tmpDir, b1.String()), metadata.NoneFunc, false))
 
 	now := time.Now()
 	api := &BlocksAPI{

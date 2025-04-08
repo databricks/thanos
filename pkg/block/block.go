@@ -40,6 +40,8 @@ const (
 
 	// DebugMetas is a directory for debug meta files that happen in the past. Useful for debugging.
 	DebugMetas = "debug/metas"
+	// BirthstoneDirname is the directory for birthstone files.
+	BirthstoneDirname = "birthstones"
 )
 
 // Download downloads directory that is mean to be block directory. If any of the files
@@ -93,22 +95,23 @@ func Download(ctx context.Context, logger log.Logger, bucket objstore.Bucket, id
 }
 
 // Upload uploads a TSDB block to the object storage. It verifies basic
-// features of Thanos block.
-func Upload(ctx context.Context, logger log.Logger, bkt objstore.Bucket, bdir string, hf metadata.HashFunc, options ...objstore.UploadOption) error {
-	return upload(ctx, logger, bkt, bdir, hf, true, options...)
+// features of Thanos block. If birthstone is enabled, a birthstone file is used to mark the completion of the block
+// upload and will be uploaded last.
+func Upload(ctx context.Context, logger log.Logger, bkt objstore.Bucket, bdir string, hf metadata.HashFunc, enableBirthstone bool, options ...objstore.UploadOption) error {
+	return upload(ctx, logger, bkt, bdir, hf, true, enableBirthstone, options...)
 }
 
 // UploadPromBlock uploads a TSDB block to the object storage. It assumes
 // the block is used in Prometheus so it doesn't check Thanos external labels.
-func UploadPromBlock(ctx context.Context, logger log.Logger, bkt objstore.Bucket, bdir string, hf metadata.HashFunc, options ...objstore.UploadOption) error {
-	return upload(ctx, logger, bkt, bdir, hf, false, options...)
+func UploadPromBlock(ctx context.Context, logger log.Logger, bkt objstore.Bucket, bdir string, hf metadata.HashFunc, enableBirthstone bool, options ...objstore.UploadOption) error {
+	return upload(ctx, logger, bkt, bdir, hf, false, enableBirthstone, options...)
 }
 
 // upload uploads block from given block dir that ends with block id.
 // It makes sure cleanup is done on error to avoid partial block uploads.
 // TODO(bplotka): Ensure bucket operations have reasonable backoff retries.
 // NOTE: Upload updates `meta.Thanos.File` section.
-func upload(ctx context.Context, logger log.Logger, bkt objstore.Bucket, bdir string, hf metadata.HashFunc, checkExternalLabels bool, options ...objstore.UploadOption) error {
+func upload(ctx context.Context, logger log.Logger, bkt objstore.Bucket, bdir string, hf metadata.HashFunc, checkExternalLabels bool, uploadBirthstone bool, options ...objstore.UploadOption) error {
 	df, err := os.Stat(bdir)
 	if err != nil {
 		return err
@@ -161,7 +164,12 @@ func upload(ctx context.Context, logger log.Logger, bkt objstore.Bucket, bdir st
 		// If meta.json is not uploaded, this will produce partial blocks, but such blocks will be cleaned later.
 		return errors.Wrap(err, "upload meta file")
 	}
-
+	if !uploadBirthstone {
+		return nil
+	}
+	if err := bkt.Upload(ctx, path.Join(BirthstoneDirname, id.String()), strings.NewReader("")); err != nil {
+		return errors.Wrap(err, "upload birthstone file")
+	}
 	return nil
 }
 
@@ -211,11 +219,23 @@ func MarkForDeletion(ctx context.Context, logger log.Logger, bkt objstore.Bucket
 //     only if they don't have meta.json. If meta.json is present Thanos assumes valid block.
 //   - This avoids deleting empty dir (whole bucket) by mistake.
 func Delete(ctx context.Context, logger log.Logger, bkt objstore.Bucket, id ulid.ULID) error {
-	metaFile := path.Join(id.String(), MetaFilename)
-	deletionMarkFile := path.Join(id.String(), metadata.DeletionMarkFilename)
+	// Delete the birthstone first if it exists.
+	birthstoneFile := path.Join(BirthstoneDirname, id.String())
+	ok, err := bkt.Exists(ctx, birthstoneFile)
+	if err != nil {
+		return errors.Wrapf(err, "stat %s", birthstoneFile)
+	}
+
+	if ok {
+		if err := bkt.Delete(ctx, birthstoneFile); err != nil {
+			return errors.Wrapf(err, "delete %s", birthstoneFile)
+		}
+		level.Debug(logger).Log("msg", "deleted file", "file", birthstoneFile, "bucket", bkt.Name())
+	}
 
 	// Delete block meta file.
-	ok, err := bkt.Exists(ctx, metaFile)
+	metaFile := path.Join(id.String(), MetaFilename)
+	ok, err = bkt.Exists(ctx, metaFile)
 	if err != nil {
 		return errors.Wrapf(err, "stat %s", metaFile)
 	}
@@ -230,6 +250,7 @@ func Delete(ctx context.Context, logger log.Logger, bkt objstore.Bucket, id ulid
 	// Delete the block objects, but skip:
 	// - The metaFile as we just deleted. This is required for eventual object storages (list after write).
 	// - The deletionMarkFile as we'll delete it at last.
+	deletionMarkFile := path.Join(id.String(), metadata.DeletionMarkFilename)
 	err = deleteDirRec(ctx, logger, bkt, id.String(), func(name string) bool {
 		return name == metaFile || name == deletionMarkFile
 	})

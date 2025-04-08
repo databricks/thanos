@@ -247,6 +247,8 @@ func runCompact(
 		blockLister = block.NewConcurrentLister(logger, insBkt)
 	case recursiveDiscovery:
 		blockLister = block.NewRecursiveLister(logger, insBkt)
+	case birthstoneDiscovery:
+		blockLister = block.NewBirthstoneLister(logger, insBkt)
 	default:
 		return errors.Errorf("unknown sync strategy %s", conf.blockListStrategy)
 	}
@@ -381,6 +383,7 @@ func runCompact(
 		metadata.HashFunc(conf.hashFunc),
 		conf.blockFilesConcurrency,
 		conf.compactBlocksFetchConcurrency,
+		conf.enableBirthstone,
 	)
 	var planner compact.Planner
 
@@ -409,6 +412,7 @@ func runCompact(
 		insBkt,
 		conf.compactionConcurrency,
 		conf.skipBlockWithOutOfOrderChunks,
+		conf.enableBirthstone,
 	)
 	if err != nil {
 		return errors.Wrap(err, "create bucket compactor")
@@ -518,6 +522,7 @@ func runCompact(
 				conf.blockFilesConcurrency,
 				metadata.HashFunc(conf.hashFunc),
 				conf.acceptMalformedIndex,
+				conf.enableBirthstone,
 			); err != nil {
 				return errors.Wrap(err, "first pass of downsampling failed")
 			}
@@ -547,6 +552,7 @@ func runCompact(
 				conf.blockFilesConcurrency,
 				metadata.HashFunc(conf.hashFunc),
 				conf.acceptMalformedIndex,
+				conf.enableBirthstone,
 			); err != nil {
 				return errors.Wrap(err, "second pass of downsampling failed")
 			}
@@ -792,6 +798,7 @@ type compactConfig struct {
 	progressCalculateInterval                      time.Duration
 	filterConf                                     *store.FilterConfig
 	disableAdminOperations                         bool
+	enableBirthstone                               bool
 }
 
 func (cc *compactConfig) registerFlag(cmd extkingpin.FlagClause) {
@@ -832,7 +839,7 @@ func (cc *compactConfig) registerFlag(cmd extkingpin.FlagClause) {
 		"as querying long time ranges without non-downsampled data is not efficient and useful e.g it is not possible to render all samples for a human eye anyway").
 		Default("false").BoolVar(&cc.disableDownsampling)
 
-	strategies := strings.Join([]string{string(concurrentDiscovery), string(recursiveDiscovery)}, ", ")
+	strategies := strings.Join([]string{string(concurrentDiscovery), string(recursiveDiscovery), string(birthstoneDiscovery)}, ", ")
 	cmd.Flag("block-discovery-strategy", "One of "+strategies+". When set to concurrent, stores will concurrently issue one call per directory to discover active blocks in the bucket. The recursive strategy iterates through all objects in the bucket, recursively traversing into each directory. This avoids N+1 calls at the expense of having slower bucket iterations.").
 		Default(string(concurrentDiscovery)).StringVar(&cc.blockListStrategy)
 	cmd.Flag("block-meta-fetch-concurrency", "Number of goroutines to use when fetching block metadata from object storage.").
@@ -910,4 +917,7 @@ func (cc *compactConfig) registerFlag(cmd extkingpin.FlagClause) {
 	cmd.Flag("bucket-web-label", "External block label to use as group title in the bucket web UI").StringVar(&cc.label)
 
 	cmd.Flag("disable-admin-operations", "Disable UI/API admin operations like marking blocks for deletion and no compaction.").Default("false").BoolVar(&cc.disableAdminOperations)
+
+	cmd.Flag("enable-birthstone", "When set to true, upload and delete a birthstone file when block is created and deleted. Birthstone file marks the completeness of a block in bucket.").
+		Hidden().Default("false").BoolVar(&cc.enableBirthstone)
 }

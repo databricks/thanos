@@ -282,6 +282,7 @@ type DefaultGrouper struct {
 	hashFunc                      metadata.HashFunc
 	blockFilesConcurrency         int
 	compactBlocksFetchConcurrency int
+	enableBirthstone              bool
 }
 
 // NewDefaultGrouper makes a new DefaultGrouper.
@@ -297,6 +298,7 @@ func NewDefaultGrouper(
 	hashFunc metadata.HashFunc,
 	blockFilesConcurrency int,
 	compactBlocksFetchConcurrency int,
+	enableBirthstone bool,
 ) *DefaultGrouper {
 	return &DefaultGrouper{
 		bkt:                      bkt,
@@ -329,6 +331,7 @@ func NewDefaultGrouper(
 		hashFunc:                      hashFunc,
 		blockFilesConcurrency:         blockFilesConcurrency,
 		compactBlocksFetchConcurrency: compactBlocksFetchConcurrency,
+		enableBirthstone:              enableBirthstone,
 	}
 }
 
@@ -398,6 +401,7 @@ func (g *DefaultGrouper) Groups(blocks map[ulid.ULID]*metadata.Meta) (res []*Gro
 				g.hashFunc,
 				g.blockFilesConcurrency,
 				g.compactBlocksFetchConcurrency,
+				g.enableBirthstone,
 			)
 			if err != nil {
 				return nil, errors.Wrap(err, "create compaction group")
@@ -439,6 +443,7 @@ type Group struct {
 	blockFilesConcurrency         int
 	compactBlocksFetchConcurrency int
 	extensions                    any
+	enableBirthstone              bool
 }
 
 // NewGroup returns a new compaction group.
@@ -461,6 +466,7 @@ func NewGroup(
 	hashFunc metadata.HashFunc,
 	blockFilesConcurrency int,
 	compactBlocksFetchConcurrency int,
+	enableBirthstone bool,
 ) (*Group, error) {
 	if logger == nil {
 		logger = log.NewNopLogger()
@@ -489,6 +495,7 @@ func NewGroup(
 		hashFunc:                      hashFunc,
 		blockFilesConcurrency:         blockFilesConcurrency,
 		compactBlocksFetchConcurrency: compactBlocksFetchConcurrency,
+		enableBirthstone:              enableBirthstone,
 	}
 	return g, nil
 }
@@ -1094,7 +1101,7 @@ func (cg *Group) areBlocksOverlapping(include *metadata.Meta, exclude ...*metada
 }
 
 // RepairIssue347 repairs the https://github.com/prometheus/tsdb/issues/347 issue when having issue347Error.
-func RepairIssue347(ctx context.Context, logger log.Logger, bkt objstore.Bucket, blocksMarkedForDeletion prometheus.Counter, issue347Err error) error {
+func RepairIssue347(ctx context.Context, logger log.Logger, bkt objstore.Bucket, blocksMarkedForDeletion prometheus.Counter, enableBirthstone bool, issue347Err error) error {
 	ie, ok := errors.Cause(issue347Err).(Issue347Error)
 	if !ok {
 		return errors.Errorf("Given error is not an issue347 error: %v", issue347Err)
@@ -1134,7 +1141,7 @@ func RepairIssue347(ctx context.Context, logger log.Logger, bkt objstore.Bucket,
 	}
 
 	level.Info(logger).Log("msg", "uploading repaired block", "newID", resid)
-	if err = block.Upload(ctx, logger, bkt, filepath.Join(tmpdir, resid.String()), metadata.NoneFunc); err != nil {
+	if err = block.Upload(ctx, logger, bkt, filepath.Join(tmpdir, resid.String()), metadata.NoneFunc, enableBirthstone); err != nil {
 		return retry(errors.Wrapf(err, "upload of %s failed", resid))
 	}
 
@@ -1340,7 +1347,7 @@ func (cg *Group) compact(ctx context.Context, dir string, planner Planner, comp 
 		begin = time.Now()
 
 		err = tracing.DoInSpanWithErr(ctx, "compaction_block_upload", func(ctx context.Context) error {
-			return block.Upload(ctx, cg.logger, cg.bkt, bdir, cg.hashFunc, objstore.WithUploadConcurrency(cg.blockFilesConcurrency))
+			return block.Upload(ctx, cg.logger, cg.bkt, bdir, cg.hashFunc, cg.enableBirthstone, objstore.WithUploadConcurrency(cg.blockFilesConcurrency))
 		})
 		if err != nil {
 			return false, nil, retry(errors.Wrapf(err, "upload of %s failed", compID))
@@ -1400,6 +1407,7 @@ type BucketCompactor struct {
 	bkt                            objstore.Bucket
 	concurrency                    int
 	skipBlocksWithOutOfOrderChunks bool
+	enableBirthstone               bool
 }
 
 // NewBucketCompactor creates a new bucket compactor.
@@ -1413,6 +1421,7 @@ func NewBucketCompactor(
 	bkt objstore.Bucket,
 	concurrency int,
 	skipBlocksWithOutOfOrderChunks bool,
+	enableBirthstone bool,
 ) (*BucketCompactor, error) {
 	if concurrency < 0 {
 		return nil, errors.Errorf("invalid concurrency level (%d), concurrency level must be > 0", concurrency)
@@ -1429,6 +1438,7 @@ func NewBucketCompactor(
 		bkt,
 		concurrency,
 		skipBlocksWithOutOfOrderChunks,
+		enableBirthstone,
 	)
 }
 
@@ -1444,6 +1454,7 @@ func NewBucketCompactorWithCheckerAndCallback(
 	bkt objstore.Bucket,
 	concurrency int,
 	skipBlocksWithOutOfOrderChunks bool,
+	enableBirthstone bool,
 ) (*BucketCompactor, error) {
 	if concurrency < 0 {
 		return nil, errors.Errorf("invalid concurrency level (%d), concurrency level must be > 0", concurrency)
@@ -1460,6 +1471,7 @@ func NewBucketCompactorWithCheckerAndCallback(
 		bkt:                            bkt,
 		concurrency:                    concurrency,
 		skipBlocksWithOutOfOrderChunks: skipBlocksWithOutOfOrderChunks,
+		enableBirthstone:               enableBirthstone,
 	}, nil
 }
 
@@ -1512,7 +1524,7 @@ func (c *BucketCompactor) Compact(ctx context.Context, progress *Progress) (rerr
 					}
 
 					if IsIssue347Error(err) {
-						if err := RepairIssue347(workCtx, c.logger, c.bkt, c.sy.metrics.BlocksMarkedForDeletion, err); err == nil {
+						if err := RepairIssue347(workCtx, c.logger, c.bkt, c.sy.metrics.BlocksMarkedForDeletion, c.enableBirthstone, err); err == nil {
 							mtx.Lock()
 							finishedAllGroups = false
 							mtx.Unlock()
