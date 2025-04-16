@@ -235,8 +235,11 @@ func NewRecursiveLister(logger log.Logger, bkt objstore.InstrumentedBucketReader
 func (f *RecursiveLister) GetActiveAndPartialBlockIDs(ctx context.Context, ch chan<- ulid.ULID) (partialBlocks map[ulid.ULID]bool, err error) {
 	if f.logger != nil {
 		level.Info(f.logger).Log("msg", "recursive block lister started")
+		start := time.Now()
+		defer func() {
+			level.Info(f.logger).Log("msg", "recursive block lister ended", "duration", time.Since(start))
+		}()
 	}
-	start := time.Now()
 	partialBlocks = make(map[ulid.ULID]bool)
 	err = f.bkt.Iter(ctx, "", func(name string) error {
 		parts := strings.Split(name, "/")
@@ -260,9 +263,6 @@ func (f *RecursiveLister) GetActiveAndPartialBlockIDs(ctx context.Context, ch ch
 		}
 		return nil
 	}, objstore.WithRecursiveIter())
-	if f.logger != nil {
-		level.Info(f.logger).Log("msg", "recursive block lister ended", "duration", time.Since(start))
-	}
 	return partialBlocks, err
 }
 
@@ -274,6 +274,9 @@ type ConcurrentLister struct {
 }
 
 func NewConcurrentLister(logger log.Logger, bkt objstore.InstrumentedBucketReader) *ConcurrentLister {
+	if logger != nil {
+		level.Info(logger).Log("msg", "Using concurrent block lister")
+	}
 	return &ConcurrentLister{
 		logger: logger,
 		bkt:    bkt,
@@ -281,12 +284,14 @@ func NewConcurrentLister(logger log.Logger, bkt objstore.InstrumentedBucketReade
 }
 
 func (f *ConcurrentLister) GetActiveAndPartialBlockIDs(ctx context.Context, ch chan<- ulid.ULID) (partialBlocks map[ulid.ULID]bool, err error) {
-	start := time.Now()
-	defer func() {
-		if f.logger != nil {
+	if f.logger != nil {
+		level.Info(f.logger).Log("msg", "concurrent block lister started")
+		start := time.Now()
+		defer func() {
 			level.Info(f.logger).Log("msg", "concurrent block lister end", "duration", time.Since(start))
-		}
-	}()
+		}()
+	}
+
 	const concurrency = 64
 
 	partialBlocks = make(map[ulid.ULID]bool)
@@ -304,6 +309,13 @@ func (f *ConcurrentLister) GetActiveAndPartialBlockIDs(ctx context.Context, ch c
 				metaFile := path.Join(uid.String(), MetaFilename)
 				ok, err := f.bkt.Exists(gCtx, metaFile)
 				if err != nil {
+					if f.logger != nil {
+						level.Error(f.logger).Log(
+							"msg", "concurrent block lister worker failed to check meta.json file existence",
+							"meta_file", metaFile,
+							"err", err,
+						)
+					}
 					return errors.Wrapf(err, "meta.json file exists: %v", uid)
 				}
 				if !ok {
@@ -313,8 +325,8 @@ func (f *ConcurrentLister) GetActiveAndPartialBlockIDs(ctx context.Context, ch c
 					continue
 				}
 				select {
-				case <-ctx.Done():
-					return ctx.Err()
+				case <-gCtx.Done():
+					return gCtx.Err()
 				case ch <- uid:
 				}
 			}
@@ -328,12 +340,12 @@ func (f *ConcurrentLister) GetActiveAndPartialBlockIDs(ctx context.Context, ch c
 			return nil
 		}
 		select {
-		case <-ctx.Done():
-			return ctx.Err()
+		case <-gCtx.Done():
+			return gCtx.Err()
 		case metaChan <- id:
 		}
 		return nil
-	}); err != nil {
+	}, objstore.WithUpdatedAt()); err != nil {
 		return nil, err
 	}
 	close(metaChan)
