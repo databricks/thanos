@@ -13,6 +13,7 @@ import (
 
 	"github.com/efficientgo/core/testutil"
 	"github.com/go-kit/log"
+	"github.com/prometheus/prometheus/promql/parser"
 	"github.com/prometheus/prometheus/storage"
 	"github.com/thanos-io/thanos/pkg/component"
 	"github.com/thanos-io/thanos/pkg/store"
@@ -54,6 +55,9 @@ func TestQuerier_Proxy(t *testing.T) {
 	files, err := filepath.Glob("testdata/promql/**/*.test")
 	testutil.Ok(t, err)
 	testutil.Equals(t, 10, len(files), "%v", files)
+
+	// to enable double_exponential_smoothing, refer to https://github.com/prometheus/prometheus/pull/14930
+	parser.EnableExperimentalFunctions = true
 
 	logger := log.NewLogfmtLogger(os.Stderr)
 	t.Run("proxy", func(t *testing.T) {

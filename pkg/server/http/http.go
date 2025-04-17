@@ -21,6 +21,7 @@ import (
 	"golang.org/x/net/http2/h2c"
 
 	"github.com/thanos-io/thanos/pkg/component"
+	"github.com/thanos-io/thanos/pkg/logutil"
 	"github.com/thanos-io/thanos/pkg/prober"
 )
 
@@ -84,7 +85,7 @@ func (s *Server) ListenAndServe() error {
 		WebConfigFile:      &s.opts.tlsConfigPath,
 	}
 
-	return errors.Wrap(toolkit_web.ListenAndServe(s.srv, flags, s.logger), "serve HTTP and metrics")
+	return errors.Wrap(toolkit_web.ListenAndServe(s.srv, flags, logutil.GoKitLogToSlog(s.logger)), "serve HTTP and metrics")
 }
 
 // Shutdown gracefully shuts down the server by waiting,
