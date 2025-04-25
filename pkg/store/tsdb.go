@@ -138,7 +138,7 @@ func NewTSDBStore(
 				level.Error(logger).Log("msg", "failed to update metric names", "err", err)
 				return
 			}
-
+			level.Info(logger).Log("msg", "updating metric names filter", "count", len(vals.Values))
 			st.storeFilter.ResetAndSet(vals.Values...)
 		}
 		st.close = cancel
