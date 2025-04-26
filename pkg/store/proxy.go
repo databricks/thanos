@@ -104,6 +104,7 @@ type ProxyStore struct {
 }
 
 type proxyStoreMetrics struct {
+	streamResponses            prometheus.Counter
 	emptyStreamResponses       prometheus.Counter
 	storeFailureCount          *prometheus.CounterVec
 	missingBlockFileErrorCount prometheus.Counter
@@ -112,6 +113,10 @@ type proxyStoreMetrics struct {
 func newProxyStoreMetrics(reg prometheus.Registerer) *proxyStoreMetrics {
 	var m proxyStoreMetrics
 
+	m.streamResponses = promauto.With(reg).NewCounter(prometheus.CounterOpts{
+		Name: "thanos_proxy_store_stream_responses_total",
+		Help: "Total number of responses received.",
+	})
 	m.emptyStreamResponses = promauto.With(reg).NewCounter(prometheus.CounterOpts{
 		Name: "thanos_proxy_store_empty_stream_responses_total",
 		Help: "Total number of empty responses received.",
@@ -389,7 +394,7 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 	for _, st := range stores {
 		st := st
 
-		respSet, err := newAsyncRespSet(ctx, st, r, s.responseTimeout, s.retrievalStrategy, &s.buffers, r.ShardInfo, reqLogger, s.metrics.emptyStreamResponses)
+		respSet, err := newAsyncRespSet(ctx, st, r, s.responseTimeout, s.retrievalStrategy, &s.buffers, r.ShardInfo, reqLogger, s.metrics.streamResponses, s.metrics.emptyStreamResponses)
 		if err != nil {
 			level.Warn(s.logger).Log("msg", "Store failure", "group", st.GroupKey(), "replica", st.ReplicaKey(), "err", err)
 			s.metrics.storeFailureCount.WithLabelValues(st.GroupKey(), st.ReplicaKey()).Inc()

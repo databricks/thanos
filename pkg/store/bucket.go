@@ -148,6 +148,7 @@ type bucketStoreMetrics struct {
 	queriesDropped        *prometheus.CounterVec
 	seriesRefetches       *prometheus.CounterVec
 	chunkRefetches        *prometheus.CounterVec
+	postingCount          *prometheus.CounterVec
 	emptyPostingCount     *prometheus.CounterVec
 
 	lazyExpandedPostingsCount                     prometheus.Counter
@@ -1609,6 +1610,7 @@ func (s *BucketStore) Series(req *storepb.SeriesRequest, seriesSrv storepb.Store
 						blockClient,
 						shardMatcher,
 						false,
+						s.metrics.postingCount.WithLabelValues(tenant),
 						s.metrics.emptyPostingCount.WithLabelValues(tenant),
 						nil,
 					)
@@ -1622,6 +1624,7 @@ func (s *BucketStore) Series(req *storepb.SeriesRequest, seriesSrv storepb.Store
 						blockClient,
 						shardMatcher,
 						false,
+						s.metrics.postingCount.WithLabelValues(tenant),
 						s.metrics.emptyPostingCount.WithLabelValues(tenant),
 					)
 				}
