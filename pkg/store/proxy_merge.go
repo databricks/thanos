@@ -337,6 +337,7 @@ func newLazyRespSet(
 	cl storepb.Store_SeriesClient,
 	shardMatcher *storepb.ShardMatcher,
 	applySharding bool,
+	streamResponses prometheus.Counter,
 	emptyStreamResponses prometheus.Counter,
 ) respSet {
 	bufferedResponses := []*storepb.SeriesResponse{}
@@ -376,6 +377,7 @@ func newLazyRespSet(
 
 		numResponses := 0
 		defer func() {
+			streamResponses.Inc()
 			if numResponses == 0 {
 				emptyStreamResponses.Inc()
 			}
@@ -473,6 +475,7 @@ func newAsyncRespSet(
 	buffers *sync.Pool,
 	shardInfo *storepb.ShardInfo,
 	logger log.Logger,
+	streamResponses prometheus.Counter,
 	emptyStreamResponses prometheus.Counter,
 ) (respSet, error) {
 
@@ -534,6 +537,7 @@ func newAsyncRespSet(
 			cl,
 			shardMatcher,
 			applySharding,
+			streamResponses,
 			emptyStreamResponses,
 		), nil
 	case EagerRetrieval:
@@ -547,6 +551,7 @@ func newAsyncRespSet(
 			cl,
 			shardMatcher,
 			applySharding,
+			streamResponses,
 			emptyStreamResponses,
 			labelsToRemove,
 		), nil
@@ -600,6 +605,7 @@ func newEagerRespSet(
 	cl storepb.Store_SeriesClient,
 	shardMatcher *storepb.ShardMatcher,
 	applySharding bool,
+	streamResponses prometheus.Counter,
 	emptyStreamResponses prometheus.Counter,
 	removeLabels map[string]struct{},
 ) respSet {
@@ -640,6 +646,7 @@ func newEagerRespSet(
 
 		numResponses := 0
 		defer func() {
+			streamResponses.Inc()
 			if numResponses == 0 {
 				emptyStreamResponses.Inc()
 			}
