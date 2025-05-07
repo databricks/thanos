@@ -527,7 +527,7 @@ func runStore(
 		}
 
 		storeServer := store.NewInstrumentedStoreServer(reg, bs)
-		s := grpcserver.New(logger, reg, tracer, grpcLogOpts, logFilterMethods, conf.component, grpcProbe,
+		s := grpcserver.New(logger, reg, tracer, grpcLogOpts, logFilterMethods, conf.component, grpcProbe, 0,
 			grpcserver.WithServer(store.RegisterStoreServer(storeServer, logger)),
 			grpcserver.WithServer(info.RegisterInfoServer(infoSrv)),
 			grpcserver.WithListen(conf.grpcConfig.bindAddress),

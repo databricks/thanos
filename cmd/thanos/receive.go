@@ -458,7 +458,7 @@ func runReceive(
 			info.WithExemplarsInfoFunc(),
 		)
 
-		srv := grpcserver.New(logger, receive.NewUnRegisterer(reg), tracer, grpcLogOpts, logFilterMethods, comp, grpcProbe,
+		srv := grpcserver.New(logger, receive.NewUnRegisterer(reg), tracer, grpcLogOpts, logFilterMethods, comp, grpcProbe, conf.maxGRPCConcurrency,
 			grpcserver.WithServer(store.RegisterStoreServer(rw, logger)),
 			grpcserver.WithServer(store.RegisterWritableStoreServer(rw)),
 			grpcserver.WithServer(exemplars.RegisterExemplarsServer(exemplars.NewMultiTSDB(dbs.TSDBExemplars))),
@@ -1001,6 +1001,7 @@ type receiveConfig struct {
 	topMetricsUpdateInterval      time.Duration
 	matcherConverterCacheCapacity int
 	maxPendingGrpcWriteRequests   int
+	maxGRPCConcurrency            int
 
 	featureList *[]string
 }
@@ -1169,6 +1170,8 @@ func (rc *receiveConfig) registerFlag(cmd extkingpin.FlagClause) {
 		Default("0").IntVar(&rc.matcherConverterCacheCapacity)
 	cmd.Flag("receive.max-pending-grcp-write-requests", "Reject right away gRPC write requests when this number of requests are pending. Value 0 disables this feature.").
 		Default("0").IntVar(&rc.maxPendingGrpcWriteRequests)
+	cmd.Flag("receive.max-grpc-concurrency", "Limits the max number of gRPC concurrency. Value 0 disables this feature.").
+		Default("0").IntVar(&rc.maxGRPCConcurrency)
 	rc.featureList = cmd.Flag("enable-feature", "Comma separated experimental feature names to enable. The current list of features is "+metricNamesFilter+".").Default("").Strings()
 }
 

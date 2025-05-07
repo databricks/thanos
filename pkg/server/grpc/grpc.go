@@ -48,7 +48,7 @@ type Server struct {
 
 // New creates a new gRPC Store API.
 // If rulesSrv is not nil, it also registers Rules API to the returned server.
-func New(logger log.Logger, reg prometheus.Registerer, tracer opentracing.Tracer, logOpts []grpc_logging.Option, logFilterMethods []string, comp component.Component, probe *prober.GRPCProbe, opts ...Option) *Server {
+func New(logger log.Logger, reg prometheus.Registerer, tracer opentracing.Tracer, logOpts []grpc_logging.Option, logFilterMethods []string, comp component.Component, probe *prober.GRPCProbe, max_concurrency int, opts ...Option) *Server {
 	logger = log.With(logger, "service", "gRPC/server", "component", comp.String())
 	options := options{
 		network: "tcp",
@@ -85,6 +85,7 @@ func New(logger log.Logger, reg prometheus.Registerer, tracer opentracing.Tracer
 		grpc.MaxSendMsgSize(math.MaxInt32),
 		grpc.MaxRecvMsgSize(math.MaxInt32),
 		grpc.ChainUnaryInterceptor(
+			NewUnaryServerConcurrencyLimitInterceptor(max_concurrency),
 			NewUnaryServerRequestIDInterceptor(),
 			grpc_recovery.UnaryServerInterceptor(grpc_recovery.WithRecoveryHandler(grpcPanicRecoveryHandler)),
 			met.UnaryServerInterceptor(),
