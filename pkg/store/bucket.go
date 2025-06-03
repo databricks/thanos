@@ -1622,6 +1622,8 @@ func (s *BucketStore) Series(req *storepb.SeriesRequest, seriesSrv storepb.Store
 						false,
 						s.metrics.emptyPostingCount.WithLabelValues(tenant),
 						nil,
+						nil,
+						nil,
 					)
 				} else {
 					lazyRetrievalMaxBufferedResponses := s.lazyRetrievalMaxBufferedResponses
@@ -1639,6 +1641,8 @@ func (s *BucketStore) Series(req *storepb.SeriesRequest, seriesSrv storepb.Store
 						shardMatcher,
 						false,
 						s.metrics.emptyPostingCount.WithLabelValues(tenant),
+						nil,
+						nil,
 						lazyRetrievalMaxBufferedResponses,
 					)
 				}

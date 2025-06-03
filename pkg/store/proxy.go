@@ -17,6 +17,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/prometheus/model/labels"
+	"go.uber.org/atomic"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -39,6 +40,8 @@ const UninitializedTSDBTime = math.MaxInt64
 
 // StoreMatcherKey is the context key for the store's allow list.
 const StoreMatcherKey = ctxKey(0)
+
+const maxWarningBytes = 2048
 
 // ErrorNoStoresMatched is returned if the query does not match any data.
 // This can happen with Query servers trees and external labels.
@@ -108,6 +111,7 @@ type proxyStoreMetrics struct {
 	emptyStreamResponses       prometheus.Counter
 	storeFailureCount          *prometheus.CounterVec
 	missingBlockFileErrorCount prometheus.Counter
+	shortCircuitQueries        *prometheus.CounterVec
 }
 
 func newProxyStoreMetrics(reg prometheus.Registerer) *proxyStoreMetrics {
@@ -125,6 +129,10 @@ func newProxyStoreMetrics(reg prometheus.Registerer) *proxyStoreMetrics {
 		Name: "thanos_proxy_querier_missing_block_file_error_total",
 		Help: "Total number of missing block file errors.",
 	})
+	m.shortCircuitQueries = promauto.With(reg).NewCounterVec(prometheus.CounterOpts{
+		Name: "thanos_proxy_store_short_circuit_queries_total",
+		Help: "Total number of short-circuited queries when quorum is met.",
+	}, []string{"quorum_group", "store_replica"})
 
 	return &m
 }
@@ -281,6 +289,29 @@ func (s *ProxyStore) TSDBInfos() []infopb.TSDBInfo {
 	return infos
 }
 
+type quorumGroup struct {
+	name    string
+	counter *atomic.Int32
+	quorum  int32
+	ctx     context.Context
+	cancel  context.CancelFunc
+}
+
+func newQuorumGroup(name string, quorum int32, ctx context.Context) *quorumGroup {
+	ctx, cancel := context.WithCancel(ctx)
+	return &quorumGroup{
+		name:    name,
+		counter: atomic.NewInt32(0),
+		quorum:  quorum,
+		ctx:     ctx,
+		cancel:  cancel,
+	}
+}
+
+func (qg *quorumGroup) clear() {
+	qg.cancel()
+}
+
 func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.Store_SeriesServer) error {
 	// TODO(bwplotka): This should be part of request logger, otherwise it does not make much sense. Also, could be
 	// triggered by tracing span to reduce cognitive load.
@@ -397,10 +428,20 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 		}
 	}
 	defer logGroupReplicaErrors()
+	var qg *quorumGroup
+	storeCtx := ctx
+	if originalRequest.PartialResponseStrategy == storepb.PartialResponseStrategy_GROUP_REPLICA {
+		// Currently we implement a single quorum group for all store APIs.
+		// Quorum is one less than the number of stores. This would tolerate one slow store to mitigate long-tail latency.
+		// TODO: Use a more fine-grained quorum strategy.
+		qg = newQuorumGroup("all-store-apis", int32(len(stores)-1), ctx)
+		defer qg.clear()
+		storeCtx = qg.ctx
+	}
 	for _, st := range stores {
 		st := st
-
-		respSet, err := newAsyncRespSet(ctx, st, r, s.responseTimeout, s.retrievalStrategy, &s.buffers, r.ShardInfo, reqLogger, s.metrics.emptyStreamResponses, s.lazyRetrievalMaxBufferedResponses)
+		respSet, err := newAsyncRespSet(storeCtx, st, r, s.responseTimeout, s.retrievalStrategy, &s.buffers, r.ShardInfo,
+			reqLogger, s.metrics.emptyStreamResponses, s.metrics.shortCircuitQueries, qg, s.lazyRetrievalMaxBufferedResponses)
 		if err != nil {
 			level.Warn(s.logger).Log("msg", "Store failure", "group", st.GroupKey(), "replica", st.ReplicaKey(), "err", err)
 			s.metrics.storeFailureCount.WithLabelValues(st.GroupKey(), st.ReplicaKey()).Inc()
@@ -435,23 +476,20 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 	}
 
 	i := 0
-	var firstWarning *string
 	for respHeap.Next() {
 		i++
 		if r.Limit > 0 && i > int(r.Limit) {
 			break
 		}
 		resp := respHeap.At()
+		warning := resp.GetWarning()[:min(maxWarningBytes, len(resp.GetWarning()))]
 
-		if resp.GetWarning() != "" {
-			maxWarningBytes := 2000
-			warning := resp.GetWarning()[:min(maxWarningBytes, len(resp.GetWarning()))]
-			level.Error(s.logger).Log("msg", "Store failure with warning", "warning", warning)
+		if warning != "" {
 			// Don't have group/replica keys here, so we can't attribute the warning to a specific store.
 			s.metrics.storeFailureCount.WithLabelValues("", "").Inc()
 			if originalRequest.PartialResponseStrategy == storepb.PartialResponseStrategy_GROUP_REPLICA {
 				// The first error message is from AWS S3 and the second one is from Azure Blob Storage.
-				if strings.Contains(resp.GetWarning(), "The specified key does not exist") || strings.Contains(resp.GetWarning(), "The specified blob does not exist") {
+				if strings.Contains(warning, "The specified key does not exist") || strings.Contains(warning, "The specified blob does not exist") {
 					level.Warn(s.logger).Log("msg", "Ignore 'the specified key/blob does not exist' error from Store")
 					// Ignore this error for now because we know the missing block file is already deleted by compactor.
 					// There is no other reason for this error to occur.
@@ -460,15 +498,8 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 					totalFailedStores++
 					// TODO: attribute the warning to the store(group key and replica key) that produced it.
 					// Each client streams a sequence of time series, so it's not trivial to attribute the warning to a specific client.
-					if totalFailedStores > 1 {
-						level.Error(reqLogger).Log("msg", "more than one stores had warnings")
-						// If we don't know which store has failed, we can tolerate at most one failed store.
-						if firstWarning != nil {
-							warning += "; " + *firstWarning
-						}
-						return status.Error(codes.Aborted, warning)
-					}
-					firstWarning = &warning
+					// If we don't know which store has failed, we can tolerate at most one failed store.
+					return status.Error(codes.Aborted, warning)
 				}
 			} else if originalRequest.PartialResponseDisabled || originalRequest.PartialResponseStrategy == storepb.PartialResponseStrategy_ABORT {
 				return status.Error(codes.Aborted, resp.GetWarning())

@@ -717,89 +717,6 @@ func TestProxyStore_Series(t *testing.T) {
 			expectedErr: errors.New("fetch series for {ext=\"1\"} : error!"),
 		},
 		{
-			// TODO: update this test when we attribute warnings to group and replica
-			title: "group replica strategy; single warning",
-			storeAPIs: []Client{
-				&storetestutil.TestClient{
-					StoreClient: &mockedStoreAPI{
-						RespSeries: []*storepb.SeriesResponse{
-							storepb.NewWarnSeriesResponse(errors.New("warning")),
-							storeSeriesResponse(t, labels.FromStrings("a", "b"), []sample{{1, 1}, {2, 2}, {3, 3}}),
-						},
-					},
-					ExtLset:       []labels.Labels{labels.FromStrings("ext", "1")},
-					MinTime:       1,
-					MaxTime:       300,
-					GroupKeyStr:   "group1",
-					ReplicaKeyStr: "replica1",
-				},
-				&storetestutil.TestClient{
-					StoreClient: &mockedStoreAPI{
-						RespSeries: []*storepb.SeriesResponse{
-							storeSeriesResponse(t, labels.FromStrings("a", "b"), []sample{{1, 1}, {2, 2}, {3, 3}}),
-						},
-					},
-					ExtLset:       []labels.Labels{labels.FromStrings("ext", "1")},
-					MinTime:       1,
-					MaxTime:       300,
-					GroupKeyStr:   "group1",
-					ReplicaKeyStr: "replica1",
-				},
-			},
-			req: &storepb.SeriesRequest{
-				MinTime:                 1,
-				MaxTime:                 300,
-				Matchers:                []storepb.LabelMatcher{{Name: "ext", Value: "1", Type: storepb.LabelMatcher_EQ}},
-				PartialResponseStrategy: storepb.PartialResponseStrategy_GROUP_REPLICA,
-			},
-			expectedSeries: []rawSeries{
-				{
-					lset:   labels.FromStrings("a", "b"),
-					chunks: [][]sample{{{1, 1}, {2, 2}, {3, 3}}},
-				},
-			},
-			expectedWarningsLen: 1,
-		},
-		{
-			// TODO: update this test when we attribute warnings to group and replica
-			title: "group replica strategy; multiple warnings",
-			storeAPIs: []Client{
-				&storetestutil.TestClient{
-					StoreClient: &mockedStoreAPI{
-						RespSeries: []*storepb.SeriesResponse{
-							storepb.NewWarnSeriesResponse(errors.New("warning")),
-							storeSeriesResponse(t, labels.FromStrings("a", "b"), []sample{{1, 1}, {2, 2}, {3, 3}}),
-						},
-					},
-					ExtLset:       []labels.Labels{labels.FromStrings("ext", "1")},
-					MinTime:       1,
-					MaxTime:       300,
-					GroupKeyStr:   "group1",
-					ReplicaKeyStr: "replica1",
-				},
-				&storetestutil.TestClient{
-					StoreClient: &mockedStoreAPI{
-						RespSeries: []*storepb.SeriesResponse{
-							storepb.NewWarnSeriesResponse(errors.New("warning")),
-							storeSeriesResponse(t, labels.FromStrings("a", "b"), []sample{{1, 1}, {2, 2}, {3, 3}}),
-						},
-					},
-					ExtLset:       []labels.Labels{labels.FromStrings("ext", "1")},
-					MinTime:       1,
-					MaxTime:       300,
-					GroupKeyStr:   "group1",
-					ReplicaKeyStr: "replica1",
-				},
-			},
-			req: &storepb.SeriesRequest{
-				MinTime:                 1,
-				MaxTime:                 300,
-				Matchers:                []storepb.LabelMatcher{{Name: "ext", Value: "1", Type: storepb.LabelMatcher_EQ}},
-				PartialResponseStrategy: storepb.PartialResponseStrategy_GROUP_REPLICA,
-			},
-			expectedErr: errors.New("rpc error: code = Aborted desc = warning; warning"),
-		},
-		{
 			title: "storeAPI available for time range; available series for ext=1 external label matcher; allowed by store debug matcher",
 			storeAPIs: []Client{
 				&storetestutil.TestClient{
@@ -1586,6 +1503,49 @@ func TestProxyStore_SeriesSlowStores(t *testing.T) {
 			},
 			expectedWarningsLen: 2,
 		},
+		{
+			title: "group replica strategy; 1st store is fast, 2nd store is slow;",
+			storeAPIs: []Client{
+				&storetestutil.TestClient{
+					StoreClient: &mockedStoreAPI{
+						RespSeries: []*storepb.SeriesResponse{
+							storeSeriesResponse(t, labels.FromStrings("a", "b"), []sample{{1, 1}, {2, 2}, {3, 3}}),
+						},
+					},
+					ExtLset:       []labels.Labels{labels.FromStrings("ext", "1")},
+					MinTime:       1,
+					MaxTime:       300,
+					GroupKeyStr:   "group1",
+					ReplicaKeyStr: "replica1",
+				},
+				&storetestutil.TestClient{
+					StoreClient: &mockedStoreAPI{
+						RespSeries: []*storepb.SeriesResponse{
+							storeSeriesResponse(t, labels.FromStrings("b", "c"), []sample{{1, 1}, {2, 2}, {3, 3}}),
+						},
+						RespDuration: 10 * time.Second,
+					},
+					ExtLset:       []labels.Labels{labels.FromStrings("ext", "1")},
+					MinTime:       1,
+					MaxTime:       300,
+					GroupKeyStr:   "group1",
+					ReplicaKeyStr: "replica1",
+				},
+			},
+			req: &storepb.SeriesRequest{
+				MinTime:                 1,
+				MaxTime:                 300,
+				Matchers:                []storepb.LabelMatcher{{Name: "ext", Value: "1", Type: storepb.LabelMatcher_EQ}},
+				PartialResponseStrategy: storepb.PartialResponseStrategy_GROUP_REPLICA,
+			},
+			expectedSeries: []rawSeries{
+				{
+					lset:   labels.FromStrings("a", "b"),
+					chunks: [][]sample{{{1, 1}, {2, 2}, {3, 3}}},
+				},
+			},
+			expectedWarningsLen: 0,
+		},
 	} {
 
 		options := []ProxyStoreOption{
@@ -1622,6 +1582,161 @@ func TestProxyStore_SeriesSlowStores(t *testing.T) {
 					testutil.Equals(t, tc.expectedWarningsLen, len(s.Warnings), "got %v", s.Warnings)
 
 					testutil.Assert(t, elapsedTime < 5010*time.Millisecond, fmt.Sprintf("Request has taken %f, expected: <%d, it seems that responseTimeout doesn't work properly.", elapsedTime.Seconds(), 5))
+
+				}); !ok {
+					return
+				}
+			}
+		}); !ok {
+			return
+		}
+	}
+
+	// Wait until the last goroutine exits which is stuck on time.Sleep().
+	// Otherwise, goleak complains.
+	time.Sleep(5 * time.Second)
+}
+
+func TestProxyStore_SeriesQuorum(t *testing.T) {
+	t.Parallel()
+
+	enable := os.Getenv("THANOS_ENABLE_STORE_READ_TIMEOUT_TESTS")
+	if enable == "" {
+		t.Skip("enable THANOS_ENABLE_STORE_READ_TIMEOUT_TESTS to run store-read-timeout tests")
+	}
+
+	for _, tc := range []struct {
+		title          string
+		storeAPIs      []Client
+		selectorLabels labels.Labels
+
+		req *storepb.SeriesRequest
+
+		expectedSeries []rawSeries
+		expectedErr    error
+	}{
+		{
+			title: "group replica strategy; 1st store is fast, 2nd store is slow and got canceled;",
+			storeAPIs: []Client{
+				&storetestutil.TestClient{
+					Name: "fast_store",
+					StoreClient: &mockedStoreAPI{
+						RespSeries: []*storepb.SeriesResponse{
+							storeSeriesResponse(t, labels.FromStrings("a", "b"), []sample{{1, 1}, {2, 2}, {3, 3}}),
+						},
+					},
+					ExtLset:       []labels.Labels{labels.FromStrings("ext", "1")},
+					MinTime:       1,
+					MaxTime:       300,
+					GroupKeyStr:   "group1",
+					ReplicaKeyStr: "replica1",
+				},
+				&storetestutil.TestClient{
+					Name: "slow_store",
+					StoreClient: &mockedStoreAPI{
+						RespSeries: []*storepb.SeriesResponse{
+							storeSeriesResponse(t, labels.FromStrings("a", "b"), []sample{{1, 1}, {2, 2}, {3, 3}}),
+						},
+						RespDuration: 2 * time.Second, // greater than frame timeout
+					},
+					ExtLset:       []labels.Labels{labels.FromStrings("ext", "1")},
+					MinTime:       1,
+					MaxTime:       300,
+					GroupKeyStr:   "group1",
+					ReplicaKeyStr: "replica1",
+				},
+			},
+			req: &storepb.SeriesRequest{
+				MinTime:                 1,
+				MaxTime:                 300,
+				Matchers:                []storepb.LabelMatcher{{Name: "ext", Value: "1", Type: storepb.LabelMatcher_EQ}},
+				PartialResponseStrategy: storepb.PartialResponseStrategy_GROUP_REPLICA,
+			},
+			expectedSeries: []rawSeries{
+				{
+					lset:   labels.FromStrings("a", "b"),
+					chunks: [][]sample{{{1, 1}, {2, 2}, {3, 3}}},
+				},
+			},
+		},
+		{
+			title: "group replica strategy; 1st store is fast, 2nd store is slow on second series and got canceled;",
+			storeAPIs: []Client{
+				&storetestutil.TestClient{
+					Name: "store1",
+					StoreClient: &mockedStoreAPI{
+						RespSeries: []*storepb.SeriesResponse{
+							storeSeriesResponse(t, labels.FromStrings("a", "b"), []sample{{1, 1}, {2, 2}, {3, 3}}),
+							storeSeriesResponse(t, labels.FromStrings("a", "b"), []sample{{3, 1}, {4, 2}, {5, 3}}),
+							storeSeriesResponse(t, labels.FromStrings("a", "b"), []sample{{6, 1}, {7, 2}, {8, 3}})},
+					},
+					ExtLset:       []labels.Labels{labels.FromStrings("ext", "1")},
+					MinTime:       1,
+					MaxTime:       300,
+					GroupKeyStr:   "group1",
+					ReplicaKeyStr: "replica1",
+				},
+				&storetestutil.TestClient{
+					Name: "store2",
+					StoreClient: &mockedStoreAPI{
+						RespSeries: []*storepb.SeriesResponse{
+							storeSeriesResponse(t, labels.FromStrings("a", "b"), []sample{{1, 1}, {2, 2}, {3, 3}}),
+							storeSeriesResponse(t, labels.FromStrings("a", "b"), []sample{{3, 1}, {4, 2}, {5, 3}}),
+							storeSeriesResponse(t, labels.FromStrings("a", "b"), []sample{{6, 1}, {7, 2}, {8, 3}})},
+						RespDuration:    2 * time.Second, // greater than frame timeout
+						SlowSeriesIndex: 2,
+					},
+					ExtLset:       []labels.Labels{labels.FromStrings("ext", "1")},
+					MinTime:       1,
+					MaxTime:       300,
+					GroupKeyStr:   "group1",
+					ReplicaKeyStr: "replica1",
+				},
+			},
+			req: &storepb.SeriesRequest{
+				MinTime:                 1,
+				MaxTime:                 300,
+				Matchers:                []storepb.LabelMatcher{{Name: "ext", Value: "1", Type: storepb.LabelMatcher_EQ}},
+				PartialResponseStrategy: storepb.PartialResponseStrategy_GROUP_REPLICA,
+			},
+			expectedSeries: []rawSeries{
+				{
+					lset:   labels.FromStrings("a", "b"),
+					chunks: [][]sample{{{1, 1}, {2, 2}, {3, 3}}, {{3, 1}, {4, 2}, {5, 3}}, {{6, 1}, {7, 2}, {8, 3}}},
+				},
+			},
+		},
+	} {
+		if ok := t.Run(tc.title, func(t *testing.T) {
+			for _, strategy := range []RetrievalStrategy{EagerRetrieval, LazyRetrieval} {
+				if ok := t.Run(string(strategy), func(t *testing.T) {
+					q := NewProxyStore(nil,
+						nil,
+						func() []Client { return tc.storeAPIs },
+						component.Query,
+						tc.selectorLabels,
+						1*time.Second, strategy,
+					)
+
+					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					defer cancel()
+					s := newStoreSeriesServer(ctx)
+
+					t0 := time.Now()
+					err := q.Series(tc.req, s)
+					elapsedTime := time.Since(t0)
+					if tc.expectedErr != nil {
+						testutil.NotOk(t, err)
+						testutil.Equals(t, tc.expectedErr.Error(), err.Error())
+						return
+					}
+
+					testutil.Ok(t, err)
+
+					seriesEquals(t, tc.expectedSeries, s.SeriesSet)
+					testutil.Equals(t, 0, len(s.Warnings), "got %v", s.Warnings)
+
+					testutil.Assert(t, elapsedTime < 500*time.Millisecond, fmt.Sprintf("Request has taken %d ms, expected: < %d ms, it seems that quorum-based query short circuit doesn't work properly.", elapsedTime.Milliseconds(), 500))
 
 				}); !ok {
 					return

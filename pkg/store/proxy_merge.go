@@ -27,6 +27,8 @@ import (
 	"github.com/thanos-io/thanos/pkg/tracing"
 )
 
+const storeReplicaLabelName = "__replica__"
+
 type seriesStream interface {
 	Next() bool
 	At() *storepb.SeriesResponse
@@ -350,6 +352,15 @@ func (l *lazyRespSet) At() *storepb.SeriesResponse {
 	return l.lastResp
 }
 
+func getStoreReplica(storeLabelSets []labels.Labels) string {
+	for _, ls := range storeLabelSets {
+		if r := ls.Get(storeReplicaLabelName); r != "" {
+			return r
+		}
+	}
+	return ""
+}
+
 func newLazyRespSet(
 	span opentracing.Span,
 	frameTimeout time.Duration,
@@ -360,6 +371,8 @@ func newLazyRespSet(
 	shardMatcher *storepb.ShardMatcher,
 	applySharding bool,
 	emptyStreamResponses prometheus.Counter,
+	shortCircuitQueries *prometheus.CounterVec,
+	qg *quorumGroup,
 	fixedBufferSize int,
 ) respSet {
 	// A ring buffer of size N can hold N - 1 elements at most in order to distinguish being empty from being full.
@@ -424,6 +437,18 @@ func newLazyRespSet(
 					l.noMoreData = true
 					l.dataOrFinishEvent.Signal()
 					l.bufferedResponsesMtx.Unlock()
+					if qg != nil && qg.counter.Add(1) == qg.quorum {
+						qg.cancel()
+					}
+					return false
+				}
+				if qg != nil && qg.counter.Load() >= qg.quorum {
+					l.bufferedResponsesMtx.Lock()
+					l.noMoreData = true
+					l.dataOrFinishEvent.Signal()
+					l.bufferedResponsesMtx.Unlock()
+					shortCircuitQueries.WithLabelValues(qg.name, getStoreReplica(storeLabelSets)).Inc()
+					l.span.SetTag("err", errors.Wrapf(err, "quorum reached and abandon store %s", storeName).Error())
 					return false
 				}
 
@@ -521,6 +546,8 @@ func newAsyncRespSet(
 	shardInfo *storepb.ShardInfo,
 	logger log.Logger,
 	emptyStreamResponses prometheus.Counter,
+	shortCircuitQueries *prometheus.CounterVec,
+	qg *quorumGroup,
 	lazyRetrievalMaxBufferedResponses int,
 ) (respSet, error) {
 
@@ -534,9 +561,10 @@ func newAsyncRespSet(
 		"target": storeAddr,
 	})
 	span, seriesCtx = tracing.StartSpan(seriesCtx, "proxy.series", tracing.Tags{
-		"store.id":       storeID,
-		"store.is_local": isLocalStore,
-		"store.addr":     storeAddr,
+		"store.id":                          storeID,
+		"store.is_local":                    isLocalStore,
+		"store.addr":                        storeAddr,
+		"request.partial_response_strategy": req.PartialResponseStrategy.String(),
 	})
 
 	seriesCtx, cancel = context.WithCancel(seriesCtx)
@@ -588,6 +616,8 @@ func newAsyncRespSet(
 			shardMatcher,
 			applySharding,
 			emptyStreamResponses,
+			shortCircuitQueries,
+			qg,
 			lazyRetrievalMaxBufferedResponses,
 		), nil
 	case EagerRetrieval:
@@ -602,7 +632,9 @@ func newAsyncRespSet(
 			shardMatcher,
 			applySharding,
 			emptyStreamResponses,
+			shortCircuitQueries,
 			labelsToRemove,
+			qg,
 		), nil
 	default:
 		panic(fmt.Sprintf("unsupported retrieval strategy %s", retrievalStrategy))
@@ -657,7 +689,9 @@ func newEagerRespSet(
 	shardMatcher *storepb.ShardMatcher,
 	applySharding bool,
 	emptyStreamResponses prometheus.Counter,
+	shortCircuitQueries *prometheus.CounterVec,
 	removeLabels map[string]struct{},
+	qg *quorumGroup,
 ) respSet {
 	ret := &eagerRespSet{
 		span:              span,
@@ -711,6 +745,20 @@ func newEagerRespSet(
 			resp, err := cl.Recv()
 			if err != nil {
 				if err == io.EOF {
+					if qg != nil && qg.counter.Add(1) == qg.quorum {
+						// cancel has three circumstances for other active goroutines:
+						// 1. it receives the signal and return with context canceled error.
+						// 2. it does not receive the signal and return successfully.
+						// 3. it does not receive the signal and return with some error.
+						// Both 1 and 3 can be captured by the expression below.
+						qg.cancel()
+					}
+					return false
+				}
+				if qg != nil && qg.counter.Load() >= qg.quorum {
+					l.span.SetTag("err", errors.Wrapf(err, "quorum reached and abandon store %s", storeName).Error())
+					shortCircuitQueries.WithLabelValues(qg.name, getStoreReplica(storeLabelSets)).Inc()
+					l.bufferedResponses = nil
 					return false
 				}
 
