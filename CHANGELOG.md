@@ -17,6 +17,7 @@ We use *breaking :warning:* to mark changes that are not backward compatible (re
 ### Changed
 
 ### Removed
+- [#8289](https://github.com/thanos-io/thanos/pull/8289) Receive: *breaking :warning:* Removed migration of legacy-TSDB to multi-TSDB. Ensure you are running version >0.13
 
 ## [v0.37.0 - <in progress>](https://github.com/thanos-io/thanos/tree/release-0.37)
 
