@@ -18,7 +18,7 @@ type quorumSeries struct {
 	lset     labels.Labels
 	replicas []storage.Series
 
-	isCounter bool
+	isCounter bool // trigger ci
 }
 
 func NewQuorumSeries(lset labels.Labels, replicas []storage.Series, f string) storage.Series {
