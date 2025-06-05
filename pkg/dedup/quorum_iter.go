@@ -1,6 +1,5 @@
 // Copyright (c) The Thanos Authors.
 // Licensed under the Apache License 2.0.
-// trigger ci
 
 package dedup
 
@@ -17,7 +16,7 @@ import (
 // when replicas has conflict values at the same timestamp, the value in majority replica will be selected.
 type quorumSeries struct {
 	lset     labels.Labels
-	replicas []storage.Series
+	replicas []storage.Series // trigger ci
 
 	isCounter bool
 }
