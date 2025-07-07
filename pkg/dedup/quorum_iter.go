@@ -18,21 +18,33 @@ type quorumSeries struct {
 	lset     labels.Labels
 	replicas []storage.Series
 
-	isCounter bool
+	disablePenalty bool
+	isCounter      bool
 }
 
 func NewQuorumSeries(lset labels.Labels, replicas []storage.Series, f string) storage.Series {
 	return &quorumSeries{
-		lset:     lset,
-		replicas: replicas,
+		lset:           lset,
+		replicas:       replicas,
+		disablePenalty: true, // Default to no penalty for receiver-only setups
+		isCounter:      isCounter(f),
+	}
+}
 
-		isCounter: isCounter(f),
+// NewQuorumSeriesWithPenalty creates a quorum series with configurable penalty behavior
+func NewQuorumSeriesWithPenalty(lset labels.Labels, replicas []storage.Series, f string, disablePenalty bool) storage.Series {
+	return &quorumSeries{
+		lset:           lset,
+		replicas:       replicas,
+		disablePenalty: disablePenalty,
+		isCounter:      isCounter(f),
 	}
 }
 
 func (m *quorumSeries) Labels() labels.Labels {
 	return m.lset
 }
+
 func (m *quorumSeries) Iterator(_ chunkenc.Iterator) chunkenc.Iterator {
 	iters := make([]adjustableSeriesIterator, 0, len(m.replicas))
 	oks := make([]bool, 0, len(m.replicas))
@@ -48,10 +60,11 @@ func (m *quorumSeries) Iterator(_ chunkenc.Iterator) chunkenc.Iterator {
 		oks = append(oks, ok)
 	}
 	return &quorumSeriesIterator{
-		iters:    iters,
-		oks:      oks,
-		lastT:    math.MinInt64,
-		lastIter: nil, // behavior is undefined if At() is called before Next(), here we panic if it happens.
+		iters:          iters,
+		oks:            oks,
+		lastT:          math.MinInt64,
+		lastIter:       nil, // behavior is undefined if At() is called before Next(), here we panic if it happens.
+		disablePenalty: m.disablePenalty,
 	}
 }
 
@@ -89,17 +102,22 @@ type quorumSeriesIterator struct {
 	lastT    int64
 	lastV    float64
 	lastIter adjustableSeriesIterator
+
+	disablePenalty bool
 }
 
 func (m *quorumSeriesIterator) Next() chunkenc.ValueType {
-	// m.lastIter points to the last iterator that has the latest timestamp.
-	// m.lastT always aligns with m.lastIter unless when m.lastIter is nil.
-	// m.lastIter is nil only in the following cases:
-	//   1. Next()/Seek() is never called. m.lastT is math.MinInt64 in this case.
-	//   2. The iterator runs out of values. m.lastT is the last timestamp in this case.
+	if m.disablePenalty {
+		return m.nextWithoutPenalty()
+	}
+	return m.nextWithPenalty()
+}
+
+func (m *quorumSeriesIterator) nextWithPenalty() chunkenc.ValueType {
+	// Original penalty-based algorithm for backward compatibility
 	minT := int64(math.MaxInt64)
 	var lastIter adjustableSeriesIterator
-	quoramValue := NewQuorumValuePicker(0.0)
+	quorumValue := NewQuorumValuePicker(0.0)
 	for i, it := range m.iters {
 		if !m.oks[i] {
 			continue
@@ -114,9 +132,9 @@ func (m *quorumSeriesIterator) Next() chunkenc.ValueType {
 			if t < minT {
 				minT = t
 				lastIter = it
-				quoramValue = NewQuorumValuePicker(v)
+				quorumValue = NewQuorumValuePicker(v)
 			} else if t == minT {
-				if quoramValue.addValue(v) {
+				if quorumValue.addValue(v) {
 					lastIter = it
 				}
 			}
@@ -126,7 +144,48 @@ func (m *quorumSeriesIterator) Next() chunkenc.ValueType {
 	if m.lastIter == nil {
 		return chunkenc.ValNone
 	}
-	m.lastV = quoramValue.currentValue
+	m.lastV = quorumValue.currentValue
+	m.lastT = minT
+	return chunkenc.ValFloat
+}
+
+func (m *quorumSeriesIterator) nextWithoutPenalty() chunkenc.ValueType {
+	// Find minimum timestamp across all active iterators without applying penalties
+	minT := int64(math.MaxInt64)
+	var lastIter adjustableSeriesIterator
+	quorumValue := NewQuorumValuePicker(0.0)
+
+	for i, it := range m.iters {
+		if !m.oks[i] {
+			continue
+		}
+		t, v := it.At()
+		if t <= m.lastT {
+			// Move to next value if current is not newer
+			m.oks[i] = it.Next() != chunkenc.ValNone
+			if m.oks[i] {
+				it.adjustAtValue(m.lastV)
+				t, v = it.At()
+			} else {
+				continue
+			}
+		}
+		if t < minT {
+			minT = t
+			lastIter = it
+			quorumValue = NewQuorumValuePicker(v)
+		} else if t == minT {
+			if quorumValue.addValue(v) {
+				lastIter = it
+			}
+		}
+	}
+
+	m.lastIter = lastIter
+	if m.lastIter == nil {
+		return chunkenc.ValNone
+	}
+	m.lastV = quorumValue.currentValue
 	m.lastT = minT
 	return chunkenc.ValFloat
 }
@@ -143,7 +202,7 @@ func (m *quorumSeriesIterator) Seek(t int64) chunkenc.ValueType {
 }
 
 func (m *quorumSeriesIterator) At() (t int64, v float64) {
-	return m.lastIter.At()
+	return m.lastT, m.lastV
 }
 
 func (m *quorumSeriesIterator) AtHistogram(h *histogram.Histogram) (int64, *histogram.Histogram) {

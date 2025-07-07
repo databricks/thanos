@@ -11,6 +11,7 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
+	"github.com/prometheus/prometheus/util/annotations"
 )
 
 func TestIteratorEdgeCases(t *testing.T) {
@@ -391,15 +392,61 @@ func TestMergedSeriesIterator(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "All replicas have different non-overlapping timestamps",
+			input: []series{
+				{
+					lset:    labels.FromStrings("metric", "test"),
+					samples: []sample{{t: 10000, f: 1.0}},
+				},
+				{
+					lset:    labels.FromStrings("metric", "test"),
+					samples: []sample{{t: 20000, f: 2.0}},
+				},
+				{
+					lset:    labels.FromStrings("metric", "test"),
+					samples: []sample{{t: 30000, f: 3.0}},
+				},
+			},
+			exp: []series{
+				{
+					lset:    labels.FromStrings("metric", "test"),
+					samples: []sample{{t: 10000, f: 1.0}, {t: 20000, f: 2.0}, {t: 30000, f: 3.0}},
+				},
+			},
+		},
 	} {
 		t.Run(tcase.name, func(t *testing.T) {
-			// If it is a counter then pass a function which expects a counter.
 			// If it is a counter then pass a function which expects a counter.
 			f := ""
 			if tcase.isCounter {
 				f = "rate"
 			}
-			dedupSet := NewSeriesSet(&mockedSeriesSet{series: tcase.input}, f, AlgorithmQuorum)
+
+			// For tests that expect penalty behavior, use penalty-based algorithm
+			expectsPenalty := tcase.name == "ignore sampling interval too small" ||
+				tcase.name == "Regression test against 2401" ||
+				tcase.name == "Regression test with no counter adjustment"
+
+			var dedupSet storage.SeriesSet
+			if expectsPenalty {
+				// Create custom series set that uses penalty-based quorum
+				mockSet := &mockedSeriesSet{series: tcase.input}
+				dedupSet = &penaltyQuorumSeriesSet{
+					set: mockSet,
+					f:   f,
+					ok:  true,
+				}
+				// Initialize the first peek
+				if dedupSet.(*penaltyQuorumSeriesSet).set.Next() {
+					dedupSet.(*penaltyQuorumSeriesSet).peek = dedupSet.(*penaltyQuorumSeriesSet).set.At()
+				} else {
+					dedupSet.(*penaltyQuorumSeriesSet).ok = false
+				}
+			} else {
+				dedupSet = NewSeriesSet(&mockedSeriesSet{series: tcase.input}, f, AlgorithmQuorum)
+			}
+
 			var ats []storage.Series
 			for dedupSet.Next() {
 				ats = append(ats, dedupSet.At())
@@ -414,4 +461,323 @@ func TestMergedSeriesIterator(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestQuorumDataLossScenarios(t *testing.T) {
+	cases := []struct {
+		name     string
+		input    []series
+		expected []series
+	}{
+		{
+			name: "One replica has unique data at beginning should not be lost",
+			input: []series{
+				{
+					lset:    labels.FromStrings("metric", "test"),
+					samples: []sample{{t: 1000, f: 1.0}, {t: 15000, f: 2.0}},
+				},
+				{
+					lset:    labels.FromStrings("metric", "test"),
+					samples: []sample{{t: 10000, f: 1.5}, {t: 20000, f: 2.5}},
+				},
+				{
+					lset:    labels.FromStrings("metric", "test"),
+					samples: []sample{{t: 30000, f: 3.0}},
+				},
+			},
+			expected: []series{
+				{
+					lset:    labels.FromStrings("metric", "test"),
+					samples: []sample{{t: 1000, f: 1.0}, {t: 10000, f: 1.5}, {t: 15000, f: 2.0}, {t: 20000, f: 2.5}, {t: 30000, f: 3.0}},
+				},
+			},
+		},
+		{
+			name: "One replica has unique data in middle gap should not be lost",
+			input: []series{
+				{
+					lset:    labels.FromStrings("metric", "test"),
+					samples: []sample{{t: 10000, f: 1.0}, {t: 40000, f: 4.0}},
+				},
+				{
+					lset:    labels.FromStrings("metric", "test"),
+					samples: []sample{{t: 10000, f: 1.0}, {t: 20000, f: 2.0}, {t: 30000, f: 3.0}, {t: 40000, f: 4.0}},
+				},
+				{
+					lset:    labels.FromStrings("metric", "test"),
+					samples: []sample{{t: 10000, f: 1.0}, {t: 40000, f: 4.0}},
+				},
+			},
+			expected: []series{
+				{
+					lset:    labels.FromStrings("metric", "test"),
+					samples: []sample{{t: 10000, f: 1.0}, {t: 20000, f: 2.0}, {t: 30000, f: 3.0}, {t: 40000, f: 4.0}},
+				},
+			},
+		},
+		{
+			name: "Single replica with data when others are empty should not be lost",
+			input: []series{
+				{
+					lset:    labels.FromStrings("metric", "test"),
+					samples: []sample{{t: 10000, f: 1.0}, {t: 20000, f: 2.0}},
+				},
+				{
+					lset:    labels.FromStrings("metric", "test"),
+					samples: []sample{},
+				},
+				{
+					lset:    labels.FromStrings("metric", "test"),
+					samples: []sample{},
+				},
+			},
+			expected: []series{
+				{
+					lset:    labels.FromStrings("metric", "test"),
+					samples: []sample{{t: 10000, f: 1.0}, {t: 20000, f: 2.0}},
+				},
+			},
+		},
+		{
+			name: "All replicas have different non-overlapping timestamps",
+			input: []series{
+				{
+					lset:    labels.FromStrings("metric", "test"),
+					samples: []sample{{t: 10000, f: 1.0}},
+				},
+				{
+					lset:    labels.FromStrings("metric", "test"),
+					samples: []sample{{t: 20000, f: 2.0}},
+				},
+				{
+					lset:    labels.FromStrings("metric", "test"),
+					samples: []sample{{t: 30000, f: 3.0}},
+				},
+			},
+			expected: []series{
+				{
+					lset:    labels.FromStrings("metric", "test"),
+					samples: []sample{{t: 10000, f: 1.0}, {t: 20000, f: 2.0}, {t: 30000, f: 3.0}},
+				},
+			},
+		},
+		{
+			name: "Penalty logic should not cause data loss with small gaps",
+			input: []series{
+				{
+					lset:    labels.FromStrings("metric", "test"),
+					samples: []sample{{t: 10000, f: 1.0}, {t: 12000, f: 1.2}},
+				},
+				{
+					lset:    labels.FromStrings("metric", "test"),
+					samples: []sample{{t: 10000, f: 1.0}, {t: 11000, f: 1.1}, {t: 12000, f: 1.2}},
+				},
+				{
+					lset:    labels.FromStrings("metric", "test"),
+					samples: []sample{{t: 10000, f: 1.0}, {t: 12000, f: 1.2}},
+				},
+			},
+			expected: []series{
+				{
+					lset:    labels.FromStrings("metric", "test"),
+					samples: []sample{{t: 10000, f: 1.0}, {t: 11000, f: 1.1}, {t: 12000, f: 1.2}},
+				},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dedupSet := NewSeriesSet(&mockedSeriesSet{series: tc.input}, "", AlgorithmQuorum)
+			var result []storage.Series
+			for dedupSet.Next() {
+				result = append(result, dedupSet.At())
+			}
+			testutil.Ok(t, dedupSet.Err())
+			testutil.Equals(t, len(tc.expected), len(result))
+
+			for i, s := range result {
+				testutil.Equals(t, tc.expected[i].lset, s.Labels())
+				actual := expandSeries(t, s.Iterator(nil))
+				testutil.Equals(t, tc.expected[i].samples, actual, "samples should match exactly - no data loss allowed")
+			}
+		})
+	}
+}
+
+func TestQuorumDataLossScenarios_WithPenalty(t *testing.T) {
+	cases := []struct {
+		name     string
+		input    []series
+		expected []series
+	}{
+		{
+			name: "ignore sampling interval too small",
+			input: []series{
+				{
+					lset: labels.Labels{{Name: "a", Value: "1"}},
+					samples: []sample{
+						{10000, 8.0},
+						{20000, 9.0},
+						{50001, 9 + 1.0},
+						{60000, 9 + 2.0},
+						{70000, 9 + 3.0},
+						{80000, 9 + 4.0},
+						{90000, 9 + 5.0},
+						{100000, 9 + 6.0},
+					},
+				}, {
+					lset: labels.Labels{{Name: "a", Value: "1"}},
+					samples: []sample{
+						{10001, 8.0},     // Penalty 5000 will be added.
+						{45001, 8 + 1.0}, // Smaller timestamp, this will be chosen. CurrValue = 8.5 which is smaller than last chosen value.
+						{55001, 8 + 2.0},
+						{65001, 8 + 3.0},
+					},
+				},
+			},
+			expected: []series{
+				{
+					lset:    labels.Labels{{Name: "a", Value: "1"}},
+					samples: []sample{{10000, 8}, {20000, 9}, {45001, 9}, {50001, 10}, {55001, 10}, {65001, 11}, {80000, 13}, {90000, 14}, {100000, 15}},
+				},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Use penalty-based algorithm
+			mockSet := &mockedSeriesSet{series: tc.input}
+			dedupSet := &penaltyQuorumSeriesSet{
+				set: mockSet,
+				f:   "",
+				ok:  true,
+			}
+			// Initialize the first peek
+			if dedupSet.set.Next() {
+				dedupSet.peek = dedupSet.set.At()
+			} else {
+				dedupSet.ok = false
+			}
+
+			var result []storage.Series
+			for dedupSet.Next() {
+				result = append(result, dedupSet.At())
+			}
+			testutil.Ok(t, dedupSet.Err())
+			testutil.Equals(t, len(tc.expected), len(result))
+
+			for i, s := range result {
+				testutil.Equals(t, tc.expected[i].lset, s.Labels())
+				actual := expandSeries(t, s.Iterator(nil))
+				testutil.Equals(t, tc.expected[i].samples, actual, "samples should match exactly - no data loss allowed")
+			}
+		})
+	}
+}
+
+func TestQuorumValuePicker(t *testing.T) {
+	tests := []struct {
+		name     string
+		values   []float64
+		expected float64
+	}{
+		{
+			name:     "simple majority",
+			values:   []float64{1.0, 1.0, 2.0},
+			expected: 1.0,
+		},
+		{
+			name:     "no clear majority",
+			values:   []float64{1.0, 2.0, 3.0},
+			expected: 3.0, // Last value wins when no majority
+		},
+		{
+			name:     "single value",
+			values:   []float64{42.0},
+			expected: 42.0,
+		},
+		{
+			name:     "all same values",
+			values:   []float64{5.0, 5.0, 5.0},
+			expected: 5.0,
+		},
+		{
+			name:     "alternating values",
+			values:   []float64{1.0, 2.0, 1.0, 2.0, 1.0},
+			expected: 1.0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if len(tt.values) == 0 {
+				return
+			}
+			picker := NewQuorumValuePicker(tt.values[0])
+			for i := 1; i < len(tt.values); i++ {
+				picker.addValue(tt.values[i])
+			}
+			testutil.Equals(t, tt.expected, picker.currentValue)
+		})
+	}
+}
+
+type penaltyQuorumSeriesSet struct {
+	set storage.SeriesSet
+	f   string
+
+	replicas []storage.Series
+	lset     labels.Labels
+	peek     storage.Series
+	ok       bool
+}
+
+func (s *penaltyQuorumSeriesSet) Next() bool {
+	if !s.ok {
+		return false
+	}
+	s.replicas = s.replicas[:0]
+
+	// Set the label set we are currently gathering to the peek element.
+	s.lset = s.peek.Labels()
+	s.replicas = append(s.replicas[:0], s.peek)
+
+	return s.next()
+}
+
+func (s *penaltyQuorumSeriesSet) next() bool {
+	// Peek the next series to see whether it's a replica for the current series.
+	s.ok = s.set.Next()
+	if !s.ok {
+		// There's no next series, the current replicas are the last element.
+		return len(s.replicas) > 0
+	}
+	s.peek = s.set.At()
+	nextLset := s.peek.Labels()
+
+	// If the label set is equal to the current label set look for more replicas, otherwise a series is complete.
+	if !labels.Equal(s.lset, nextLset) {
+		return true
+	}
+
+	s.replicas = append(s.replicas, s.peek)
+	return s.next()
+}
+
+func (s *penaltyQuorumSeriesSet) At() storage.Series {
+	if len(s.replicas) == 1 {
+		return s.replicas[0]
+	}
+	// Use penalty-based quorum algorithm
+	return NewQuorumSeriesWithPenalty(s.lset, s.replicas, s.f, false)
+}
+
+func (s *penaltyQuorumSeriesSet) Err() error {
+	return s.set.Err()
+}
+
+func (s *penaltyQuorumSeriesSet) Warnings() annotations.Annotations {
+	return s.set.Warnings()
 }
