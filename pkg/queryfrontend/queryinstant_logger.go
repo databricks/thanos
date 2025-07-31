@@ -192,7 +192,10 @@ func (m *instantQueryLoggingMiddleware) logInstantQuery(req *ThanosQueryInstantR
 }
 
 func (m *instantQueryLoggingMiddleware) writeToLogFile(instantQueryLog MetricsInstantQueryLogging) {
-	WriteJSONLogToFile(m.logger, m.writer, instantQueryLog, "instant")
+	err := WriteJSONLogToFile(m.logger, m.writer, instantQueryLog, "instant")
+	if err != nil {
+		level.Error(m.logger).Log("msg", "failed to write instant query log to file", "err", err)
+	}
 }
 
 // Close should be called when the middleware is no longer needed.

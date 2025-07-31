@@ -193,7 +193,10 @@ func (m *rangeQueryLoggingMiddleware) logRangeQuery(req *ThanosQueryRangeRequest
 }
 
 func (m *rangeQueryLoggingMiddleware) writeToLogFile(rangeQueryLog MetricsRangeQueryLogging) {
-	WriteJSONLogToFile(m.logger, m.writer, rangeQueryLog, "range")
+	err := WriteJSONLogToFile(m.logger, m.writer, rangeQueryLog, "range")
+	if err != nil {
+		level.Error(m.logger).Log("msg", "failed to write range query log to file", "err", err)
+	}
 }
 
 // Close should be called when the middleware is no longer needed.
