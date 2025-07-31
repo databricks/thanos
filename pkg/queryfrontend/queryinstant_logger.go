@@ -137,6 +137,12 @@ func (m *instantQueryLoggingMiddleware) logInstantQuery(req *ThanosQueryInstantR
 	// Extract email from response headers
 	email := ExtractEmailFromResponse(resp)
 
+	// If email is empty, don't log the query.
+	// This is to avoid logging queries that come from rule manager.
+	if email == "" {
+		return
+	}
+
 	// Calculate stats (only for successful queries).
 	var stats ResponseStats
 	if success && resp != nil {
