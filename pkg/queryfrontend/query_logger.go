@@ -74,7 +74,7 @@ func ExtractUserInfoFromHeaders(headers []*RequestHeader) UserInfo {
 				userAgentLower := strings.ToLower(headerValue)
 				if strings.Contains(userAgentLower, "grafana") {
 					userInfo.Source = "Grafana"
-				} 
+				}
 			}
 		case "x-dashboard-uid":
 			userInfo.GrafanaDashboardUid = headerValue
