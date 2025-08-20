@@ -209,6 +209,8 @@ func registerQuery(app *extkingpin.App) {
 	var storeRateLimits store.SeriesSelectLimits
 	storeRateLimits.RegisterFlags(cmd)
 
+	blockQueryMetricsWithoutFilter := cmd.Flag("block-query-metrics-without-filter", "Comma separated list of metric name patterns to block when they don't have sufficient label filters. This prevents high cardinality queries from overwhelming the backend. Example: 'kube_.*,envoy_.*'").Default("").String()
+
 	cmd.Setup(func(g *run.Group, logger log.Logger, reg *prometheus.Registry, tracer opentracing.Tracer, _ <-chan struct{}, debugLogging bool) error {
 		selectorLset, err := parseFlagLabels(*selectorLabels)
 		if err != nil {
@@ -350,6 +352,7 @@ func registerQuery(app *extkingpin.App) {
 			*tenantLabel,
 			*queryDistributedWithOverlappingInterval,
 			*lazyRetrievalMaxBufferedResponses,
+			*blockQueryMetricsWithoutFilter,
 		)
 	})
 }
@@ -414,6 +417,7 @@ func runQuery(
 	tenantLabel string,
 	queryDistributedWithOverlappingInterval bool,
 	lazyRetrievalMaxBufferedResponses int,
+	blockQueryMetricsWithoutFilter string,
 ) error {
 	comp := component.Query
 	if alertQueryURL == "" {
@@ -428,6 +432,17 @@ func runQuery(
 		store.WithTSDBSelector(tsdbSelector),
 		store.WithProxyStoreDebugLogging(debugLogging),
 		store.WithLazyRetrievalMaxBufferedResponsesForProxy(lazyRetrievalMaxBufferedResponses),
+	}
+
+	// Parse blocked metric patterns from command line flag
+	if blockQueryMetricsWithoutFilter != "" {
+		blockedPatterns := strings.Split(strings.TrimSpace(blockQueryMetricsWithoutFilter), ",")
+		for i := range blockedPatterns {
+			blockedPatterns[i] = strings.TrimSpace(blockedPatterns[i])
+		}
+		if len(blockedPatterns) > 0 && blockedPatterns[0] != "" {
+			options = append(options, store.WithBlockedMetricPatterns(blockedPatterns))
+		}
 	}
 
 	// Parse and sanitize the provided replica labels flags.
