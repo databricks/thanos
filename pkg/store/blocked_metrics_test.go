@@ -6,8 +6,8 @@ package store
 import (
 	"testing"
 
+	"github.com/efficientgo/core/testutil"
 	"github.com/prometheus/prometheus/model/labels"
-	"github.com/thanos-io/thanos/pkg/testutil"
 )
 
 func TestMatchesBlockedPattern(t *testing.T) {
@@ -59,8 +59,8 @@ func TestMatchesBlockedPattern(t *testing.T) {
 
 func TestHasSufficientFilters(t *testing.T) {
 	testCases := []struct {
-		name      string
-		matchers  []*labels.Matcher
+		name       string
+		matchers   []*labels.Matcher
 		shouldHave bool
 	}{
 		{
