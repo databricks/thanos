@@ -102,6 +102,7 @@ type ProxyStore struct {
 	enableDedup                       bool
 	matcherConverter                  *storepb.MatcherConverter
 	lazyRetrievalMaxBufferedResponses int
+	blockedMetricPatterns             []string
 }
 
 type proxyStoreMetrics struct {
@@ -175,6 +176,13 @@ func WithoutDedup() ProxyStoreOption {
 func WithProxyStoreMatcherConverter(mc *storepb.MatcherConverter) ProxyStoreOption {
 	return func(s *ProxyStore) {
 		s.matcherConverter = mc
+	}
+}
+
+// WithBlockedMetricPatterns returns a ProxyStoreOption that sets the blocked metric patterns.
+func WithBlockedMetricPatterns(patterns []string) ProxyStoreOption {
+	return func(s *ProxyStore) {
+		s.blockedMetricPatterns = patterns
 	}
 }
 
@@ -299,6 +307,11 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 
 	if len(matchers) == 0 {
 		return status.Error(codes.InvalidArgument, errors.New("no matchers specified (excluding selector labels)").Error())
+	}
+
+	// Check if the query should be blocked due to insufficient filters
+	if s.shouldBlockQuery(matchers) {
+		return status.Error(codes.InvalidArgument, errors.New("query blocked: metric matches blocked patterns and lacks sufficient label filters").Error())
 	}
 
 	// We may arrive here either via the promql engine
@@ -809,5 +822,63 @@ func LabelSetsMatch(matchers []*labels.Matcher, lset ...labels.Labels) bool {
 			return true
 		}
 	}
+	return false
+}
+
+// matchesBlockedPattern checks if a metric name matches any of the blocked patterns.
+func (s *ProxyStore) matchesBlockedPattern(metricName string) bool {
+	if len(s.blockedMetricPatterns) == 0 {
+		return false
+	}
+
+	for _, pattern := range s.blockedMetricPatterns {
+		if pattern == "" {
+			continue
+		}
+		if strings.Contains(metricName, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasSufficientFilters checks if the query has sufficient label filters to avoid high cardinality.
+func (s *ProxyStore) hasSufficientFilters(matchers []*labels.Matcher) bool {
+	// Count non-__name__ matchers that are exact matches (not regex)
+	filterCount := 0
+	for _, matcher := range matchers {
+		if matcher.Name != "__name__" && matcher.Type == labels.MatchEqual {
+			filterCount++
+		}
+	}
+	// Require at least one exact label filter
+	return filterCount > 0
+}
+
+// shouldBlockQuery determines if a query should be blocked based on metric patterns and label filters.
+func (s *ProxyStore) shouldBlockQuery(matchers []*labels.Matcher) bool {
+	if len(s.blockedMetricPatterns) == 0 {
+		return false
+	}
+
+	// Extract metric name from matchers
+	var metricName string
+	for _, matcher := range matchers {
+		if matcher.Name == "__name__" && matcher.Type == labels.MatchEqual {
+			metricName = matcher.Value
+			break
+		}
+	}
+
+	if metricName == "" {
+		return false // No metric name found, allow query
+	}
+
+	// Check if metric matches blocked patterns
+	if s.matchesBlockedPattern(metricName) {
+		// Block if insufficient filters
+		return !s.hasSufficientFilters(matchers)
+	}
+
 	return false
 }
