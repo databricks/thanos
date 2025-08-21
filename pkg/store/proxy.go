@@ -109,6 +109,7 @@ type proxyStoreMetrics struct {
 	emptyStreamResponses       prometheus.Counter
 	storeFailureCount          *prometheus.CounterVec
 	missingBlockFileErrorCount prometheus.Counter
+	blockedQueriesCount        *prometheus.CounterVec
 }
 
 func newProxyStoreMetrics(reg prometheus.Registerer) *proxyStoreMetrics {
@@ -126,6 +127,10 @@ func newProxyStoreMetrics(reg prometheus.Registerer) *proxyStoreMetrics {
 		Name: "thanos_proxy_querier_missing_block_file_error_total",
 		Help: "Total number of missing block file errors.",
 	})
+	m.blockedQueriesCount = promauto.With(reg).NewCounterVec(prometheus.CounterOpts{
+		Name: "thanos_proxy_store_blocked_queries_total",
+		Help: "Total number of queries blocked due to high cardinality metrics without sufficient filters.",
+	}, []string{"metric_name", "matched_pattern"})
 
 	return &m
 }
@@ -310,7 +315,20 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 	}
 
 	// Check if the query should be blocked due to insufficient filters
-	if s.shouldBlockQuery(matchers) {
+	shouldBlock, metricName, matchedPattern := s.shouldBlockQuery(matchers)
+	if shouldBlock {
+		// Log the blocked query with structured logging
+		filterCount := s.countExactFilters(matchers)
+		level.Warn(reqLogger).Log(
+			"msg", "query blocked due to high cardinality metric without sufficient filters",
+			"metric_name", metricName,
+			"matched_pattern", matchedPattern,
+			"filter_count", filterCount,
+		)
+		
+		// Increment metrics counter
+		s.metrics.blockedQueriesCount.WithLabelValues(metricName, matchedPattern).Inc()
+		
 		return status.Error(codes.InvalidArgument, errors.New("query blocked: metric matches blocked patterns and lacks sufficient label filters").Error())
 	}
 
@@ -844,21 +862,25 @@ func (s *ProxyStore) matchesBlockedPattern(metricName string) bool {
 
 // hasSufficientFilters checks if the query has sufficient label filters to avoid high cardinality.
 func (s *ProxyStore) hasSufficientFilters(matchers []*labels.Matcher) bool {
-	// Count non-__name__ matchers that are exact matches (not regex)
+	return s.countExactFilters(matchers) > 0
+}
+
+// countExactFilters counts non-__name__ matchers that are exact matches (not regex).
+func (s *ProxyStore) countExactFilters(matchers []*labels.Matcher) int {
 	filterCount := 0
 	for _, matcher := range matchers {
 		if matcher.Name != "__name__" && matcher.Type == labels.MatchEqual {
 			filterCount++
 		}
 	}
-	// Require at least one exact label filter
-	return filterCount > 0
+	return filterCount
 }
 
 // shouldBlockQuery determines if a query should be blocked based on metric patterns and label filters.
-func (s *ProxyStore) shouldBlockQuery(matchers []*labels.Matcher) bool {
+// Returns (shouldBlock, metricName, matchedPattern)
+func (s *ProxyStore) shouldBlockQuery(matchers []*labels.Matcher) (bool, string, string) {
 	if len(s.blockedMetricPatterns) == 0 {
-		return false
+		return false, "", ""
 	}
 
 	// Extract metric name from matchers
@@ -871,14 +893,29 @@ func (s *ProxyStore) shouldBlockQuery(matchers []*labels.Matcher) bool {
 	}
 
 	if metricName == "" {
-		return false // No metric name found, allow query
+		return false, "", "" // No metric name found, allow query
 	}
 
-	// Check if metric matches blocked patterns
-	if s.matchesBlockedPattern(metricName) {
+	// Check if metric matches blocked patterns and find which pattern matched
+	matchedPattern := s.getMatchedBlockedPattern(metricName)
+	if matchedPattern != "" {
 		// Block if insufficient filters
-		return !s.hasSufficientFilters(matchers)
+		shouldBlock := !s.hasSufficientFilters(matchers)
+		return shouldBlock, metricName, matchedPattern
 	}
 
-	return false
+	return false, "", ""
+}
+
+// getMatchedBlockedPattern returns the first pattern that matches the metric name, or empty string if none match.
+func (s *ProxyStore) getMatchedBlockedPattern(metricName string) string {
+	for _, pattern := range s.blockedMetricPatterns {
+		if pattern == "" {
+			continue
+		}
+		if strings.Contains(metricName, pattern) {
+			return pattern
+		}
+	}
+	return ""
 }

@@ -119,18 +119,22 @@ func TestHasSufficientFilters(t *testing.T) {
 
 func TestShouldBlockQuery(t *testing.T) {
 	tests := []struct {
-		name           string
-		patterns       []string
-		matchers       []*labels.Matcher
-		expectedResult bool
+		name                  string
+		patterns              []string
+		matchers              []*labels.Matcher
+		expectedResult        bool
+		expectedMetricName    string
+		expectedMatchedPattern string
 	}{
 		{
-			name:     "no blocked patterns",
-			patterns: []string{},
+			name:                  "no blocked patterns",
+			patterns:              []string{},
 			matchers: []*labels.Matcher{
 				labels.MustNewMatcher(labels.MatchEqual, "__name__", "high_cardinality_metric"),
 			},
-			expectedResult: false,
+			expectedResult:        false,
+			expectedMetricName:    "",
+			expectedMatchedPattern: "",
 		},
 		{
 			name:     "no metric name matcher",
@@ -138,7 +142,9 @@ func TestShouldBlockQuery(t *testing.T) {
 			matchers: []*labels.Matcher{
 				labels.MustNewMatcher(labels.MatchEqual, "job", "my_job"),
 			},
-			expectedResult: false,
+			expectedResult:        false,
+			expectedMetricName:    "",
+			expectedMatchedPattern: "",
 		},
 		{
 			name:     "metric does not match blocked patterns",
@@ -147,7 +153,9 @@ func TestShouldBlockQuery(t *testing.T) {
 				labels.MustNewMatcher(labels.MatchEqual, "__name__", "low_cardinality_metric"),
 				labels.MustNewMatcher(labels.MatchEqual, "job", "my_job"),
 			},
-			expectedResult: false,
+			expectedResult:        false,
+			expectedMetricName:    "",
+			expectedMatchedPattern: "",
 		},
 		{
 			name:     "metric matches pattern but has sufficient filters",
@@ -156,7 +164,9 @@ func TestShouldBlockQuery(t *testing.T) {
 				labels.MustNewMatcher(labels.MatchEqual, "__name__", "high_cardinality_metric"),
 				labels.MustNewMatcher(labels.MatchEqual, "job", "my_job"),
 			},
-			expectedResult: false,
+			expectedResult:        false,
+			expectedMetricName:    "high_cardinality_metric",
+			expectedMatchedPattern: "high_cardinality",
 		},
 		{
 			name:     "metric matches pattern and lacks sufficient filters",
@@ -164,7 +174,9 @@ func TestShouldBlockQuery(t *testing.T) {
 			matchers: []*labels.Matcher{
 				labels.MustNewMatcher(labels.MatchEqual, "__name__", "high_cardinality_metric"),
 			},
-			expectedResult: true,
+			expectedResult:        true,
+			expectedMetricName:    "high_cardinality_metric",
+			expectedMatchedPattern: "high_cardinality",
 		},
 		{
 			name:     "metric matches pattern but only has regex filters",
@@ -173,7 +185,9 @@ func TestShouldBlockQuery(t *testing.T) {
 				labels.MustNewMatcher(labels.MatchEqual, "__name__", "high_cardinality_metric"),
 				labels.MustNewMatcher(labels.MatchRegexp, "job", ".*"),
 			},
-			expectedResult: true,
+			expectedResult:        true,
+			expectedMetricName:    "high_cardinality_metric",
+			expectedMatchedPattern: "high_cardinality",
 		},
 	}
 
@@ -182,9 +196,72 @@ func TestShouldBlockQuery(t *testing.T) {
 			s := &ProxyStore{
 				blockedMetricPatterns: tt.patterns,
 			}
-			result := s.shouldBlockQuery(tt.matchers)
-			if result != tt.expectedResult {
-				t.Errorf("shouldBlockQuery() = %v, want %v", result, tt.expectedResult)
+			shouldBlock, metricName, matchedPattern := s.shouldBlockQuery(tt.matchers)
+			if shouldBlock != tt.expectedResult {
+				t.Errorf("shouldBlockQuery() shouldBlock = %v, want %v", shouldBlock, tt.expectedResult)
+			}
+			if metricName != tt.expectedMetricName {
+				t.Errorf("shouldBlockQuery() metricName = %v, want %v", metricName, tt.expectedMetricName)
+			}
+			if matchedPattern != tt.expectedMatchedPattern {
+				t.Errorf("shouldBlockQuery() matchedPattern = %v, want %v", matchedPattern, tt.expectedMatchedPattern)
+			}
+		})
+	}
+}
+
+func TestCountExactFilters(t *testing.T) {
+	tests := []struct {
+		name           string
+		matchers       []*labels.Matcher
+		expectedCount  int
+	}{
+		{
+			name:          "no matchers",
+			matchers:      []*labels.Matcher{},
+			expectedCount: 0,
+		},
+		{
+			name: "only __name__ matcher",
+			matchers: []*labels.Matcher{
+				labels.MustNewMatcher(labels.MatchEqual, "__name__", "some_metric"),
+			},
+			expectedCount: 0,
+		},
+		{
+			name: "one exact label matcher",
+			matchers: []*labels.Matcher{
+				labels.MustNewMatcher(labels.MatchEqual, "__name__", "some_metric"),
+				labels.MustNewMatcher(labels.MatchEqual, "job", "my_job"),
+			},
+			expectedCount: 1,
+		},
+		{
+			name: "regex matcher not counted",
+			matchers: []*labels.Matcher{
+				labels.MustNewMatcher(labels.MatchEqual, "__name__", "some_metric"),
+				labels.MustNewMatcher(labels.MatchRegexp, "job", ".*"),
+			},
+			expectedCount: 0,
+		},
+		{
+			name: "multiple exact matchers",
+			matchers: []*labels.Matcher{
+				labels.MustNewMatcher(labels.MatchEqual, "__name__", "some_metric"),
+				labels.MustNewMatcher(labels.MatchEqual, "job", "my_job"),
+				labels.MustNewMatcher(labels.MatchEqual, "instance", "localhost"),
+				labels.MustNewMatcher(labels.MatchRegexp, "handler", ".*"),
+			},
+			expectedCount: 2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &ProxyStore{}
+			count := s.countExactFilters(tt.matchers)
+			if count != tt.expectedCount {
+				t.Errorf("countExactFilters() = %v, want %v", count, tt.expectedCount)
 			}
 		})
 	}
