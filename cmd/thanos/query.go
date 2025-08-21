@@ -324,6 +324,7 @@ func registerQuery(app *extkingpin.App) {
 			for i, pattern := range blockedMetricPatterns {
 				blockedMetricPatterns[i] = strings.TrimSpace(pattern)
 			}
+			level.Info(logger).Log("msg", "blocking query metrics without filter feature enabled", "patterns", strings.Join(blockedMetricPatterns, ","))
 		}
 
 		return runQuery(
