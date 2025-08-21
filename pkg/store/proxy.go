@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/armon/go-radix"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/pkg/errors"
@@ -102,7 +103,7 @@ type ProxyStore struct {
 	enableDedup                       bool
 	matcherConverter                  *storepb.MatcherConverter
 	lazyRetrievalMaxBufferedResponses int
-	blockedMetricPatterns             []string
+	blockedMetricPatterns             *radix.Tree
 }
 
 type proxyStoreMetrics struct {
@@ -187,7 +188,12 @@ func WithProxyStoreMatcherConverter(mc *storepb.MatcherConverter) ProxyStoreOpti
 // WithBlockedMetricPatterns returns a ProxyStoreOption that sets the blocked metric patterns.
 func WithBlockedMetricPatterns(patterns []string) ProxyStoreOption {
 	return func(s *ProxyStore) {
-		s.blockedMetricPatterns = patterns
+		s.blockedMetricPatterns = radix.New()
+		for _, pattern := range patterns {
+			if pattern != "" {
+				s.blockedMetricPatterns.Insert(pattern, pattern)
+			}
+		}
 	}
 }
 
@@ -845,19 +851,12 @@ func LabelSetsMatch(matchers []*labels.Matcher, lset ...labels.Labels) bool {
 
 // matchesBlockedPattern checks if a metric name matches any of the blocked patterns.
 func (s *ProxyStore) matchesBlockedPattern(metricName string) bool {
-	if len(s.blockedMetricPatterns) == 0 {
+	if s.blockedMetricPatterns == nil {
 		return false
 	}
-
-	for _, pattern := range s.blockedMetricPatterns {
-		if pattern == "" {
-			continue
-		}
-		if strings.Contains(metricName, pattern) {
-			return true
-		}
-	}
-	return false
+	
+	_, _, found := s.blockedMetricPatterns.LongestPrefix(metricName)
+	return found
 }
 
 // hasSufficientFilters checks if the query has sufficient label filters to avoid high cardinality.
@@ -879,7 +878,7 @@ func (s *ProxyStore) countExactFilters(matchers []*labels.Matcher) int {
 // shouldBlockQuery determines if a query should be blocked based on metric patterns and label filters.
 // Returns (shouldBlock, metricName, matchedPattern)
 func (s *ProxyStore) shouldBlockQuery(matchers []*labels.Matcher) (bool, string, string) {
-	if len(s.blockedMetricPatterns) == 0 {
+	if s.blockedMetricPatterns == nil {
 		return false, "", ""
 	}
 
@@ -909,13 +908,18 @@ func (s *ProxyStore) shouldBlockQuery(matchers []*labels.Matcher) (bool, string,
 
 // getMatchedBlockedPattern returns the first pattern that matches the metric name, or empty string if none match.
 func (s *ProxyStore) getMatchedBlockedPattern(metricName string) string {
-	for _, pattern := range s.blockedMetricPatterns {
-		if pattern == "" {
-			continue
-		}
-		if strings.Contains(metricName, pattern) {
-			return pattern
-		}
+	if s.blockedMetricPatterns == nil {
+		return ""
+	}
+	
+	_, value, found := s.blockedMetricPatterns.LongestPrefix(metricName)
+	if !found {
+		return ""
+	}
+	
+	// The value stored is the original pattern
+	if pattern, ok := value.(string); ok {
+		return pattern
 	}
 	return ""
 }

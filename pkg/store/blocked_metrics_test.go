@@ -6,8 +6,24 @@ package store
 import (
 	"testing"
 
+	"github.com/armon/go-radix"
 	"github.com/prometheus/prometheus/model/labels"
 )
+
+// createRadixTreeFromPatterns creates a radix tree from a slice of patterns for testing.
+func createRadixTreeFromPatterns(patterns []string) *radix.Tree {
+	if len(patterns) == 0 {
+		return nil
+	}
+	
+	tree := radix.New()
+	for _, pattern := range patterns {
+		if pattern != "" {
+			tree.Insert(pattern, pattern)
+		}
+	}
+	return tree
+}
 
 func TestMatchesBlockedPattern(t *testing.T) {
 	tests := []struct {
@@ -46,12 +62,24 @@ func TestMatchesBlockedPattern(t *testing.T) {
 			metricName:     "high_cardinality_metric",
 			expectedResult: true,
 		},
+		{
+			name:           "prefix matching only - substring in middle should not match",
+			patterns:       []string{"cardinality"},
+			metricName:     "high_cardinality_metric",
+			expectedResult: false,
+		},
+		{
+			name:           "prefix matching - exact prefix should match",
+			patterns:       []string{"high_card"},
+			metricName:     "high_cardinality_metric",
+			expectedResult: true,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := &ProxyStore{
-				blockedMetricPatterns: tt.patterns,
+				blockedMetricPatterns: createRadixTreeFromPatterns(tt.patterns),
 			}
 			result := s.matchesBlockedPattern(tt.metricName)
 			if result != tt.expectedResult {
@@ -189,12 +217,32 @@ func TestShouldBlockQuery(t *testing.T) {
 			expectedMetricName:    "high_cardinality_metric",
 			expectedMatchedPattern: "high_cardinality",
 		},
+		{
+			name:     "prefix matching - substring in middle should not match",
+			patterns: []string{"cardinality"},
+			matchers: []*labels.Matcher{
+				labels.MustNewMatcher(labels.MatchEqual, "__name__", "high_cardinality_metric"),
+			},
+			expectedResult:        false,
+			expectedMetricName:    "",
+			expectedMatchedPattern: "",
+		},
+		{
+			name:     "prefix matching - prefix should match and block",
+			patterns: []string{"high_card"},
+			matchers: []*labels.Matcher{
+				labels.MustNewMatcher(labels.MatchEqual, "__name__", "high_cardinality_metric"),
+			},
+			expectedResult:        true,
+			expectedMetricName:    "high_cardinality_metric",
+			expectedMatchedPattern: "high_card",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := &ProxyStore{
-				blockedMetricPatterns: tt.patterns,
+				blockedMetricPatterns: createRadixTreeFromPatterns(tt.patterns),
 			}
 			shouldBlock, metricName, matchedPattern := s.shouldBlockQuery(tt.matchers)
 			if shouldBlock != tt.expectedResult {
