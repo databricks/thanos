@@ -324,17 +324,17 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 	shouldBlock, metricName, matchedPattern := s.shouldBlockQuery(matchers)
 	if shouldBlock {
 		// Log the blocked query with structured logging
-		filterCount := s.countExactFilters(matchers)
+		filterCount := s.countAllFilters(matchers)
 		level.Warn(reqLogger).Log(
 			"msg", "query blocked due to high cardinality metric without sufficient filters",
 			"metric_name", metricName,
 			"matched_pattern", matchedPattern,
 			"filter_count", filterCount,
 		)
-		
+
 		// Increment metrics counter
 		s.metrics.blockedQueriesCount.WithLabelValues(metricName, matchedPattern).Inc()
-		
+
 		return status.Error(codes.InvalidArgument, errors.New("query blocked: metric matches blocked patterns and lacks sufficient label filters").Error())
 	}
 
@@ -854,21 +854,21 @@ func (s *ProxyStore) matchesBlockedPattern(metricName string) bool {
 	if s.blockedMetricPatterns == nil {
 		return false
 	}
-	
+
 	_, _, found := s.blockedMetricPatterns.LongestPrefix(metricName)
 	return found
 }
 
 // hasSufficientFilters checks if the query has sufficient label filters to avoid high cardinality.
 func (s *ProxyStore) hasSufficientFilters(matchers []*labels.Matcher) bool {
-	return s.countExactFilters(matchers) > 0
+	return s.countAllFilters(matchers) > 0
 }
 
-// countExactFilters counts non-__name__ matchers that are exact matches (not regex).
-func (s *ProxyStore) countExactFilters(matchers []*labels.Matcher) int {
+// countAllFilters counts non-__name__ matchers of any type (equality, regex, negation).
+func (s *ProxyStore) countAllFilters(matchers []*labels.Matcher) int {
 	filterCount := 0
 	for _, matcher := range matchers {
-		if matcher.Name != "__name__" && matcher.Type == labels.MatchEqual {
+		if matcher.Name != "__name__" {
 			filterCount++
 		}
 	}
@@ -911,12 +911,12 @@ func (s *ProxyStore) getMatchedBlockedPattern(metricName string) string {
 	if s.blockedMetricPatterns == nil {
 		return ""
 	}
-	
+
 	_, value, found := s.blockedMetricPatterns.LongestPrefix(metricName)
 	if !found {
 		return ""
 	}
-	
+
 	// The value stored is the original pattern
 	if pattern, ok := value.(string); ok {
 		return pattern
