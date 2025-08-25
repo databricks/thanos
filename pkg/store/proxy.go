@@ -341,6 +341,26 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 	var seriesCount int
 	requestStartTime := time.Now()
 	var hasTimeoutError bool
+	var grpcErrorCode codes.Code
+
+	// Helper function to extract gRPC error code from error
+	extractGRPCCode := func(err error) codes.Code {
+		if err == nil {
+			return codes.OK
+		}
+
+		if s, ok := status.FromError(err); ok {
+			return s.Code()
+		}
+
+		// Check for specific timeout patterns
+		if strings.Contains(err.Error(), "failed to receive any data in") {
+			return codes.DeadlineExceeded
+		}
+
+		// Default for unknown errors
+		return codes.Unknown
+	}
 
 	// We may arrive here either via the promql engine
 	// or as a result of a grpc call in layered queries
@@ -443,22 +463,40 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 	defer func() {
 		requestDuration := time.Since(requestStartTime)
 
+		// Set gRPC error code based on context state if we haven't captured one yet
+		if grpcErrorCode == codes.OK && ctx.Err() != nil {
+			if ctx.Err() == context.DeadlineExceeded {
+				grpcErrorCode = codes.DeadlineExceeded
+			} else if ctx.Err() == context.Canceled {
+				grpcErrorCode = codes.Canceled
+			}
+		}
+
 		// Log if request timed out (check for timeout error patterns or context cancellation)
 		if (hasTimeoutError || ctx.Err() == context.Canceled) && metricName != "" {
-			level.Warn(reqLogger).Log(
+			logArgs := []interface{}{
 				"msg", "high cardinality metric query timed out",
 				"metric_name", metricName,
 				"duration", requestDuration,
-				"series_returned", seriesCount,
-			)
+			}
+
+			// Add either series_returned or grpc_error_code (mutually exclusive)
+			if grpcErrorCode != codes.OK {
+				logArgs = append(logArgs, "grpc_error_code", grpcErrorCode.String())
+			} else {
+				logArgs = append(logArgs, "series_returned", seriesCount)
+			}
+
+			level.Warn(reqLogger).Log(logArgs...)
 		}
 
 		// Log if high number of series returned (threshold: 10,000+ series)
-		if seriesCount > 10000 && metricName != "" {
+		// Only log this for successful queries (no gRPC error)
+		if seriesCount > 10000 && metricName != "" && grpcErrorCode == codes.OK {
 			level.Warn(reqLogger).Log(
 				"msg", "high cardinality metric returned many series",
 				"metric_name", metricName,
-				"series_count", seriesCount,
+				"series_returned", seriesCount,
 				"duration", requestDuration,
 			)
 		}
@@ -469,9 +507,14 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 
 		respSet, err := newAsyncRespSet(ctx, st, r, s.responseTimeout, s.retrievalStrategy, &s.buffers, r.ShardInfo, reqLogger, s.metrics.emptyStreamResponses, s.lazyRetrievalMaxBufferedResponses)
 		if err != nil {
-			// Check if this is a timeout-related error
+			// Check if this is a timeout-related error and capture gRPC error code
 			if strings.Contains(err.Error(), "failed to receive any data in") {
 				hasTimeoutError = true
+			}
+
+			// Capture the most specific gRPC error code (prioritize this error over others)
+			if grpcErrorCode == codes.OK {
+				grpcErrorCode = extractGRPCCode(err)
 			}
 
 			level.Warn(s.logger).Log("msg", "Store failure", "group", st.GroupKey(), "replica", st.ReplicaKey(), "err", err)
@@ -523,6 +566,11 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 			// Check if this warning contains a timeout-related error
 			if strings.Contains(warning, "failed to receive any data in") {
 				hasTimeoutError = true
+			}
+
+			// Capture gRPC error code from warning if we haven't captured one yet
+			if grpcErrorCode == codes.OK {
+				grpcErrorCode = extractGRPCCode(errors.New(warning))
 			}
 
 			level.Error(s.logger).Log("msg", "Store failure with warning", "warning", warning)
