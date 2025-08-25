@@ -338,6 +338,11 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 		return status.Error(codes.InvalidArgument, errors.New("query blocked: metric matches blocked patterns and lacks sufficient label filters").Error())
 	}
 
+	// Track metrics for potential logging of high-cardinality queries
+	var seriesCount int
+	requestStartTime := time.Now()
+	var hasTimeoutError bool
+
 	// We may arrive here either via the promql engine
 	// or as a result of a grpc call in layered queries
 	ctx := srv.Context()
@@ -434,11 +439,42 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 		}
 	}
 	defer logGroupReplicaErrors()
+
+	// Defer function for logging high-cardinality queries that timeout or return many series
+	defer func() {
+		requestDuration := time.Since(requestStartTime)
+
+		// Log if request timed out (check for timeout error patterns or context cancellation)
+		if (hasTimeoutError || ctx.Err() == context.Canceled) && metricName != "" {
+			level.Warn(reqLogger).Log(
+				"msg", "high cardinality metric query timed out",
+				"metric_name", metricName,
+				"duration", requestDuration,
+				"series_returned", seriesCount,
+			)
+		}
+
+		// Log if high number of series returned (threshold: 10,000+ series)
+		if seriesCount > 10000 && metricName != "" {
+			level.Warn(reqLogger).Log(
+				"msg", "high cardinality metric returned many series",
+				"metric_name", metricName,
+				"series_count", seriesCount,
+				"duration", requestDuration,
+			)
+		}
+	}()
+
 	for _, st := range stores {
 		st := st
 
 		respSet, err := newAsyncRespSet(ctx, st, r, s.responseTimeout, s.retrievalStrategy, &s.buffers, r.ShardInfo, reqLogger, s.metrics.emptyStreamResponses, s.lazyRetrievalMaxBufferedResponses)
 		if err != nil {
+			// Check if this is a timeout-related error
+			if strings.Contains(err.Error(), "failed to receive any data in") {
+				hasTimeoutError = true
+			}
+
 			level.Warn(s.logger).Log("msg", "Store failure", "group", st.GroupKey(), "replica", st.ReplicaKey(), "err", err)
 			s.metrics.storeFailureCount.WithLabelValues(st.GroupKey(), st.ReplicaKey()).Inc()
 			bumpCounter(st.GroupKey(), st.ReplicaKey(), failedStores)
@@ -475,6 +511,7 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 	var firstWarning *string
 	for respHeap.Next() {
 		i++
+		seriesCount = i // Update our tracking variable
 		if r.Limit > 0 && i > int(r.Limit) {
 			break
 		}
@@ -483,6 +520,12 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 		if resp.GetWarning() != "" {
 			maxWarningBytes := 2000
 			warning := resp.GetWarning()[:min(maxWarningBytes, len(resp.GetWarning()))]
+
+			// Check if this warning contains a timeout-related error
+			if strings.Contains(warning, "failed to receive any data in") {
+				hasTimeoutError = true
+			}
+
 			level.Error(s.logger).Log("msg", "Store failure with warning", "warning", warning)
 			// Don't have group/replica keys here, so we can't attribute the warning to a specific store.
 			s.metrics.storeFailureCount.WithLabelValues("", "").Inc()
