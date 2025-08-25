@@ -131,7 +131,7 @@ func newProxyStoreMetrics(reg prometheus.Registerer) *proxyStoreMetrics {
 	m.blockedQueriesCount = promauto.With(reg).NewCounterVec(prometheus.CounterOpts{
 		Name: "thanos_proxy_store_blocked_queries_total",
 		Help: "Total number of queries blocked due to high cardinality metrics without sufficient filters.",
-	}, []string{"metric_name", "matched_pattern"})
+	}, []string{"metric_name"})
 
 	return &m
 }
@@ -321,19 +321,18 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 	}
 
 	// Check if the query should be blocked due to insufficient filters
-	shouldBlock, metricName, matchedPattern := s.shouldBlockQuery(matchers)
+	shouldBlock, metricName, _ := s.shouldBlockQuery(matchers)
 	if shouldBlock {
 		// Log the blocked query with structured logging
 		filterCount := s.countAllFilters(matchers)
 		level.Warn(reqLogger).Log(
 			"msg", "query blocked due to high cardinality metric without sufficient filters",
 			"metric_name", metricName,
-			"matched_pattern", matchedPattern,
 			"filter_count", filterCount,
 		)
 
 		// Increment metrics counter
-		s.metrics.blockedQueriesCount.WithLabelValues(metricName, matchedPattern).Inc()
+		s.metrics.blockedQueriesCount.WithLabelValues(metricName).Inc()
 
 		return status.Error(codes.InvalidArgument, errors.New("query blocked: metric matches blocked patterns and lacks sufficient label filters").Error())
 	}
