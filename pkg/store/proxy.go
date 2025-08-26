@@ -334,7 +334,7 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 		// Increment metrics counter
 		s.metrics.blockedQueriesCount.WithLabelValues(metricName).Inc()
 
-		return status.Error(codes.InvalidArgument, fmt.Errorf("query blocked: metric '%s' matches blocked pattern '%s' and lacks sufficient label filters", metricName, matchedPattern).Error())
+		return status.Error(codes.InvalidArgument, fmt.Errorf("query blocked: high cardinality metric '%s' matches blocked pattern '%s', please add proper filters to reduce the amount of data to fetch", metricName, matchedPattern).Error())
 	}
 
 	// Track metrics for potential logging of high-cardinality queries
