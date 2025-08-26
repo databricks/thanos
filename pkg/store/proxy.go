@@ -321,7 +321,7 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 	}
 
 	// Check if the query should be blocked due to insufficient filters
-	shouldBlock, metricName, _ := s.shouldBlockQuery(matchers)
+	shouldBlock, metricName, matchedPattern := s.shouldBlockQuery(matchers)
 	if shouldBlock {
 		// Log the blocked query with structured logging
 		filterCount := s.countAllFilters(matchers)
@@ -334,7 +334,7 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 		// Increment metrics counter
 		s.metrics.blockedQueriesCount.WithLabelValues(metricName).Inc()
 
-		return status.Error(codes.InvalidArgument, errors.New("query blocked: metric matches blocked patterns and lacks sufficient label filters").Error())
+		return status.Error(codes.InvalidArgument, fmt.Errorf("query blocked: metric '%s' matches blocked pattern '%s' and lacks sufficient label filters", metricName, matchedPattern).Error())
 	}
 
 	// Track metrics for potential logging of high-cardinality queries
