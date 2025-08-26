@@ -1068,7 +1068,7 @@ func TestProxyStore_Series(t *testing.T) {
 				},
 			},
 			blockedPatterns: []string{"high_cardinality"},
-			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: metric matches blocked patterns and lacks sufficient label filters"),
+			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: high cardinality metric 'high_cardinality_metric' matches blocked pattern 'high_cardinality', please add proper filters to reduce the amount of data to fetch"),
 		},
 		{
 			title: "blocked query: metric matches pattern but has sufficient filters - should succeed",
@@ -1233,7 +1233,7 @@ func TestProxyStore_Series(t *testing.T) {
 				},
 			},
 			blockedPatterns: []string{"high_cardinality", "another_pattern"},
-			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: metric matches blocked patterns and lacks sufficient label filters"),
+			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: high cardinality metric 'high_cardinality_metric' matches blocked pattern 'high_cardinality', please add proper filters to reduce the amount of data to fetch"),
 		},
 		{
 			title: "blocked query: multiple blocked patterns - second pattern matches",
@@ -1256,7 +1256,7 @@ func TestProxyStore_Series(t *testing.T) {
 				},
 			},
 			blockedPatterns: []string{"high_cardinality", "another_pattern"},
-			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: metric matches blocked patterns and lacks sufficient label filters"),
+			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: high cardinality metric 'another_pattern_metric' matches blocked pattern 'another_pattern', please add proper filters to reduce the amount of data to fetch"),
 		},
 		{
 			title: "not blocked query: multiple exact filters should be allowed",
@@ -1395,7 +1395,7 @@ func TestProxyStore_Series(t *testing.T) {
 				},
 			},
 			blockedPatterns: []string{"high", "high_cardinality", "high_cardinality_detailed"},
-			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: metric matches blocked patterns and lacks sufficient label filters"),
+			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: high cardinality metric 'high_cardinality_detailed_metric' matches blocked pattern 'high_cardinality_detailed', please add proper filters to reduce the amount of data to fetch"),
 		},
 		{
 			title: "not blocked query: no prefix match",
