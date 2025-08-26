@@ -939,16 +939,6 @@ func LabelSetsMatch(matchers []*labels.Matcher, lset ...labels.Labels) bool {
 	return false
 }
 
-// matchesBlockedPattern checks if a metric name matches any of the blocked patterns.
-func (s *ProxyStore) matchesBlockedPattern(metricName string) bool {
-	if s.blockedMetricPatterns == nil {
-		return false
-	}
-
-	_, _, found := s.blockedMetricPatterns.LongestPrefix(metricName)
-	return found
-}
-
 // hasSufficientFilters checks if the query has sufficient label filters to avoid high cardinality.
 func (s *ProxyStore) hasSufficientFilters(matchers []*labels.Matcher) bool {
 	return s.countAllFilters(matchers) > 0
@@ -966,7 +956,7 @@ func (s *ProxyStore) countAllFilters(matchers []*labels.Matcher) int {
 }
 
 // shouldBlockQuery determines if a query should be blocked based on metric patterns and label filters.
-// Returns (shouldBlock, metricName, matchedPattern)
+// Returns (shouldBlock, metricName, matchedPattern).
 func (s *ProxyStore) shouldBlockQuery(matchers []*labels.Matcher) (bool, string, string) {
 	if s.blockedMetricPatterns == nil {
 		return false, "", ""
