@@ -254,7 +254,7 @@ func registerQuery(app *extkingpin.App) {
 	grpcStoreClientKeepAlivePingInterval := extkingpin.ModelDuration(cmd.Flag("query.grcp-store-client-keep-alive-ping-interval", "This value defines how often a store client sends a keepalive ping on an established gRPC stream. 0 means not to set. NB: a client is keeping a long‐running gRPC stream open. It still has active RPCs on the wire—even if Recv() is not called in a while. Setting PermitWithoutStream=false only stops pings when no streams exist; it does not suppress pings during an open stream").
 		Default("0s"))
 
-	blockQueryMetricsWithoutFilter := cmd.Flag("query.block-query-metrics-without-filter", "Comma-separated list of metric patterns to block queries without sufficient label filters. Helps prevent high-cardinality metric queries.").Default("prometheus_,node_, kube_").String()
+	blockQueryMetricsWithoutFilter := cmd.Flag("query.block-query-metrics-without-filter", "Comma-separated list of metric patterns to block queries without sufficient label filters. Helps prevent high-cardinality metric queries.").Default("").String()
 
 	var storeRateLimits store.SeriesSelectLimits
 	storeRateLimits.RegisterFlags(cmd)
