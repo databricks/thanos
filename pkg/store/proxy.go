@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -103,7 +104,8 @@ type ProxyStore struct {
 	enableDedup                       bool
 	matcherConverter                  *storepb.MatcherConverter
 	lazyRetrievalMaxBufferedResponses int
-	blockedMetricPatterns             *radix.Tree
+	blockedMetricPrefixes             *radix.Tree
+	blockedMetricExacts               map[string]struct{}
 }
 
 type proxyStoreMetrics struct {
@@ -186,12 +188,30 @@ func WithProxyStoreMatcherConverter(mc *storepb.MatcherConverter) ProxyStoreOpti
 }
 
 // WithBlockedMetricPatterns returns a ProxyStoreOption that sets the blocked metric patterns.
+// It parses input patterns to extract prefixes (like "kube_", "envoy_") using regex
+// and stores them in a radix tree for efficient prefix matching. Exact patterns
+// (like "up") are stored in a set for whole match checking.
 func WithBlockedMetricPatterns(patterns []string) ProxyStoreOption {
 	return func(s *ProxyStore) {
-		s.blockedMetricPatterns = radix.New()
+		s.blockedMetricPrefixes = radix.New()
+		s.blockedMetricExacts = make(map[string]struct{})
+
+		// Regex to match clear prefix patterns: "kube_*", "envoy_", "prometheus_*" (end with _ or _*)
+		clearPrefixPattern := regexp.MustCompile(`^([a-zA-Z_][a-zA-Z0-9_]*_)\*?$`)
+
 		for _, pattern := range patterns {
-			if pattern != "" {
-				s.blockedMetricPatterns.Insert(pattern, pattern)
+			if pattern == "" {
+				continue
+			}
+
+			// Always store as exact match
+			s.blockedMetricExacts[pattern] = struct{}{}
+
+			// Only add to prefix tree if pattern already ends with underscore
+			if matches := clearPrefixPattern.FindStringSubmatch(pattern); len(matches) > 1 {
+				// Extract the prefix (everything up to and including the last _)
+				prefix := matches[1]
+				s.blockedMetricPrefixes.Insert(prefix, pattern)
 			}
 		}
 	}
@@ -958,7 +978,7 @@ func (s *ProxyStore) countAllFilters(matchers []*labels.Matcher) int {
 // shouldBlockQuery determines if a query should be blocked based on metric patterns and label filters.
 // Returns (shouldBlock, metricName, matchedPattern).
 func (s *ProxyStore) shouldBlockQuery(matchers []*labels.Matcher) (bool, string, string) {
-	if s.blockedMetricPatterns == nil {
+	if s.blockedMetricPrefixes == nil && s.blockedMetricExacts == nil {
 		return false, "", ""
 	}
 
@@ -987,19 +1007,25 @@ func (s *ProxyStore) shouldBlockQuery(matchers []*labels.Matcher) (bool, string,
 }
 
 // getMatchedBlockedPattern returns the first pattern that matches the metric name, or empty string if none match.
+// It first checks for exact matches, then checks for prefix matches in the radix tree.
 func (s *ProxyStore) getMatchedBlockedPattern(metricName string) string {
-	if s.blockedMetricPatterns == nil {
-		return ""
+	// First check for exact matches
+	if s.blockedMetricExacts != nil {
+		if _, found := s.blockedMetricExacts[metricName]; found {
+			return metricName
+		}
 	}
 
-	_, value, found := s.blockedMetricPatterns.LongestPrefix(metricName)
-	if !found {
-		return ""
+	// Then check for prefix matches
+	if s.blockedMetricPrefixes != nil {
+		_, value, found := s.blockedMetricPrefixes.LongestPrefix(metricName)
+		if found {
+			if originalPattern, ok := value.(string); ok {
+				// The radix tree key is the prefix, but we return the original pattern
+				return originalPattern
+			}
+		}
 	}
 
-	// The value stored is the original pattern
-	if pattern, ok := value.(string); ok {
-		return pattern
-	}
 	return ""
 }

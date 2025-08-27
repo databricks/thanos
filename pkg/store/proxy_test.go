@@ -1067,8 +1067,8 @@ func TestProxyStore_Series(t *testing.T) {
 					{Name: "__name__", Value: "high_cardinality_metric", Type: storepb.LabelMatcher_EQ},
 				},
 			},
-			blockedPatterns: []string{"high_cardinality"},
-			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: high cardinality metric 'high_cardinality_metric' matches blocked pattern 'high_cardinality', please add proper filters to reduce the amount of data to fetch"),
+			blockedPatterns: []string{"high_cardinality_"},
+			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: high cardinality metric 'high_cardinality_metric' matches blocked pattern 'high_cardinality_', please add proper filters to reduce the amount of data to fetch"),
 		},
 		{
 			title: "blocked query: metric matches pattern but has sufficient filters - should succeed",
@@ -1091,7 +1091,7 @@ func TestProxyStore_Series(t *testing.T) {
 					{Name: "job", Value: "my_job", Type: storepb.LabelMatcher_EQ},
 				},
 			},
-			blockedPatterns: []string{"high_cardinality"},
+			blockedPatterns: []string{"high_cardinality_"},
 			expectedSeries: []rawSeries{
 				{
 					lset:   labels.FromStrings("__name__", "high_cardinality_metric", "job", "my_job"),
@@ -1120,7 +1120,7 @@ func TestProxyStore_Series(t *testing.T) {
 					{Name: "job", Value: ".*", Type: storepb.LabelMatcher_RE},
 				},
 			},
-			blockedPatterns: []string{"high_cardinality"},
+			blockedPatterns: []string{"high_cardinality_"},
 			expectedSeries: []rawSeries{
 				{
 					lset:   labels.FromStrings("__name__", "high_cardinality_metric", "job", "my_job"),
@@ -1148,7 +1148,7 @@ func TestProxyStore_Series(t *testing.T) {
 					{Name: "__name__", Value: "low_cardinality_metric", Type: storepb.LabelMatcher_EQ},
 				},
 			},
-			blockedPatterns: []string{"high_cardinality"},
+			blockedPatterns: []string{"high_cardinality_"},
 			expectedSeries: []rawSeries{
 				{
 					lset:   labels.FromStrings("__name__", "low_cardinality_metric"),
@@ -1176,7 +1176,7 @@ func TestProxyStore_Series(t *testing.T) {
 					{Name: "job", Value: "my_job", Type: storepb.LabelMatcher_EQ},
 				},
 			},
-			blockedPatterns: []string{"high_cardinality"},
+			blockedPatterns: []string{"high_cardinality_"},
 			expectedSeries: []rawSeries{
 				{
 					lset:   labels.FromStrings("job", "my_job"),
@@ -1204,7 +1204,7 @@ func TestProxyStore_Series(t *testing.T) {
 					{Name: "__name__", Value: "high_.*", Type: storepb.LabelMatcher_RE},
 				},
 			},
-			blockedPatterns: []string{"high_cardinality"},
+			blockedPatterns: []string{"high_cardinality_"},
 			expectedSeries: []rawSeries{
 				{
 					lset:   labels.FromStrings("__name__", "high_cardinality_metric"),
@@ -1232,8 +1232,8 @@ func TestProxyStore_Series(t *testing.T) {
 					{Name: "__name__", Value: "high_cardinality_metric", Type: storepb.LabelMatcher_EQ},
 				},
 			},
-			blockedPatterns: []string{"high_cardinality", "another_pattern"},
-			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: high cardinality metric 'high_cardinality_metric' matches blocked pattern 'high_cardinality', please add proper filters to reduce the amount of data to fetch"),
+			blockedPatterns: []string{"high_cardinality_", "another_pattern_"},
+			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: high cardinality metric 'high_cardinality_metric' matches blocked pattern 'high_cardinality_', please add proper filters to reduce the amount of data to fetch"),
 		},
 		{
 			title: "blocked query: multiple blocked patterns - second pattern matches",
@@ -1255,8 +1255,8 @@ func TestProxyStore_Series(t *testing.T) {
 					{Name: "__name__", Value: "another_pattern_metric", Type: storepb.LabelMatcher_EQ},
 				},
 			},
-			blockedPatterns: []string{"high_cardinality", "another_pattern"},
-			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: high cardinality metric 'another_pattern_metric' matches blocked pattern 'another_pattern', please add proper filters to reduce the amount of data to fetch"),
+			blockedPatterns: []string{"high_cardinality_", "another_pattern_"},
+			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: high cardinality metric 'another_pattern_metric' matches blocked pattern 'another_pattern_', please add proper filters to reduce the amount of data to fetch"),
 		},
 		{
 			title: "not blocked query: multiple exact filters should be allowed",
@@ -1280,7 +1280,7 @@ func TestProxyStore_Series(t *testing.T) {
 					{Name: "instance", Value: "localhost", Type: storepb.LabelMatcher_EQ},
 				},
 			},
-			blockedPatterns: []string{"high_cardinality"},
+			blockedPatterns: []string{"high_cardinality_"},
 			expectedSeries: []rawSeries{
 				{
 					lset:   labels.FromStrings("__name__", "high_cardinality_metric", "job", "my_job", "instance", "localhost"),
@@ -1309,7 +1309,7 @@ func TestProxyStore_Series(t *testing.T) {
 					{Name: "job", Value: "unwanted_job", Type: storepb.LabelMatcher_NEQ},
 				},
 			},
-			blockedPatterns: []string{"high_cardinality"},
+			blockedPatterns: []string{"high_cardinality_"},
 			expectedSeries: []rawSeries{
 				{
 					lset:   labels.FromStrings("__name__", "high_cardinality_metric", "job", "my_job"),
@@ -1338,7 +1338,7 @@ func TestProxyStore_Series(t *testing.T) {
 					{Name: "job", Value: "unwanted.*", Type: storepb.LabelMatcher_NRE},
 				},
 			},
-			blockedPatterns: []string{"high_cardinality"},
+			blockedPatterns: []string{"high_cardinality_"},
 			expectedSeries: []rawSeries{
 				{
 					lset:   labels.FromStrings("__name__", "high_cardinality_metric", "job", "my_job"),
@@ -1394,8 +1394,8 @@ func TestProxyStore_Series(t *testing.T) {
 					{Name: "__name__", Value: "high_cardinality_detailed_metric", Type: storepb.LabelMatcher_EQ},
 				},
 			},
-			blockedPatterns: []string{"high", "high_cardinality", "high_cardinality_detailed"},
-			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: high cardinality metric 'high_cardinality_detailed_metric' matches blocked pattern 'high_cardinality_detailed', please add proper filters to reduce the amount of data to fetch"),
+			blockedPatterns: []string{"high_", "high_cardinality_", "high_cardinality_detailed_"},
+			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: high cardinality metric 'high_cardinality_detailed_metric' matches blocked pattern 'high_cardinality_detailed_', please add proper filters to reduce the amount of data to fetch"),
 		},
 		{
 			title: "not blocked query: no prefix match",
