@@ -196,22 +196,27 @@ func WithBlockedMetricPatterns(patterns []string) ProxyStoreOption {
 		s.blockedMetricPrefixes = radix.New()
 		s.blockedMetricExacts = make(map[string]struct{})
 
-		// Regex to match clear prefix patterns: "kube_*", "envoy_", "prometheus_*" (end with _ or _*)
-		clearPrefixPattern := regexp.MustCompile(`^([a-zA-Z_][a-zA-Z0-9_]*_)\*?$`)
+		// Regex to match patterns ending with * (wildcard patterns)
+		starPattern := regexp.MustCompile(`^(.+)\*$`)
+		// Regex to match patterns ending with _ (underscore prefix patterns)
+		underscorePattern := regexp.MustCompile(`^([a-zA-Z_][a-zA-Z0-9_]*_)$`)
 
 		for _, pattern := range patterns {
 			if pattern == "" {
 				continue
 			}
 
-			// Always store as exact match
-			s.blockedMetricExacts[pattern] = struct{}{}
-
-			// Only add to prefix tree if pattern already ends with underscore
-			if matches := clearPrefixPattern.FindStringSubmatch(pattern); len(matches) > 1 {
-				// Extract the prefix (everything up to and including the last _)
-				prefix := matches[1]
+			// Check if pattern ends with * (wildcard behavior)
+			if starPattern.MatchString(pattern) {
+				// Extract prefix (everything before the *)
+				prefix := pattern[:len(pattern)-1] // Remove the trailing *
 				s.blockedMetricPrefixes.Insert(prefix, pattern)
+			} else if underscorePattern.MatchString(pattern) {
+				// Pattern ends with _ (like "kube_"), treat as prefix
+				s.blockedMetricPrefixes.Insert(pattern, pattern)
+			} else {
+				// No * or _ at the end, store as exact match only
+				s.blockedMetricExacts[pattern] = struct{}{}
 			}
 		}
 	}
