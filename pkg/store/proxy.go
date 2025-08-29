@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -188,7 +187,7 @@ func WithProxyStoreMatcherConverter(mc *storepb.MatcherConverter) ProxyStoreOpti
 }
 
 // WithBlockedMetricPatterns returns a ProxyStoreOption that sets the blocked metric patterns.
-// It parses input patterns to extract prefixes (like "kube_", "envoy_") using regex
+// It parses input patterns to extract prefixes (like "kube_", "envoy_") by checking suffix characters
 // and stores them in a radix tree for efficient prefix matching. Exact patterns
 // (like "up") are stored in a set for whole match checking.
 func WithBlockedMetricPatterns(patterns []string) ProxyStoreOption {
@@ -196,27 +195,25 @@ func WithBlockedMetricPatterns(patterns []string) ProxyStoreOption {
 		s.blockedMetricPrefixes = radix.New()
 		s.blockedMetricExacts = make(map[string]struct{})
 
-		// Regex to match patterns ending with * (wildcard patterns)
-		starPattern := regexp.MustCompile(`^(.+)\*$`)
-		// Regex to match patterns ending with _ (underscore prefix patterns)
-		underscorePattern := regexp.MustCompile(`^([a-zA-Z_][a-zA-Z0-9_]*_)$`)
-
 		for _, pattern := range patterns {
 			if pattern == "" {
 				continue
 			}
 
-			// Check if pattern ends with * (wildcard behavior)
-			if starPattern.MatchString(pattern) {
-				// Extract prefix (everything before the *)
-				prefix := pattern[:len(pattern)-1] // Remove the trailing *
-				s.blockedMetricPrefixes.Insert(prefix, pattern)
-			} else if underscorePattern.MatchString(pattern) {
-				// Pattern ends with _ (like "kube_"), treat as prefix
-				s.blockedMetricPrefixes.Insert(pattern, pattern)
-			} else {
-				// No * or _ at the end, store as exact match only
-				s.blockedMetricExacts[pattern] = struct{}{}
+			// Check if pattern ends with * or _ for prefix matching
+			if len(pattern) > 0 {
+				lastChar := pattern[len(pattern)-1]
+				if lastChar == '*' {
+					// Extract prefix (everything before the *)
+					prefix := pattern[:len(pattern)-1]
+					s.blockedMetricPrefixes.Insert(prefix, pattern)
+				} else if lastChar == '_' {
+					// Pattern ends with _ (like "kube_"), treat as prefix
+					s.blockedMetricPrefixes.Insert(pattern, pattern)
+				} else {
+					// No * or _ at the end, store as exact match only
+					s.blockedMetricExacts[pattern] = struct{}{}
+				}
 			}
 		}
 	}
