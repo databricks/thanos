@@ -7,11 +7,13 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/armon/go-radix"
+	"github.com/cespare/xxhash/v2"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/pkg/errors"
@@ -105,6 +107,8 @@ type ProxyStore struct {
 	lazyRetrievalMaxBufferedResponses int
 	blockedMetricPrefixes             *radix.Tree
 	blockedMetricExacts               map[string]struct{}
+	metricNameShards                  int
+	tenantLabelName                   string
 }
 
 type proxyStoreMetrics struct {
@@ -183,6 +187,19 @@ func WithoutDedup() ProxyStoreOption {
 func WithProxyStoreMatcherConverter(mc *storepb.MatcherConverter) ProxyStoreOption {
 	return func(s *ProxyStore) {
 		s.matcherConverter = mc
+	}
+}
+
+// WithMetricNameShards returns a ProxyStoreOption that enables metric name sharding optimization.
+func WithMetricNameShards(shards int) ProxyStoreOption {
+	return func(s *ProxyStore) {
+		s.metricNameShards = shards
+	}
+}
+
+func WithTenantLabelName(labelName string) ProxyStoreOption {
+	return func(s *ProxyStore) {
+		s.tenantLabelName = labelName
 	}
 }
 
@@ -851,6 +868,18 @@ func (s *ProxyStore) matchingStores(ctx context.Context, minTime, maxTime int64,
 		storeLabelSets []labels.Labels
 		storeDebugMsgs []string
 	)
+
+	// Extract exact __name__ matcher for metric name sharding optimization
+	var exactMetricName string
+	if s.metricNameShards > 0 {
+		for _, matcher := range matchers {
+			if matcher.Name == "__name__" && matcher.Type == labels.MatchEqual {
+				exactMetricName = matcher.Value
+				break
+			}
+		}
+	}
+
 	for _, st := range s.stores() {
 		// We might be able to skip the store if its meta information indicates it cannot have series matching our query.
 		if ok, reason := storeMatches(ctx, s.debugLogging, st, minTime, maxTime, matchers...); !ok {
@@ -859,6 +888,17 @@ func (s *ProxyStore) matchingStores(ctx context.Context, minTime, maxTime int64,
 			}
 			continue
 		}
+
+		// Apply metric name sharding optimization
+		if exactMetricName != "" && s.metricNameShards > 0 {
+			if shouldSkipStoreForShard, reason := s.shouldSkipStoreForMetricShard(st, exactMetricName); shouldSkipStoreForShard {
+				if s.debugLogging {
+					storeDebugMsgs = append(storeDebugMsgs, fmt.Sprintf("Store %s filtered out due to metric name sharding: %v", st, reason))
+				}
+				continue
+			}
+		}
+
 		matches, extraMatchers := s.tsdbSelector.MatchLabelSets(st.LabelSets()...)
 		if !matches {
 			if s.debugLogging {
@@ -874,7 +914,52 @@ func (s *ProxyStore) matchingStores(ctx context.Context, minTime, maxTime int64,
 		}
 	}
 
+	// Log warning if metric name sharding is enabled but no matching shard found
+	if exactMetricName != "" && s.metricNameShards > 0 && len(stores) == 0 {
+		targetShard := xxhash.Sum64String(exactMetricName) % uint64(s.metricNameShards)
+		level.Warn(s.logger).Log("msg", "no TSDB found for metric name shard",
+			"metric", exactMetricName,
+			"target_shard", targetShard,
+			"total_shards", s.metricNameShards)
+	}
+
 	return stores, storeLabelSets, storeDebugMsgs
+}
+
+// shouldSkipStoreForMetricShard determines if a store should be skipped based on metric name sharding.
+// It extracts the tenant name from store's external labels and checks if the shard matches.
+func (s *ProxyStore) shouldSkipStoreForMetricShard(store Client, metricName string) (bool, string) {
+	// Hash the metric name using xxhash
+	hasher := xxhash.New()
+	hasher.WriteString(metricName)
+	hash := hasher.Sum64()
+	targetShard := hash % uint64(s.metricNameShards)
+
+	// Get the tenant name from store's external labels
+	labelSets := store.LabelSets()
+	for _, labelSet := range labelSets {
+		for _, label := range labelSet {
+			// Check for the configured tenant label name
+			if label.Name == s.tenantLabelName {
+				tenantName := label.Value
+				// Extract shard from tenant name (e.g., "pantheon-db-dp-35" -> 35)
+				if lastDash := strings.LastIndex(tenantName, "-"); lastDash != -1 {
+					shardStr := tenantName[lastDash+1:]
+					if shard, err := strconv.ParseUint(shardStr, 10, 64); err == nil {
+						if shard != targetShard {
+							return true, fmt.Sprintf("tenant shard %d does not match target shard %d for metric %s", shard, targetShard, metricName)
+						}
+						return false, ""
+					}
+				}
+				// If tenant name doesn't have shard suffix, don't skip (legacy tenant)
+				return false, ""
+			}
+		}
+	}
+
+	// If no tenant label found, don't skip the store
+	return false, ""
 }
 
 // storeMatches returns boolean if the given store may hold data for the given label matchers, time ranges and debug store matches gathered from context.
