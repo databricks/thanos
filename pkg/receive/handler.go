@@ -559,7 +559,7 @@ func (h *Handler) modifyTenantForMetricSharding(originalTenant string, ts *promp
 
 	// Hash the metric name using xxhash
 	hasher := xxhash.New()
-	hasher.WriteString(metricName)
+	_, _ = hasher.WriteString(metricName)
 	hash := hasher.Sum64()
 
 	shard := hash % uint64(h.metricNameShards)

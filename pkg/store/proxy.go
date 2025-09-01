@@ -931,7 +931,7 @@ func (s *ProxyStore) matchingStores(ctx context.Context, minTime, maxTime int64,
 func (s *ProxyStore) shouldSkipStoreForMetricShard(store Client, metricName string) (bool, string) {
 	// Hash the metric name using xxhash
 	hasher := xxhash.New()
-	hasher.WriteString(metricName)
+	_, _ = hasher.WriteString(metricName)
 	hash := hasher.Sum64()
 	targetShard := hash % uint64(s.metricNameShards)
 
