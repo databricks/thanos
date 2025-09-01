@@ -1207,7 +1207,7 @@ func (rc *receiveConfig) registerFlag(cmd extkingpin.FlagClause) {
 	rc.noUploadTenants = cmd.Flag("receive.no-upload-tenants", "Tenant IDs/patterns that should only store data locally (no object store upload). Supports exact matches (e.g., 'tenant1') and prefix patterns (e.g., 'prod-*'). Repeat this flag to specify multiple patterns.").Strings()
 	cmd.Flag("receive.lazy-retrieval-max-buffered-responses", "The lazy retrieval strategy can buffer up to this number of responses. This is to limit the memory usage. This flag takes effect only when the lazy retrieval strategy is enabled.").
 		Default("20").IntVar(&rc.lazyRetrievalMaxBufferedResponses)
-	cmd.Flag("receive.metric-name-shards", "When set and greater than 0 in RouterOnly mode, modifies tenant header to include hashring name and metric name hash shard. Format: {hashring-name}-{hash(metric_name) % shards}. This creates tenant sharding based on metric names.").
+	cmd.Flag("receive.metric-name-shards", "When set and greater than 0, enables metric name sharding. In RouterOnly mode, modifies tenant header to {hashring-name}-{hash(metric_name) % shards}. In IngestorOnly/RouterIngestor mode, optimizes query fan-out by only querying TSDBs matching the metric's shard. Disables cuckoo filter when enabled.").
 		Default("0").IntVar(&rc.metricNameShards)
 }
 

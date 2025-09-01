@@ -380,7 +380,7 @@ func (m *multiHashring) GetHashringName(tenant string) string {
 			}
 		}
 	}
-	
+
 	// This should never happen if properly configured
 	return ""
 }

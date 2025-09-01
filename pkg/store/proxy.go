@@ -938,23 +938,27 @@ func (s *ProxyStore) shouldSkipStoreForMetricShard(store Client, metricName stri
 	// Get the tenant name from store's external labels
 	labelSets := store.LabelSets()
 	for _, labelSet := range labelSets {
-		for _, label := range labelSet {
+		var tenantName string
+		labelSet.Range(func(label labels.Label) {
 			// Check for the configured tenant label name
 			if label.Name == s.tenantLabelName {
-				tenantName := label.Value
-				// Extract shard from tenant name (e.g., "pantheon-db-dp-35" -> 35)
-				if lastDash := strings.LastIndex(tenantName, "-"); lastDash != -1 {
-					shardStr := tenantName[lastDash+1:]
-					if shard, err := strconv.ParseUint(shardStr, 10, 64); err == nil {
-						if shard != targetShard {
-							return true, fmt.Sprintf("tenant shard %d does not match target shard %d for metric %s", shard, targetShard, metricName)
-						}
-						return false, ""
-					}
-				}
-				// If tenant name doesn't have shard suffix, don't skip (legacy tenant)
-				return false, ""
+				tenantName = label.Value
 			}
+		})
+
+		if tenantName != "" {
+			// Extract shard from tenant name (e.g., "pantheon-db-dp-35" -> 35)
+			if lastDash := strings.LastIndex(tenantName, "-"); lastDash != -1 {
+				shardStr := tenantName[lastDash+1:]
+				if shard, err := strconv.ParseUint(shardStr, 10, 64); err == nil {
+					if shard != targetShard {
+						return true, fmt.Sprintf("tenant shard %d does not match target shard %d for metric %s", shard, targetShard, metricName)
+					}
+					return false, ""
+				}
+			}
+			// If tenant name doesn't have shard suffix, don't skip (legacy tenant)
+			return false, ""
 		}
 	}
 
