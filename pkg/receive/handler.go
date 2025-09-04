@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cespare/xxhash/v2"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/gogo/protobuf/proto"
@@ -118,6 +119,7 @@ type Options struct {
 	Limiter                 *Limiter
 	AsyncForwardWorkerCount uint
 	ReplicationProtocol     ReplicationProtocol
+	MetricNameShards        int
 }
 
 // Handler serves a Prometheus remote write receiving HTTP endpoint.
@@ -144,7 +146,9 @@ type Handler struct {
 	writeTimeseriesError *prometheus.HistogramVec
 	writeE2eLatency      *prometheus.HistogramVec
 
-	Limiter *Limiter
+	Limiter           *Limiter
+	metricNameShards  int
+	tenantErrorsTotal *prometheus.CounterVec
 }
 
 func NewHandler(logger log.Logger, o *Options) *Handler {
@@ -187,8 +191,9 @@ func NewHandler(logger log.Logger, o *Options) *Handler {
 			workers,
 			o.ReplicationProtocol,
 			o.DialOpts...),
-		receiverMode: o.ReceiverMode,
-		Limiter:      o.Limiter,
+		receiverMode:     o.ReceiverMode,
+		Limiter:          o.Limiter,
+		metricNameShards: o.MetricNameShards,
 		forwardRequests: promauto.With(registerer).NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "thanos_receive_forward_requests_total",
@@ -248,6 +253,14 @@ func NewHandler(logger log.Logger, o *Options) *Handler {
 				Help:      "The end-to-end latency of write requests.",
 				Buckets:   []float64{1, 5, 10, 20, 30, 40, 50, 60, 90, 120, 300, 600, 900, 1200, 1800, 3600},
 			}, []string{"code", "tenant", "rollup"},
+		),
+		tenantErrorsTotal: promauto.With(registerer).NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: "thanos",
+				Subsystem: "receive",
+				Name:      "tenant_modification_errors_total",
+				Help:      "The number of errors encountered while modifying tenant headers for metric name sharding.",
+			}, []string{"reason"},
 		),
 	}
 
@@ -520,6 +533,40 @@ func isPreAgged(ts prompb.TimeSeries) bool {
 		}
 	}
 	return false
+}
+
+// getMetricName extracts the __name__ label value from a time series.
+func getMetricName(ts *prompb.TimeSeries) string {
+	for _, l := range ts.Labels {
+		if l.Name == "__name__" {
+			return l.Value
+		}
+	}
+	return ""
+}
+
+// modifyTenantForMetricSharding modifies the tenant string based on metric name sharding.
+// Returns the modified tenant string and any error encountered.
+func (h *Handler) modifyTenantForMetricSharding(originalTenant string, ts *prompb.TimeSeries, hashringName string) (string, error) {
+	if h.metricNameShards <= 0 || h.receiverMode != RouterOnly {
+		return originalTenant, nil
+	}
+
+	metricName := getMetricName(ts)
+	if metricName == "" {
+		h.tenantErrorsTotal.WithLabelValues("missing_metric_name").Inc()
+		return "", errors.New("time series missing __name__ label")
+	}
+
+	// Hash the metric name using xxhash
+	hasher := xxhash.New()
+	_, _ = hasher.WriteString(metricName)
+	hash := hasher.Sum64()
+
+	shard := hash % uint64(h.metricNameShards)
+	modifiedTenant := fmt.Sprintf("%s-%d", hashringName, shard)
+
+	return modifiedTenant, nil
 }
 
 func (h *Handler) receiveHTTP(w http.ResponseWriter, r *http.Request) {
@@ -937,6 +984,16 @@ func (h *Handler) distributeTimeseriesToReplicas(
 					newLabels.Labels(),
 				)
 			}
+		}
+
+		// Apply metric name sharding if enabled
+		if h.metricNameShards > 0 && h.receiverMode == RouterOnly {
+			hashringName := h.hashring.GetHashringName(tenant)
+			modifiedTenant, err := h.modifyTenantForMetricSharding(tenant, &ts, hashringName)
+			if err != nil {
+				return nil, nil, err
+			}
+			tenant = modifiedTenant
 		}
 
 		for _, rn := range replicas {

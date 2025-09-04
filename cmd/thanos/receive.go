@@ -148,8 +148,12 @@ func runReceive(
 	var enableGRPCReadinessInterceptor bool
 	for _, feature := range *conf.featureList {
 		if feature == metricNamesFilter {
-			multiTSDBOptions = append(multiTSDBOptions, receive.WithMetricNameFilterEnabled())
-			level.Info(logger).Log("msg", "metric name filter feature enabled")
+			if conf.metricNameShards > 0 {
+				level.Info(logger).Log("msg", "metric name filter feature disabled due to metric-name-shards being enabled")
+			} else {
+				multiTSDBOptions = append(multiTSDBOptions, receive.WithMetricNameFilterEnabled())
+				level.Info(logger).Log("msg", "metric name filter feature enabled")
+			}
 		}
 		if feature == grpcReadinessInterceptor {
 			enableGRPCReadinessInterceptor = true
@@ -313,6 +317,7 @@ func runReceive(
 		Limiter:                 limiter,
 		AsyncForwardWorkerCount: conf.asyncForwardWorkerCount,
 		ReplicationProtocol:     receive.ReplicationProtocol(conf.replicationProtocol),
+		MetricNameShards:        conf.metricNameShards,
 	})
 
 	{
@@ -436,6 +441,11 @@ func runReceive(
 		if matcherConverter != nil {
 			options = append(options, store.WithProxyStoreMatcherConverter(matcherConverter))
 		}
+		if conf.metricNameShards > 0 {
+			options = append(options, store.WithMetricNameShards(conf.metricNameShards))
+		}
+		// Pass tenant label name for metric name sharding
+		options = append(options, store.WithTenantLabelName(conf.tenantLabelName))
 
 		proxy := store.NewProxyStore(
 			logger,
@@ -1024,8 +1034,9 @@ type receiveConfig struct {
 	maxPendingGrpcWriteRequests       int
 	lazyRetrievalMaxBufferedResponses int
 
-	featureList     *[]string
-	noUploadTenants *[]string
+	featureList      *[]string
+	noUploadTenants  *[]string
+	metricNameShards int
 }
 
 func (rc *receiveConfig) registerFlag(cmd extkingpin.FlagClause) {
@@ -1196,6 +1207,8 @@ func (rc *receiveConfig) registerFlag(cmd extkingpin.FlagClause) {
 	rc.noUploadTenants = cmd.Flag("receive.no-upload-tenants", "Tenant IDs/patterns that should only store data locally (no object store upload). Supports exact matches (e.g., 'tenant1') and prefix patterns (e.g., 'prod-*'). Repeat this flag to specify multiple patterns.").Strings()
 	cmd.Flag("receive.lazy-retrieval-max-buffered-responses", "The lazy retrieval strategy can buffer up to this number of responses. This is to limit the memory usage. This flag takes effect only when the lazy retrieval strategy is enabled.").
 		Default("20").IntVar(&rc.lazyRetrievalMaxBufferedResponses)
+	cmd.Flag("receive.metric-name-shards", "When set and greater than 0, enables metric name sharding. In RouterOnly mode, modifies tenant header to {hashring-name}-{hash(metric_name) % shards}. In IngestorOnly/RouterIngestor mode, optimizes query fan-out by only querying TSDBs matching the metric's shard. Disables cuckoo filter when enabled.").
+		Default("0").IntVar(&rc.metricNameShards)
 }
 
 // determineMode returns the ReceiverMode that this receiver is configured to run in.

@@ -62,6 +62,8 @@ type Hashring interface {
 	// Nodes returns a sorted slice of nodes that are in this hashring. Addresses could be duplicated
 	// if, for example, the same address is used for multiple tenants in the multi-hashring.
 	Nodes() []Endpoint
+	// GetHashringName returns the hashring name for the given tenant. Returns empty string for single hashrings.
+	GetHashringName(tenant string) string
 }
 
 // SingleNodeHashring always returns the same node.
@@ -74,6 +76,10 @@ func (s SingleNodeHashring) Get(tenant string, ts *prompb.TimeSeries) (Endpoint,
 
 func (s SingleNodeHashring) Nodes() []Endpoint {
 	return []Endpoint{{Address: string(s), CapNProtoAddress: string(s)}}
+}
+
+func (s SingleNodeHashring) GetHashringName(tenant string) string {
+	return ""
 }
 
 // GetN implements the Hashring interface.
@@ -105,6 +111,10 @@ func newSimpleHashring(endpoints []Endpoint) (Hashring, error) {
 
 func (s simpleHashring) Nodes() []Endpoint {
 	return s
+}
+
+func (s simpleHashring) GetHashringName(tenant string) string {
+	return ""
 }
 
 // Get returns a target to handle the given tenant and time series.
@@ -180,6 +190,10 @@ func newKetamaHashring(endpoints []Endpoint, sectionsPerNode int, replicationFac
 
 func (k *ketamaHashring) Nodes() []Endpoint {
 	return k.endpoints
+}
+
+func (k *ketamaHashring) GetHashringName(tenant string) string {
+	return ""
 }
 
 func sizeOfLeastOccupiedAZ(azSpread map[string]int64) int64 {
@@ -278,9 +292,10 @@ func (t tenantSet) match(tenant string) (bool, error) {
 // Which hashring to use for a tenant is determined
 // by the tenants field of the hashring configuration.
 type multiHashring struct {
-	cache      map[string]Hashring
-	hashrings  []Hashring
-	tenantSets []tenantSet
+	cache         map[string]Hashring
+	hashrings     []Hashring
+	tenantSets    []tenantSet
+	hashringNames []string // Store hashring names corresponding to hashrings
 
 	// We need a mutex to guard concurrent access
 	// to the cache map, as this is both written to
@@ -333,6 +348,43 @@ func (m *multiHashring) Nodes() []Endpoint {
 	return m.nodes
 }
 
+// GetHashringName returns the hashring name for the given tenant.
+// Returns empty string if no specific hashring is found (uses default).
+func (m *multiHashring) GetHashringName(tenant string) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// Check if tenant is already cached
+	if _, ok := m.cache[tenant]; ok {
+		// Find which hashring this tenant maps to
+		for i, t := range m.tenantSets {
+			if t == nil {
+				// Default hashring
+				return m.hashringNames[i]
+			} else {
+				if found, _ := t.match(tenant); found {
+					return m.hashringNames[i]
+				}
+			}
+		}
+	}
+
+	// If not cached, check which hashring matches
+	for i, t := range m.tenantSets {
+		if t == nil {
+			// Default hashring matches everything
+			return m.hashringNames[i]
+		} else {
+			if found, _ := t.match(tenant); found {
+				return m.hashringNames[i]
+			}
+		}
+	}
+
+	// This should never happen if properly configured
+	return ""
+}
+
 // newMultiHashring creates a multi-tenant hashring for a given slice of
 // groups.
 // Which hashring to use for a tenant is determined
@@ -355,6 +407,7 @@ func NewMultiHashring(algorithm HashringAlgorithm, replicationFactor uint64, cfg
 		}
 		m.nodes = append(m.nodes, hashring.Nodes()...)
 		m.hashrings = append(m.hashrings, hashring)
+		m.hashringNames = append(m.hashringNames, h.Hashring)
 		var t map[string]tenantMatcher
 		if len(h.Tenants) != 0 {
 			t = make(map[string]tenantMatcher)
