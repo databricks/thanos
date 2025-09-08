@@ -6,6 +6,7 @@ package receive
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"path"
 	"path/filepath"
@@ -535,6 +536,11 @@ func (t *MultiTSDB) pruneTSDB(ctx context.Context, logger log.Logger, tenantInst
 
 	tdb := tenantTSDB.a.db
 	head := tdb.Head()
+	if head.MaxTime() == math.MinInt64 {
+		tenantTSDB.mtx.RUnlock()
+		level.Info(logger).Log("msg", "Pruning zombie tenant (never received data)", "maxTime", head.MaxTime())
+		return true, nil
+	}
 	if head.MaxTime() < 0 {
 		tenantTSDB.mtx.RUnlock()
 		return false, nil
