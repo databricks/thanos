@@ -28,6 +28,7 @@ import (
 	"github.com/prometheus/prometheus/tsdb"
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 
 	"github.com/efficientgo/core/testutil"
 
@@ -99,6 +100,7 @@ func TestProxyStore_Series(t *testing.T) {
 		req                *storepb.SeriesRequest
 		storeDebugMatchers [][]*labels.Matcher
 		blockedPatterns    []string
+		xSourceHeader      string // X-Source header value for blocking tests
 
 		expectedSeries      []rawSeries
 		expectedErr         error
@@ -1068,6 +1070,7 @@ func TestProxyStore_Series(t *testing.T) {
 				},
 			},
 			blockedPatterns: []string{"high_cardinality"},
+			xSourceHeader:   "Bronson",
 			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: high cardinality metric 'high_cardinality_metric' matches blocked pattern 'high_cardinality', please add proper filters to reduce the amount of data to fetch"),
 		},
 		{
@@ -1233,6 +1236,7 @@ func TestProxyStore_Series(t *testing.T) {
 				},
 			},
 			blockedPatterns: []string{"high_cardinality", "another_pattern"},
+			xSourceHeader:   "Bronson",
 			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: high cardinality metric 'high_cardinality_metric' matches blocked pattern 'high_cardinality', please add proper filters to reduce the amount of data to fetch"),
 		},
 		{
@@ -1256,6 +1260,7 @@ func TestProxyStore_Series(t *testing.T) {
 				},
 			},
 			blockedPatterns: []string{"high_cardinality", "another_pattern"},
+			xSourceHeader:   "Bronson",
 			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: high cardinality metric 'another_pattern_metric' matches blocked pattern 'another_pattern', please add proper filters to reduce the amount of data to fetch"),
 		},
 		{
@@ -1395,6 +1400,7 @@ func TestProxyStore_Series(t *testing.T) {
 				},
 			},
 			blockedPatterns: []string{"high", "high_cardinality", "high_cardinality_detailed"},
+			xSourceHeader:   "Bronson",
 			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: high cardinality metric 'high_cardinality_detailed_metric' matches blocked pattern 'high_cardinality_detailed', please add proper filters to reduce the amount of data to fetch"),
 		},
 		{
@@ -1457,6 +1463,11 @@ func TestProxyStore_Series(t *testing.T) {
 							ctx := context.Background()
 							if len(tc.storeDebugMatchers) > 0 {
 								ctx = context.WithValue(ctx, StoreMatcherKey, tc.storeDebugMatchers)
+							}
+							// Add X-Source header if specified for blocking tests
+							if tc.xSourceHeader != "" {
+								md := metadata.New(map[string]string{"x-source": tc.xSourceHeader})
+								ctx = metadata.NewIncomingContext(ctx, md)
 							}
 
 							s := newStoreSeriesServer(ctx)

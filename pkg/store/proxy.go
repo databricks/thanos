@@ -321,7 +321,7 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 	}
 
 	// Check if the query should be blocked due to insufficient filters
-	shouldBlock, metricName, matchedPattern := s.shouldBlockQuery(matchers)
+	shouldBlock, metricName, matchedPattern := s.shouldBlockQuery(srv.Context(), matchers)
 	if shouldBlock {
 		// Log the blocked query with structured logging
 		filterCount := s.countAllFilters(matchers)
@@ -956,9 +956,26 @@ func (s *ProxyStore) countAllFilters(matchers []*labels.Matcher) int {
 }
 
 // shouldBlockQuery determines if a query should be blocked based on metric patterns and label filters.
+// Only blocks queries from Bronson (identified by X-Source header).
 // Returns (shouldBlock, metricName, matchedPattern).
-func (s *ProxyStore) shouldBlockQuery(matchers []*labels.Matcher) (bool, string, string) {
+func (s *ProxyStore) shouldBlockQuery(ctx context.Context, matchers []*labels.Matcher) (bool, string, string) {
 	if s.blockedMetricPatterns == nil {
+		return false, "", ""
+	}
+
+	// Only apply blocking for Bronson requests (identified by X-Source header)
+	if md, ok := metadata.FromIncomingContext(ctx); ok {
+		if sources := md.Get("x-source"); len(sources) > 0 {
+			if sources[0] != "Bronson" {
+				// Not from Bronson, don't block
+				return false, "", ""
+			}
+		} else {
+			// No X-Source header, don't block
+			return false, "", ""
+		}
+	} else {
+		// No metadata context, don't block
 		return false, "", ""
 	}
 
