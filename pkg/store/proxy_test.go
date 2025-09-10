@@ -1453,8 +1453,8 @@ func TestProxyStore_Series(t *testing.T) {
 				},
 			},
 			blockedPatterns: []string{"up*"}, // wildcard pattern - broader than exact match
-		xSourceHeader:   "Bronson",
-		expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: high cardinality metric 'up' matches blocked pattern 'up*', please add proper filters to reduce the amount of data to fetch"),
+			xSourceHeader:   "Bronson",
+			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: high cardinality metric 'up' matches blocked pattern 'up*', please add proper filters to reduce the amount of data to fetch"),
 		},
 	} {
 		t.Run(tc.title, func(t *testing.T) {
