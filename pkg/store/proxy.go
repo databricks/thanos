@@ -980,7 +980,7 @@ func (s *ProxyStore) countAllFilters(matchers []*labels.Matcher) int {
 // shouldBlockQuery determines if a query should be blocked based on metric patterns and label filters.
 // Only blocks queries from Bronson (identified by X-Source header).
 // Returns (shouldBlock, metricName, matchedPattern).
-func (s *ProxyStore) shouldBlockQuery(matchers []*labels.Matcher) (bool, string, string) {
+func (s *ProxyStore) shouldBlockQuery(ctx context.Context, matchers []*labels.Matcher) (bool, string, string) {
 	if s.blockedMetricPrefixes == nil && s.blockedMetricExacts == nil {
 		return false, "", ""
 	}
