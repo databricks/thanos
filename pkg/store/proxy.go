@@ -980,7 +980,7 @@ func (s *ProxyStore) countAllFilters(matchers []*labels.Matcher) int {
 	return filterCount
 }
 
-// isBronsonRequest checks if the request is from Bronson by examining the X-Source header
+// isBronsonRequest checks if the request is from Bronson by examining the X-Source header.
 func (s *ProxyStore) isBronsonRequest(ctx context.Context) bool {
 	if md, ok := metadata.FromIncomingContext(ctx); ok {
 		if sources := md.Get("x-source"); len(sources) > 0 {
