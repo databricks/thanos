@@ -1430,6 +1430,7 @@ func TestProxyStore_Series(t *testing.T) {
 				},
 			},
 			blockedPatterns: []string{"up"}, // exact match pattern (no * or _)
+			xSourceHeader:   "Bronson",
 			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: high cardinality metric 'up' matches blocked pattern 'up', please add proper filters to reduce the amount of data to fetch"),
 		},
 		{
