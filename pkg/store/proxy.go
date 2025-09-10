@@ -344,7 +344,7 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 
 	// Check X-Source header once for performance
 	isBronsonRequest := s.isBronsonRequest(srv.Context())
-	
+
 	// Check if the query should be blocked due to insufficient filters
 	shouldBlock, metricName, matchedPattern := s.shouldBlockQuery(isBronsonRequest, matchers)
 	if shouldBlock {
