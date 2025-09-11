@@ -160,10 +160,15 @@ func (t *MultiTSDB) isNoUploadTenant(tenantID string) bool {
 }
 
 func (t *MultiTSDB) GetActiveTenants() []string {
-	t.mtx.RLock()
-	defer t.mtx.RUnlock()
-	activeTenants := make([]string, 0, len(t.tenants))
-	for tname, tenantInstance := range t.tenants {
+    tenants := make(map[string]*tenant)
+    t.mtx.RLock()
+    for tname, tenantInstance := range t.tenants {
+        tenants[tname] = tenantInstance
+    }
+    t.mtx.RUnlock()
+
+	activeTenants := make([]string, 0, len(tenants))
+	for tname, tenantInstance := range tenants {
 		tenantTSDB := tenantInstance.readyStorage()
 		if tenantTSDB == nil {
 			continue
