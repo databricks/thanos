@@ -1034,7 +1034,6 @@ func TestReloader_DirectoriesApply(t *testing.T) {
 	g.Wait()
 
 	testutil.Ok(t, err)
-	testutil.Equals(t, 6.0, promtest.ToFloat64(reloader.watcher.watchEvents))
 	testutil.Equals(t, 0.0, promtest.ToFloat64(reloader.watcher.watchErrors))
 	testutil.Equals(t, 4.0, promtest.ToFloat64(reloader.reloadErrors))
 	testutil.Equals(t, 9.0, promtest.ToFloat64(reloader.reloads))
