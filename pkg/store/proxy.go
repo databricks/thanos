@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/armon/go-radix"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/pkg/errors"
@@ -102,12 +103,21 @@ type ProxyStore struct {
 	enableDedup                       bool
 	matcherConverter                  *storepb.MatcherConverter
 	lazyRetrievalMaxBufferedResponses int
+	blockedMetricPrefixes             *radix.Tree
+	blockedMetricExacts               map[string]struct{}
+	forwardPartialStrategy            bool
 }
 
 type proxyStoreMetrics struct {
-	emptyStreamResponses       prometheus.Counter
-	storeFailureCount          *prometheus.CounterVec
-	missingBlockFileErrorCount prometheus.Counter
+	emptyStreamResponses             prometheus.Counter
+	storeFailureCount                *prometheus.CounterVec
+	queryPartialStrategyCount        *prometheus.CounterVec
+	queryForwardPartialStrategyCount *prometheus.CounterVec
+	missingBlockFileErrorCount       prometheus.Counter
+	blockedQueriesCount              *prometheus.CounterVec
+	storesPerQueryBeforeFiltering    prometheus.Gauge
+	storesPerQueryAfterFiltering     prometheus.Gauge
+	failedStoresPerQuery             prometheus.Gauge
 }
 
 func newProxyStoreMetrics(reg prometheus.Registerer) *proxyStoreMetrics {
@@ -121,10 +131,34 @@ func newProxyStoreMetrics(reg prometheus.Registerer) *proxyStoreMetrics {
 		Name: "thanos_proxy_store_failure_total",
 		Help: "Total number of store failures.",
 	}, []string{"group", "replica"})
+	m.queryPartialStrategyCount = promauto.With(reg).NewCounterVec(prometheus.CounterOpts{
+		Name: "thanos_proxy_query_partial_strategy_total",
+		Help: "Total number of queries broken down by partial strategy.",
+	}, []string{"strategy"})
+	m.queryForwardPartialStrategyCount = promauto.With(reg).NewCounterVec(prometheus.CounterOpts{
+		Name: "thanos_proxy_query_forward_partial_strategy_total",
+		Help: "How many times queries are sent out with forward partial strategy.",
+	}, []string{"strategy"})
+	m.storesPerQueryBeforeFiltering = promauto.With(reg).NewGauge(prometheus.GaugeOpts{
+		Name: "thanos_proxy_stores_per_query_before_filtering",
+		Help: "The number of stores before filtering using external labels and (min, max) time range.",
+	})
+	m.storesPerQueryAfterFiltering = promauto.With(reg).NewGauge(prometheus.GaugeOpts{
+		Name: "thanos_proxy_stores_per_query_after_filtering",
+		Help: "The number of stores after filtering using external labels and (min, max) time range.",
+	})
+	m.failedStoresPerQuery = promauto.With(reg).NewGauge(prometheus.GaugeOpts{
+		Name: "thanos_proxy_failed_stores_per_query",
+		Help: "The number of failed stores per query.",
+	})
 	m.missingBlockFileErrorCount = promauto.With(reg).NewCounter(prometheus.CounterOpts{
 		Name: "thanos_proxy_querier_missing_block_file_error_total",
 		Help: "Total number of missing block file errors.",
 	})
+	m.blockedQueriesCount = promauto.With(reg).NewCounterVec(prometheus.CounterOpts{
+		Name: "thanos_proxy_store_blocked_queries_total",
+		Help: "Total number of queries blocked due to high cardinality metrics without sufficient filters.",
+	}, []string{"metric_name"})
 
 	return &m
 }
@@ -175,6 +209,45 @@ func WithoutDedup() ProxyStoreOption {
 func WithProxyStoreMatcherConverter(mc *storepb.MatcherConverter) ProxyStoreOption {
 	return func(s *ProxyStore) {
 		s.matcherConverter = mc
+	}
+}
+
+// WithBlockedMetricPatterns returns a ProxyStoreOption that sets the blocked metric patterns.
+// It parses input patterns to extract prefixes (like "kube_", "envoy_") by checking suffix characters
+// and stores them in a radix tree for efficient prefix matching. Exact patterns
+// (like "up") are stored in a set for whole match checking.
+func WithBlockedMetricPatterns(patterns []string) ProxyStoreOption {
+	return func(s *ProxyStore) {
+		s.blockedMetricPrefixes = radix.New()
+		s.blockedMetricExacts = make(map[string]struct{})
+
+		for _, pattern := range patterns {
+			if pattern == "" {
+				continue
+			}
+
+			// Check if pattern ends with * or _ for prefix matching
+			if len(pattern) > 0 {
+				lastChar := pattern[len(pattern)-1]
+				if lastChar == '*' {
+					// Extract prefix (everything before the *)
+					prefix := pattern[:len(pattern)-1]
+					s.blockedMetricPrefixes.Insert(prefix, pattern)
+				} else if lastChar == '_' {
+					// Pattern ends with _ (like "kube_"), treat as prefix
+					s.blockedMetricPrefixes.Insert(pattern, pattern)
+				} else {
+					// No * or _ at the end, store as exact match only
+					s.blockedMetricExacts[pattern] = struct{}{}
+				}
+			}
+		}
+	}
+}
+
+func WithoutForwardPartialStrategy() ProxyStoreOption {
+	return func(s *ProxyStore) {
+		s.forwardPartialStrategy = true
 	}
 }
 
@@ -301,6 +374,51 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 		return status.Error(codes.InvalidArgument, errors.New("no matchers specified (excluding selector labels)").Error())
 	}
 
+	// Check X-Source header once for performance
+	isBronsonRequest := s.isBronsonRequest(srv.Context())
+
+	// Check if the query should be blocked due to insufficient filters
+	shouldBlock, metricName, matchedPattern := s.shouldBlockQuery(isBronsonRequest, matchers)
+	if shouldBlock {
+		// Log the blocked query with structured logging
+		filterCount := s.countAllFilters(matchers)
+		level.Warn(reqLogger).Log(
+			"msg", "query blocked due to high cardinality metric without sufficient filters",
+			"metric_name", metricName,
+			"filter_count", filterCount,
+		)
+
+		// Increment metrics counter
+		s.metrics.blockedQueriesCount.WithLabelValues(metricName).Inc()
+
+		return status.Error(codes.InvalidArgument, fmt.Errorf("query blocked: high cardinality metric '%s' matches blocked pattern '%s', please add proper filters to reduce the amount of data to fetch", metricName, matchedPattern).Error())
+	}
+
+	// Track metrics for potential logging of high-cardinality queries
+	var seriesCount int
+	requestStartTime := time.Now()
+	var hasTimeoutError bool
+	var grpcErrorCode codes.Code
+
+	// Helper function to extract gRPC error code from error
+	extractGRPCCode := func(err error) codes.Code {
+		if err == nil {
+			return codes.OK
+		}
+
+		if s, ok := status.FromError(err); ok {
+			return s.Code()
+		}
+
+		// Check for specific timeout patterns
+		if strings.Contains(err.Error(), "failed to receive any data in") {
+			return codes.DeadlineExceeded
+		}
+
+		// Default for unknown errors
+		return codes.Unknown
+	}
+
 	// We may arrive here either via the promql engine
 	// or as a result of a grpc call in layered queries
 	ctx := srv.Context()
@@ -354,11 +472,14 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 		ShardInfo:               originalRequest.ShardInfo,
 		WithoutReplicaLabels:    originalRequest.WithoutReplicaLabels,
 	}
-	if originalRequest.PartialResponseStrategy == storepb.PartialResponseStrategy_GROUP_REPLICA {
+	if originalRequest.PartialResponseStrategy == storepb.PartialResponseStrategy_GROUP_REPLICA && !s.forwardPartialStrategy {
 		// Do not forward this field as it might cause data loss.
 		r.PartialResponseDisabled = true
 		r.PartialResponseStrategy = storepb.PartialResponseStrategy_ABORT
+	} else {
+		s.metrics.queryForwardPartialStrategyCount.WithLabelValues(originalRequest.PartialResponseStrategy.String()).Inc()
 	}
+	s.metrics.queryPartialStrategyCount.WithLabelValues(originalRequest.PartialResponseStrategy.String()).Inc()
 
 	storeResponses := make([]respSet, 0, len(stores))
 
@@ -394,14 +515,69 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 				"errors", fmt.Sprintf("%+v", failedStores),
 				"total_failed_stores", totalFailedStores,
 			)
+			s.metrics.failedStoresPerQuery.Set(float64(totalFailedStores))
 		}
 	}
 	defer logGroupReplicaErrors()
+
+	// Defer function for logging high-cardinality queries that timeout or return many series
+	defer func() {
+		requestDuration := time.Since(requestStartTime)
+
+		// Set gRPC error code based on context state if we haven't captured one yet
+		if grpcErrorCode == codes.OK && ctx.Err() != nil {
+			if ctx.Err() == context.DeadlineExceeded {
+				grpcErrorCode = codes.DeadlineExceeded
+			} else if ctx.Err() == context.Canceled {
+				grpcErrorCode = codes.Canceled
+			}
+		}
+
+		// Log if request timed out (check for timeout error patterns or context cancellation)
+		if (hasTimeoutError || ctx.Err() == context.Canceled) && metricName != "" {
+			logArgs := []interface{}{
+				"msg", "high cardinality metric query timed out",
+				"metric_name", metricName,
+				"duration", requestDuration,
+			}
+
+			// Add either series_returned or grpc_error_code (mutually exclusive)
+			if grpcErrorCode != codes.OK {
+				logArgs = append(logArgs, "grpc_error_code", grpcErrorCode.String())
+			} else {
+				logArgs = append(logArgs, "series_returned", seriesCount)
+			}
+
+			level.Warn(reqLogger).Log(logArgs...)
+		}
+
+		// Log if high number of series returned (threshold: 10,000+ series)
+		// Only log this for successful queries (no gRPC error)
+		if seriesCount > 10000 && metricName != "" && grpcErrorCode == codes.OK {
+			level.Warn(reqLogger).Log(
+				"msg", "high cardinality metric returned many series",
+				"metric_name", metricName,
+				"series_returned", seriesCount,
+				"duration", requestDuration,
+			)
+		}
+	}()
+
 	for _, st := range stores {
 		st := st
 
 		respSet, err := newAsyncRespSet(ctx, st, r, s.responseTimeout, s.retrievalStrategy, &s.buffers, r.ShardInfo, reqLogger, s.metrics.emptyStreamResponses, s.lazyRetrievalMaxBufferedResponses)
 		if err != nil {
+			// Check if this is a timeout-related error and capture gRPC error code
+			if strings.Contains(err.Error(), "failed to receive any data in") {
+				hasTimeoutError = true
+			}
+
+			// Capture the most specific gRPC error code (prioritize this error over others)
+			if grpcErrorCode == codes.OK {
+				grpcErrorCode = extractGRPCCode(err)
+			}
+
 			level.Warn(s.logger).Log("msg", "Store failure", "group", st.GroupKey(), "replica", st.ReplicaKey(), "err", err)
 			s.metrics.storeFailureCount.WithLabelValues(st.GroupKey(), st.ReplicaKey()).Inc()
 			bumpCounter(st.GroupKey(), st.ReplicaKey(), failedStores)
@@ -438,6 +614,7 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 	var firstWarning *string
 	for respHeap.Next() {
 		i++
+		seriesCount = i // Update our tracking variable
 		if r.Limit > 0 && i > int(r.Limit) {
 			break
 		}
@@ -446,6 +623,17 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 		if resp.GetWarning() != "" {
 			maxWarningBytes := 2000
 			warning := resp.GetWarning()[:min(maxWarningBytes, len(resp.GetWarning()))]
+
+			// Check if this warning contains a timeout-related error
+			if strings.Contains(warning, "failed to receive any data in") {
+				hasTimeoutError = true
+			}
+
+			// Capture gRPC error code from warning if we haven't captured one yet
+			if grpcErrorCode == codes.OK {
+				grpcErrorCode = extractGRPCCode(errors.New(warning))
+			}
+
 			level.Error(s.logger).Log("msg", "Store failure with warning", "warning", warning)
 			// Don't have group/replica keys here, so we can't attribute the warning to a specific store.
 			s.metrics.storeFailureCount.WithLabelValues("", "").Inc()
@@ -702,7 +890,9 @@ func (s *ProxyStore) matchingStores(ctx context.Context, minTime, maxTime int64,
 		storeLabelSets []labels.Labels
 		storeDebugMsgs []string
 	)
+	totalStores := 0
 	for _, st := range s.stores() {
+		totalStores++
 		// We might be able to skip the store if its meta information indicates it cannot have series matching our query.
 		if ok, reason := storeMatches(ctx, s.debugLogging, st, minTime, maxTime, matchers...); !ok {
 			if s.debugLogging {
@@ -724,6 +914,9 @@ func (s *ProxyStore) matchingStores(ctx context.Context, minTime, maxTime int64,
 			storeDebugMsgs = append(storeDebugMsgs, fmt.Sprintf("Store %s queried", st))
 		}
 	}
+
+	s.metrics.storesPerQueryBeforeFiltering.Set(float64(totalStores))
+	s.metrics.storesPerQueryAfterFiltering.Set(float64(len(stores)))
 
 	return stores, storeLabelSets, storeDebugMsgs
 }
@@ -810,4 +1003,91 @@ func LabelSetsMatch(matchers []*labels.Matcher, lset ...labels.Labels) bool {
 		}
 	}
 	return false
+}
+
+// hasSufficientFilters checks if the query has sufficient label filters to avoid high cardinality.
+func (s *ProxyStore) hasSufficientFilters(matchers []*labels.Matcher) bool {
+	return s.countAllFilters(matchers) > 0
+}
+
+// countAllFilters counts non-__name__ matchers of any type (equality, regex, negation).
+func (s *ProxyStore) countAllFilters(matchers []*labels.Matcher) int {
+	filterCount := 0
+	for _, matcher := range matchers {
+		if matcher.Name != "__name__" {
+			filterCount++
+		}
+	}
+	return filterCount
+}
+
+// isBronsonRequest checks if the request is from Bronson by examining the X-Source header.
+func (s *ProxyStore) isBronsonRequest(ctx context.Context) bool {
+	if md, ok := metadata.FromIncomingContext(ctx); ok {
+		if sources := md.Get("x-source"); len(sources) > 0 {
+			return sources[0] == "Bronson"
+		}
+	}
+	return false
+}
+
+// shouldBlockQuery determines if a query should be blocked based on metric patterns and label filters.
+// Only blocks queries from Bronson (when isBronsonRequest is true).
+// Returns (shouldBlock, metricName, matchedPattern).
+func (s *ProxyStore) shouldBlockQuery(isBronsonRequest bool, matchers []*labels.Matcher) (bool, string, string) {
+	if s.blockedMetricPrefixes == nil && s.blockedMetricExacts == nil {
+		return false, "", ""
+	}
+
+	// Only apply blocking for Bronson requests
+	if !isBronsonRequest {
+		return false, "", ""
+	}
+
+	// Extract metric name from matchers
+	var metricName string
+	for _, matcher := range matchers {
+		if matcher.Name == "__name__" && matcher.Type == labels.MatchEqual {
+			metricName = matcher.Value
+			break
+		}
+	}
+
+	if metricName == "" {
+		return false, "", "" // No metric name found, allow query
+	}
+
+	// Check if metric matches blocked patterns and find which pattern matched
+	matchedPattern := s.getMatchedBlockedPattern(metricName)
+	if matchedPattern != "" {
+		// Block if insufficient filters
+		shouldBlock := !s.hasSufficientFilters(matchers)
+		return shouldBlock, metricName, matchedPattern
+	}
+
+	return false, "", ""
+}
+
+// getMatchedBlockedPattern returns the first pattern that matches the metric name, or empty string if none match.
+// It first checks for exact matches, then checks for prefix matches in the radix tree.
+func (s *ProxyStore) getMatchedBlockedPattern(metricName string) string {
+	// First check for exact matches
+	if s.blockedMetricExacts != nil {
+		if _, found := s.blockedMetricExacts[metricName]; found {
+			return metricName
+		}
+	}
+
+	// Then check for prefix matches
+	if s.blockedMetricPrefixes != nil {
+		_, value, found := s.blockedMetricPrefixes.LongestPrefix(metricName)
+		if found {
+			if originalPattern, ok := value.(string); ok {
+				// The radix tree key is the prefix, but we return the original pattern
+				return originalPattern
+			}
+		}
+	}
+
+	return ""
 }
