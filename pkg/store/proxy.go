@@ -603,7 +603,7 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 		defer respSet.Close()
 	}
 
-	level.Debug(reqLogger).Log("msg", "Series: started fanout streams", "status", strings.Join(storeDebugMsgs, ";"))
+	level.Debug(reqLogger).Log("msg", "Series: started fanout streams", "num_stores", len(stores), "status", strings.Join(storeDebugMsgs, " | "))
 
 	var respHeap seriesStream = NewProxyResponseLoserTree(storeResponses...)
 	if s.enableDedup {
@@ -884,6 +884,10 @@ func storeInfo(st Client) (storeID string, storeAddr string, isLocalStore bool) 
 
 // TODO: consider moving the following functions into something like "pkg/pruneutils" since it is also used for exemplars.
 
+func fullExternalLabelsString(st Client) string {
+	return labelpb.PromLabelSetsToStringN(st.LabelSets(), 100000)
+}
+
 func (s *ProxyStore) matchingStores(ctx context.Context, minTime, maxTime int64, matchers []*labels.Matcher) ([]Client, []labels.Labels, []string) {
 	var (
 		stores         []Client
@@ -911,7 +915,7 @@ func (s *ProxyStore) matchingStores(ctx context.Context, minTime, maxTime int64,
 
 		stores = append(stores, st)
 		if s.debugLogging {
-			storeDebugMsgs = append(storeDebugMsgs, fmt.Sprintf("Store %s queried", st))
+			storeDebugMsgs = append(storeDebugMsgs, fmt.Sprintf("Store %s queried with full external labels: %s", st, fullExternalLabelsString(st)))
 		}
 	}
 
