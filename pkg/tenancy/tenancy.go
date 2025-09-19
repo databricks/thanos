@@ -208,6 +208,12 @@ func RewritePromQL(ctx context.Context, r *http.Request, tenantHeader string, de
 	}
 	ctx = context.WithValue(ctx, TenantKey, tenant)
 
+	// Check for source parameter to identify Bronson queries
+	if source := r.FormValue("source"); source == "bronson" {
+		// Store Bronson source information in context for detection in proxy
+		ctx = context.WithValue(ctx, "query_source", "bronson")
+	}
+
 	if enforceTenancy {
 		queryStr, err = EnforceQueryTenancy(tenantLabel, tenant, queryStr)
 		return queryStr, tenant, ctx, err

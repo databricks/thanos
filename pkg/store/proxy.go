@@ -342,24 +342,40 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 		return status.Error(codes.InvalidArgument, errors.New("no matchers specified (excluding selector labels)").Error())
 	}
 
-	// Check X-Source header once for performance
+	// Check if this is a Bronson request by looking at context and headers
 	isBronsonRequest := s.isBronsonRequest(srv.Context())
+
+	// Log request source analysis for debugging
+	level.Debug(reqLogger).Log(
+		"msg", "Request source analysis completed",
+		"is_bronson_request", isBronsonRequest,
+	)
 
 	// Check if the query should be blocked due to insufficient filters
 	shouldBlock, metricName, matchedPattern := s.shouldBlockQuery(isBronsonRequest, matchers)
 	if shouldBlock {
-		// Log the blocked query with structured logging
 		filterCount := s.countAllFilters(matchers)
 		level.Warn(reqLogger).Log(
 			"msg", "query blocked due to high cardinality metric without sufficient filters",
+			"source", "Bronson",
 			"metric_name", metricName,
+			"matched_pattern", matchedPattern,
 			"filter_count", filterCount,
+			"action", "block",
 		)
 
 		// Increment metrics counter
 		s.metrics.blockedQueriesCount.WithLabelValues(metricName).Inc()
 
 		return status.Error(codes.InvalidArgument, fmt.Errorf("query blocked: high cardinality metric '%s' matches blocked pattern '%s', please add proper filters to reduce the amount of data to fetch", metricName, matchedPattern).Error())
+	} else {
+		// Log when no blocking is needed
+		level.Debug(reqLogger).Log(
+			"msg", "Query analysis complete - no blocking needed",
+			"is_bronson_request", isBronsonRequest,
+			"should_block", shouldBlock,
+			"metric_name", metricName,
+		)
 	}
 
 	// Track metrics for potential logging of high-cardinality queries
@@ -980,13 +996,43 @@ func (s *ProxyStore) countAllFilters(matchers []*labels.Matcher) int {
 	return filterCount
 }
 
-// isBronsonRequest checks if the request is from Bronson by examining the X-Source header.
+// isBronsonRequest checks if the request is from Bronson via URL parameter or X-Source header.
 func (s *ProxyStore) isBronsonRequest(ctx context.Context) bool {
-	if md, ok := metadata.FromIncomingContext(ctx); ok {
-		if sources := md.Get("x-source"); len(sources) > 0 {
-			return sources[0] == "Bronson"
+	// PRIMARY DETECTION: Check if query_source was set to "bronson" by RewritePromQL from URL parameter
+	if sourceVal := ctx.Value("query_source"); sourceVal != nil {
+		source := sourceVal.(string)
+		level.Debug(s.logger).Log(
+			"msg", "Bronson request detected via URL parameter",
+			"source", source,
+		)
+		if source == "bronson" {
+			return true
 		}
 	}
+
+	// FALLBACK DETECTION: Check X-Source header from gRPC metadata
+	if md, ok := metadata.FromIncomingContext(ctx); ok {
+		if sources := md.Get("x-source"); len(sources) > 0 {
+			sourceValue := sources[0]
+			level.Debug(s.logger).Log(
+				"msg", "Checking X-Source header for Bronson detection",
+				"x_source_header", sourceValue,
+			)
+			isBronson := sourceValue == "Bronson"
+			if isBronson {
+				level.Debug(s.logger).Log(
+					"msg", "Bronson request detected via X-Source header",
+					"x_source_header", sourceValue,
+				)
+			}
+			return isBronson
+		}
+	}
+
+	// Log when no Bronson indicators found
+	level.Debug(s.logger).Log(
+		"msg", "No Bronson indicators found - request treated as non-Bronson",
+	)
 	return false
 }
 
