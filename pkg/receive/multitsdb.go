@@ -68,6 +68,7 @@ type MultiTSDB struct {
 	metricNameFilterEnabled bool
 	matcherConverter        *storepb.MatcherConverter
 	noUploadTenants         []string // Support both exact matches and prefix patterns (e.g., "tenant1", "prod-*")
+	enableTenantPathPrefix  bool
 }
 
 // MultiTSDBOption is a functional option for MultiTSDB.
@@ -92,6 +93,13 @@ func WithMatcherConverter(mc *storepb.MatcherConverter) MultiTSDBOption {
 func WithNoUploadTenants(tenants []string) MultiTSDBOption {
 	return func(s *MultiTSDB) {
 		s.noUploadTenants = tenants
+	}
+}
+
+// WithTenantPathPrefix enables the tenant path prefix for object store.
+func WithTenantPathPrefix() MultiTSDBOption {
+	return func(s *MultiTSDB) {
+		s.enableTenantPathPrefix = true
 	}
 }
 
@@ -771,11 +779,18 @@ func (t *MultiTSDB) startTSDB(logger log.Logger, tenantID string, tenant *tenant
 	}
 	var ship *shipper.Shipper
 	if t.bucket != nil && !t.isNoUploadTenant(tenantID) {
+		var tenantBucket objstore.Bucket
+		if t.enableTenantPathPrefix {
+			tenantPrefix := path.Join("v1", "raw", tenantID)
+			tenantBucket = objstore.NewPrefixedBucket(t.bucket, tenantPrefix)
+		} else {
+			tenantBucket = t.bucket
+		}
 		ship = shipper.New(
 			logger,
 			reg,
 			dataDir,
-			t.bucket,
+			tenantBucket,
 			func() labels.Labels { return lset },
 			metadata.ReceiveSource,
 			nil,
