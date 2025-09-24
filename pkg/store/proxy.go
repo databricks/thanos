@@ -996,43 +996,20 @@ func (s *ProxyStore) countAllFilters(matchers []*labels.Matcher) int {
 	return filterCount
 }
 
-// isBronsonRequest checks if the request is from Bronson via URL parameter or X-Source header.
+// isBronsonRequest checks if the request is from Bronson via URL parameter.
 func (s *ProxyStore) isBronsonRequest(ctx context.Context) bool {
-	// PRIMARY DETECTION: Check if query_source was set to "bronson" by RewritePromQL from URL parameter
+	// Check if query_source was set to "bronson" by RewritePromQL from URL parameter
 	if sourceVal := ctx.Value("query_source"); sourceVal != nil {
 		source := sourceVal.(string)
-		level.Debug(s.logger).Log(
-			"msg", "Bronson request detected via URL parameter",
-			"source", source,
-		)
 		if source == "bronson" {
+			level.Debug(s.logger).Log(
+				"msg", "Bronson request detected",
+				"detection_method", "url_parameter",
+				"source", source,
+			)
 			return true
 		}
 	}
-
-	// FALLBACK DETECTION: Check X-Source header from gRPC metadata
-	if md, ok := metadata.FromIncomingContext(ctx); ok {
-		if sources := md.Get("x-source"); len(sources) > 0 {
-			sourceValue := sources[0]
-			level.Debug(s.logger).Log(
-				"msg", "Checking X-Source header for Bronson detection",
-				"x_source_header", sourceValue,
-			)
-			isBronson := sourceValue == "Bronson"
-			if isBronson {
-				level.Debug(s.logger).Log(
-					"msg", "Bronson request detected via X-Source header",
-					"x_source_header", sourceValue,
-				)
-			}
-			return isBronson
-		}
-	}
-
-	// Log when no Bronson indicators found
-	level.Debug(s.logger).Log(
-		"msg", "No Bronson indicators found - request treated as non-Bronson",
-	)
 	return false
 }
 
