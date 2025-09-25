@@ -22,6 +22,7 @@ package v1
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
 	"net/http"
 	"sort"
@@ -31,6 +32,7 @@ import (
 	"time"
 
 	"github.com/go-kit/log"
+	"github.com/go-kit/log/level"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
@@ -672,6 +674,17 @@ func (qapi *QueryAPI) query(r *http.Request) (interface{}, []error, *api.ApiErro
 		return nil, nil, &api.ApiError{Typ: api.ErrorBadData, Err: err}, func() {}
 	}
 
+	// Debug: Check context after RewritePromQL (instant query)
+	level.Info(qapi.logger).Log(
+		"msg", "Query API instant: after RewritePromQL",
+		"tenant", tenant,
+		"query_source", fmt.Sprintf("%v", ctx.Value("query_source")),
+		"url", r.URL.String(),
+		"form_values", fmt.Sprintf("%+v", r.Form),
+		"query_params", fmt.Sprintf("%+v", r.URL.Query()),
+		"source_param", r.FormValue("source"),
+	)
+
 	var (
 		qry         promql.Query
 		seriesStats []storepb.SeriesStatsCounter
@@ -971,6 +984,17 @@ func (qapi *QueryAPI) queryRange(r *http.Request) (interface{}, []error, *api.Ap
 	if err != nil {
 		return nil, nil, &api.ApiError{Typ: api.ErrorBadData, Err: err}, func() {}
 	}
+
+	// Debug: Check context after RewritePromQL (range query)
+	level.Info(qapi.logger).Log(
+		"msg", "Query API range: after RewritePromQL",
+		"tenant", tenant,
+		"query_source", fmt.Sprintf("%v", ctx.Value("query_source")),
+		"url", r.URL.String(),
+		"form_values", fmt.Sprintf("%+v", r.Form),
+		"query_params", fmt.Sprintf("%+v", r.URL.Query()),
+		"source_param", r.FormValue("source"),
+	)
 
 	// Record the query range requested.
 	qapi.queryRangeHist.Observe(end.Sub(start).Seconds())

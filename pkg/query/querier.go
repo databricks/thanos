@@ -334,6 +334,13 @@ func (q *querier) Select(ctx context.Context, _ bool, hints *storage.SelectHints
 	tenant := ctx.Value(tenancy.TenantKey)
 	querySource := ctx.Value("query_source")
 
+	// Debug: Log context values before tracing copy
+	level.Info(q.logger).Log(
+		"msg", "Querier.Select: before context copy",
+		"tenant", tenant,
+		"query_source", querySource,
+	)
+
 	// The context gets canceled as soon as query evaluation is completed by the engine.
 	// We want to prevent this from happening for the async store API calls we make while preserving tracing context.
 	// TODO(bwplotka): Does the above still is true? It feels weird to leave unfinished calls behind query API.
@@ -342,6 +349,13 @@ func (q *querier) Select(ctx context.Context, _ bool, hints *storage.SelectHints
 	if querySource != nil {
 		ctx = context.WithValue(ctx, "query_source", querySource)
 	}
+
+	// Debug: Log context values after context copy
+	level.Info(q.logger).Log(
+		"msg", "Querier.Select: after context copy",
+		"tenant", ctx.Value(tenancy.TenantKey),
+		"query_source", ctx.Value("query_source"),
+	)
 	ctx, cancel := context.WithTimeout(ctx, q.selectTimeout)
 	span, ctx := tracing.StartSpan(ctx, "querier_select", opentracing.Tags{
 		"minTime":  hints.Start,
