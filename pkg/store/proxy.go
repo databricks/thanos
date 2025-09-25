@@ -998,18 +998,46 @@ func (s *ProxyStore) countAllFilters(matchers []*labels.Matcher) int {
 
 // isBronsonRequest checks if the request is from Bronson via URL parameter.
 func (s *ProxyStore) isBronsonRequest(ctx context.Context) bool {
+	// Debug: Log entire context to see what's available
+	level.Info(s.logger).Log(
+		"msg", "isBronsonRequest: full context dump",
+		"context", fmt.Sprintf("%+v", ctx),
+	)
+
+	// Debug: Always log what we're checking
+	level.Info(s.logger).Log(
+		"msg", "isBronsonRequest: analyzing context",
+	)
+
 	// Check if query_source was set to "bronson" by RewritePromQL from URL parameter
 	if sourceVal := ctx.Value("query_source"); sourceVal != nil {
 		source := sourceVal.(string)
+		level.Info(s.logger).Log(
+			"msg", "isBronsonRequest: found query_source in context",
+			"query_source", source,
+		)
 		if source == "bronson" {
-			level.Debug(s.logger).Log(
+			level.Info(s.logger).Log(
 				"msg", "Bronson request detected",
 				"detection_method", "url_parameter",
 				"source", source,
 			)
 			return true
+		} else {
+			level.Info(s.logger).Log(
+				"msg", "query_source is not bronson",
+				"actual_source", source,
+			)
 		}
+	} else {
+		level.Info(s.logger).Log(
+			"msg", "isBronsonRequest: no query_source found in context",
+		)
 	}
+
+	level.Info(s.logger).Log(
+		"msg", "isBronsonRequest: returning false (not Bronson)",
+	)
 	return false
 }
 
