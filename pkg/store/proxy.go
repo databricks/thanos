@@ -1004,6 +1004,14 @@ func (s *ProxyStore) isBronsonRequest(ctx context.Context) bool {
 		"context", fmt.Sprintf("%+v", ctx),
 	)
 
+	// Debug: Check if debug info is available
+	if debugInfo := ctx.Value("debug_request_info"); debugInfo != nil {
+		level.Info(s.logger).Log(
+			"msg", "isBronsonRequest: debug_request_info found",
+			"debug_info", fmt.Sprintf("%+v", debugInfo),
+		)
+	}
+
 	// Debug: Always log what we're checking
 	level.Info(s.logger).Log(
 		"msg", "isBronsonRequest: analyzing context",

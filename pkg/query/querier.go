@@ -335,10 +335,12 @@ func (q *querier) Select(ctx context.Context, _ bool, hints *storage.SelectHints
 	querySource := ctx.Value("query_source")
 
 	// Debug: Log context values before tracing copy
+	debugInfo := ctx.Value("debug_request_info")
 	level.Info(q.logger).Log(
 		"msg", "Querier.Select: before context copy",
 		"tenant", tenant,
 		"query_source", querySource,
+		"debug_info", debugInfo,
 	)
 
 	// The context gets canceled as soon as query evaluation is completed by the engine.
@@ -348,6 +350,9 @@ func (q *querier) Select(ctx context.Context, _ bool, hints *storage.SelectHints
 	ctx = context.WithValue(ctx, tenancy.TenantKey, tenant)
 	if querySource != nil {
 		ctx = context.WithValue(ctx, "query_source", querySource)
+	}
+	if debugInfo != nil {
+		ctx = context.WithValue(ctx, "debug_request_info", debugInfo)
 	}
 
 	// Debug: Log context values after context copy

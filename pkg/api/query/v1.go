@@ -669,20 +669,28 @@ func (qapi *QueryAPI) query(r *http.Request) (interface{}, []error, *api.ApiErro
 		lookbackDelta = lookbackDeltaFromReq
 	}
 
+	// Parse form to ensure all URL parameters are available
+	if err := r.ParseForm(); err != nil {
+		return nil, nil, &api.ApiError{Typ: api.ErrorBadData, Err: err}, func() {}
+	}
+
 	queryStr, tenant, ctx, err := tenancy.RewritePromQL(ctx, r, qapi.tenantHeader, qapi.defaultTenant, qapi.tenantCertField, qapi.enforceTenancy, qapi.tenantLabel, r.FormValue("query"))
 	if err != nil {
 		return nil, nil, &api.ApiError{Typ: api.ErrorBadData, Err: err}, func() {}
 	}
 
 	// Debug: Check context after RewritePromQL (instant query)
+	debugInfo := ctx.Value("debug_request_info")
 	level.Info(qapi.logger).Log(
 		"msg", "Query API instant: after RewritePromQL",
 		"tenant", tenant,
 		"query_source", fmt.Sprintf("%v", ctx.Value("query_source")),
 		"url", r.URL.String(),
+		"raw_query", r.URL.RawQuery,
 		"form_values", fmt.Sprintf("%+v", r.Form),
 		"query_params", fmt.Sprintf("%+v", r.URL.Query()),
 		"source_param", r.FormValue("source"),
+		"debug_info", fmt.Sprintf("%+v", debugInfo),
 	)
 
 	var (
@@ -980,20 +988,28 @@ func (qapi *QueryAPI) queryRange(r *http.Request) (interface{}, []error, *api.Ap
 		lookbackDelta = lookbackDeltaFromReq
 	}
 
+	// Parse form to ensure all URL parameters are available
+	if err := r.ParseForm(); err != nil {
+		return nil, nil, &api.ApiError{Typ: api.ErrorBadData, Err: err}, func() {}
+	}
+
 	queryStr, tenant, ctx, err := tenancy.RewritePromQL(ctx, r, qapi.tenantHeader, qapi.defaultTenant, qapi.tenantCertField, qapi.enforceTenancy, qapi.tenantLabel, r.FormValue("query"))
 	if err != nil {
 		return nil, nil, &api.ApiError{Typ: api.ErrorBadData, Err: err}, func() {}
 	}
 
 	// Debug: Check context after RewritePromQL (range query)
+	debugInfo := ctx.Value("debug_request_info")
 	level.Info(qapi.logger).Log(
 		"msg", "Query API range: after RewritePromQL",
 		"tenant", tenant,
 		"query_source", fmt.Sprintf("%v", ctx.Value("query_source")),
 		"url", r.URL.String(),
+		"raw_query", r.URL.RawQuery,
 		"form_values", fmt.Sprintf("%+v", r.Form),
 		"query_params", fmt.Sprintf("%+v", r.URL.Query()),
 		"source_param", r.FormValue("source"),
+		"debug_info", fmt.Sprintf("%+v", debugInfo),
 	)
 
 	// Record the query range requested.

@@ -7,6 +7,7 @@ import (
 	"context"
 	"net/http"
 	"path"
+	"strings"
 
 	"github.com/pkg/errors"
 	"github.com/prometheus-community/prom-label-proxy/injectproxy"
@@ -208,8 +209,47 @@ func RewritePromQL(ctx context.Context, r *http.Request, tenantHeader string, de
 	}
 	ctx = context.WithValue(ctx, TenantKey, tenant)
 
+	// Parse form if not already parsed to ensure parameters are available
+	if r.Form == nil {
+		r.ParseForm()
+	}
+
+	// Debug: Log ALL available request information
+	// TODO: Remove after debugging
+	urlParams := r.URL.Query()
+	formParams := r.Form
+
 	// Check for source parameter to identify Bronson queries
-	if source := r.FormValue("source"); source == "bronson" {
+	// Try multiple ways to get the parameter
+	source := r.FormValue("source")
+	if source == "" {
+		// Also check URL query parameters directly
+		if values := r.URL.Query()["source"]; len(values) > 0 {
+			source = values[0]
+		}
+	}
+
+	// Store debug info in context for logging later
+	debugInfo := make(map[string]string)
+	debugInfo["url_path"] = r.URL.Path
+	debugInfo["url_raw_query"] = r.URL.RawQuery
+	debugInfo["source_found"] = source
+	debugInfo["method"] = r.Method
+	debugInfo["content_type"] = r.Header.Get("Content-Type")
+
+	// Add all URL parameters
+	for key, values := range urlParams {
+		debugInfo["url_param_"+key] = strings.Join(values, ",")
+	}
+
+	// Add all form parameters
+	for key, values := range formParams {
+		debugInfo["form_param_"+key] = strings.Join(values, ",")
+	}
+
+	ctx = context.WithValue(ctx, "debug_request_info", debugInfo)
+
+	if source == "bronson" {
 		// Store Bronson source information in context for detection in proxy
 		ctx = context.WithValue(ctx, "query_source", "bronson")
 	}
