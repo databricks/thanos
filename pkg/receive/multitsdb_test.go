@@ -1178,6 +1178,7 @@ func TestTenantBucketPrefixInUpload(t *testing.T) {
 		false,
 		metadata.NoneFunc,
 		WithTenantPathPrefix(),
+		WithPathSegmentsBeforeTenant([]string{"v1", "raw"}),
 	)
 	defer func() { testutil.Ok(t, m.Close()) }()
 
