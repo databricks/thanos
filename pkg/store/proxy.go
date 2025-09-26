@@ -996,7 +996,7 @@ func (s *ProxyStore) countAllFilters(matchers []*labels.Matcher) int {
 	return filterCount
 }
 
-// isBronsonRequest checks if the request is from Bronson via URL parameter.
+// isBronsonRequest checks if the request is from Bronson via gRPC metadata or context.
 func (s *ProxyStore) isBronsonRequest(ctx context.Context) bool {
 	// Debug: Log entire context to see what's available
 	level.Info(s.logger).Log(
@@ -1004,7 +1004,61 @@ func (s *ProxyStore) isBronsonRequest(ctx context.Context) bool {
 		"context", fmt.Sprintf("%+v", ctx),
 	)
 
-	// Debug: Check if debug info is available
+	// Check gRPC metadata for Bronson identification
+	md, ok := metadata.FromIncomingContext(ctx)
+	if ok {
+		level.Info(s.logger).Log(
+			"msg", "isBronsonRequest: gRPC metadata found",
+			"metadata", fmt.Sprintf("%+v", md),
+		)
+
+		// Log all metadata keys for debugging
+		for key, values := range md {
+			level.Info(s.logger).Log(
+				"msg", "isBronsonRequest: metadata key-value",
+				"key", key,
+				"values", strings.Join(values, ","),
+			)
+		}
+
+		// Check for X-Source header in metadata
+		if sources := md.Get("x-source"); len(sources) > 0 {
+			level.Info(s.logger).Log(
+				"msg", "isBronsonRequest: found x-source in metadata",
+				"x-source", sources[0],
+			)
+			if sources[0] == "bronson" {
+				level.Info(s.logger).Log(
+					"msg", "Bronson request detected via gRPC metadata",
+					"detection_method", "grpc_metadata",
+					"source", sources[0],
+				)
+				return true
+			}
+		}
+
+		// Also check for query-source in metadata (in case it's passed differently)
+		if sources := md.Get("query-source"); len(sources) > 0 {
+			level.Info(s.logger).Log(
+				"msg", "isBronsonRequest: found query-source in metadata",
+				"query-source", sources[0],
+			)
+			if sources[0] == "bronson" {
+				level.Info(s.logger).Log(
+					"msg", "Bronson request detected via gRPC metadata",
+					"detection_method", "grpc_metadata_query_source",
+					"source", sources[0],
+				)
+				return true
+			}
+		}
+	} else {
+		level.Info(s.logger).Log(
+			"msg", "isBronsonRequest: no gRPC metadata found",
+		)
+	}
+
+	// Debug: Check if debug info is available in context
 	if debugInfo := ctx.Value("debug_request_info"); debugInfo != nil {
 		level.Info(s.logger).Log(
 			"msg", "isBronsonRequest: debug_request_info found",
@@ -1012,12 +1066,7 @@ func (s *ProxyStore) isBronsonRequest(ctx context.Context) bool {
 		)
 	}
 
-	// Debug: Always log what we're checking
-	level.Info(s.logger).Log(
-		"msg", "isBronsonRequest: analyzing context",
-	)
-
-	// Check if query_source was set to "bronson" by RewritePromQL from URL parameter
+	// Check if query_source was set in context (for HTTP path)
 	if sourceVal := ctx.Value("query_source"); sourceVal != nil {
 		source := sourceVal.(string)
 		level.Info(s.logger).Log(
@@ -1026,21 +1075,12 @@ func (s *ProxyStore) isBronsonRequest(ctx context.Context) bool {
 		)
 		if source == "bronson" {
 			level.Info(s.logger).Log(
-				"msg", "Bronson request detected",
-				"detection_method", "url_parameter",
+				"msg", "Bronson request detected via context",
+				"detection_method", "context_value",
 				"source", source,
 			)
 			return true
-		} else {
-			level.Info(s.logger).Log(
-				"msg", "query_source is not bronson",
-				"actual_source", source,
-			)
 		}
-	} else {
-		level.Info(s.logger).Log(
-			"msg", "isBronsonRequest: no query_source found in context",
-		)
 	}
 
 	level.Info(s.logger).Log(
