@@ -674,6 +674,19 @@ func (qapi *QueryAPI) query(r *http.Request) (interface{}, []error, *api.ApiErro
 		return nil, nil, &api.ApiError{Typ: api.ErrorBadData, Err: err}, func() {}
 	}
 
+	// Debug: Log BEFORE RewritePromQL to see raw request
+	level.Info(qapi.logger).Log(
+		"msg", "Query API instant: BEFORE RewritePromQL",
+		"method", r.Method,
+		"url", r.URL.String(),
+		"raw_query", r.URL.RawQuery,
+		"form_values", fmt.Sprintf("%+v", r.Form),
+		"url_params", fmt.Sprintf("%+v", r.URL.Query()),
+		"source_from_form", r.FormValue("source"),
+		"source_from_url", r.URL.Query().Get("source"),
+		"content_type", r.Header.Get("Content-Type"),
+	)
+
 	queryStr, tenant, ctx, err := tenancy.RewritePromQL(ctx, r, qapi.tenantHeader, qapi.defaultTenant, qapi.tenantCertField, qapi.enforceTenancy, qapi.tenantLabel, r.FormValue("query"))
 	if err != nil {
 		return nil, nil, &api.ApiError{Typ: api.ErrorBadData, Err: err}, func() {}
@@ -992,6 +1005,19 @@ func (qapi *QueryAPI) queryRange(r *http.Request) (interface{}, []error, *api.Ap
 	if err := r.ParseForm(); err != nil {
 		return nil, nil, &api.ApiError{Typ: api.ErrorBadData, Err: err}, func() {}
 	}
+
+	// Debug: Log BEFORE RewritePromQL to see raw request
+	level.Info(qapi.logger).Log(
+		"msg", "Query API instant: BEFORE RewritePromQL",
+		"method", r.Method,
+		"url", r.URL.String(),
+		"raw_query", r.URL.RawQuery,
+		"form_values", fmt.Sprintf("%+v", r.Form),
+		"url_params", fmt.Sprintf("%+v", r.URL.Query()),
+		"source_from_form", r.FormValue("source"),
+		"source_from_url", r.URL.Query().Get("source"),
+		"content_type", r.Header.Get("Content-Type"),
+	)
 
 	queryStr, tenant, ctx, err := tenancy.RewritePromQL(ctx, r, qapi.tenantHeader, qapi.defaultTenant, qapi.tenantCertField, qapi.enforceTenancy, qapi.tenantLabel, r.FormValue("query"))
 	if err != nil {
