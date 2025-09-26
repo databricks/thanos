@@ -105,13 +105,21 @@ type ProxyStore struct {
 	lazyRetrievalMaxBufferedResponses int
 	blockedMetricPrefixes             *radix.Tree
 	blockedMetricExacts               map[string]struct{}
+	forwardPartialStrategy            bool
+	exclusiveExternalLabels           []string
 }
 
 type proxyStoreMetrics struct {
-	emptyStreamResponses       prometheus.Counter
-	storeFailureCount          *prometheus.CounterVec
-	missingBlockFileErrorCount prometheus.Counter
-	blockedQueriesCount        *prometheus.CounterVec
+	emptyStreamResponses             prometheus.Counter
+	storeFailureCount                *prometheus.CounterVec
+	queryPartialStrategyCount        *prometheus.CounterVec
+	queryForwardPartialStrategyCount *prometheus.CounterVec
+	missingBlockFileErrorCount       prometheus.Counter
+	blockedQueriesCount              *prometheus.CounterVec
+	storesPerQueryBeforeFiltering    prometheus.Gauge
+	storesPerQueryAfterFiltering     prometheus.Gauge
+	storesPerQueryAfterEELFiltering  prometheus.Gauge
+	failedStoresPerQuery             prometheus.Gauge
 }
 
 func newProxyStoreMetrics(reg prometheus.Registerer) *proxyStoreMetrics {
@@ -125,6 +133,30 @@ func newProxyStoreMetrics(reg prometheus.Registerer) *proxyStoreMetrics {
 		Name: "thanos_proxy_store_failure_total",
 		Help: "Total number of store failures.",
 	}, []string{"group", "replica"})
+	m.queryPartialStrategyCount = promauto.With(reg).NewCounterVec(prometheus.CounterOpts{
+		Name: "thanos_proxy_query_partial_strategy_total",
+		Help: "Total number of queries broken down by partial strategy.",
+	}, []string{"strategy"})
+	m.queryForwardPartialStrategyCount = promauto.With(reg).NewCounterVec(prometheus.CounterOpts{
+		Name: "thanos_proxy_query_forward_partial_strategy_total",
+		Help: "How many times queries are sent out with forward partial strategy.",
+	}, []string{"strategy"})
+	m.storesPerQueryBeforeFiltering = promauto.With(reg).NewGauge(prometheus.GaugeOpts{
+		Name: "thanos_proxy_stores_per_query_before_filtering",
+		Help: "The number of stores before filtering using external labels and (min, max) time range.",
+	})
+	m.storesPerQueryAfterFiltering = promauto.With(reg).NewGauge(prometheus.GaugeOpts{
+		Name: "thanos_proxy_stores_per_query_after_filtering",
+		Help: "The number of stores after filtering using external labels and (min, max) time range.",
+	})
+	m.storesPerQueryAfterEELFiltering = promauto.With(reg).NewGauge(prometheus.GaugeOpts{
+		Name: "thanos_proxy_stores_per_query_after_eel_filtering",
+		Help: "The number of stores after filtering using exclusive external labels.",
+	})
+	m.failedStoresPerQuery = promauto.With(reg).NewGauge(prometheus.GaugeOpts{
+		Name: "thanos_proxy_failed_stores_per_query",
+		Help: "The number of failed stores per query.",
+	})
 	m.missingBlockFileErrorCount = promauto.With(reg).NewCounter(prometheus.CounterOpts{
 		Name: "thanos_proxy_querier_missing_block_file_error_total",
 		Help: "Total number of missing block file errors.",
@@ -216,6 +248,18 @@ func WithBlockedMetricPatterns(patterns []string) ProxyStoreOption {
 				}
 			}
 		}
+	}
+}
+
+func WithoutForwardPartialStrategy() ProxyStoreOption {
+	return func(s *ProxyStore) {
+		s.forwardPartialStrategy = true
+	}
+}
+
+func WithExclusiveExternalLabels(labels []string) ProxyStoreOption {
+	return func(s *ProxyStore) {
+		s.exclusiveExternalLabels = labels
 	}
 }
 
@@ -433,6 +477,12 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 	}
 
 	stores, storeLabelSets, storeDebugMsgs := s.matchingStores(ctx, originalRequest.MinTime, originalRequest.MaxTime, matchers)
+	s.metrics.storesPerQueryAfterFiltering.Set(float64(len(stores)))
+
+	stores, moreStoreDebugMsgs := s.filterByExclusiveExternalLabels(stores, matchers)
+	storeDebugMsgs = append(storeDebugMsgs, moreStoreDebugMsgs...)
+	s.metrics.storesPerQueryAfterEELFiltering.Set(float64(len(stores)))
+
 	for _, st := range stores {
 		bumpCounter(st.GroupKey(), st.ReplicaKey(), groupReplicaStores)
 	}
@@ -456,11 +506,14 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 		ShardInfo:               originalRequest.ShardInfo,
 		WithoutReplicaLabels:    originalRequest.WithoutReplicaLabels,
 	}
-	if originalRequest.PartialResponseStrategy == storepb.PartialResponseStrategy_GROUP_REPLICA {
+	if originalRequest.PartialResponseStrategy == storepb.PartialResponseStrategy_GROUP_REPLICA && !s.forwardPartialStrategy {
 		// Do not forward this field as it might cause data loss.
 		r.PartialResponseDisabled = true
 		r.PartialResponseStrategy = storepb.PartialResponseStrategy_ABORT
+	} else {
+		s.metrics.queryForwardPartialStrategyCount.WithLabelValues(originalRequest.PartialResponseStrategy.String()).Inc()
 	}
+	s.metrics.queryPartialStrategyCount.WithLabelValues(originalRequest.PartialResponseStrategy.String()).Inc()
 
 	storeResponses := make([]respSet, 0, len(stores))
 
@@ -496,6 +549,7 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 				"errors", fmt.Sprintf("%+v", failedStores),
 				"total_failed_stores", totalFailedStores,
 			)
+			s.metrics.failedStoresPerQuery.Set(float64(totalFailedStores))
 		}
 	}
 	defer logGroupReplicaErrors()
@@ -583,7 +637,7 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 		defer respSet.Close()
 	}
 
-	level.Debug(reqLogger).Log("msg", "Series: started fanout streams", "status", strings.Join(storeDebugMsgs, ";"))
+	level.Debug(reqLogger).Log("msg", "Series: started fanout streams", "num_stores", len(stores), "status", strings.Join(storeDebugMsgs, " | "))
 
 	var respHeap seriesStream = NewProxyResponseLoserTree(storeResponses...)
 	if s.enableDedup {
@@ -864,13 +918,65 @@ func storeInfo(st Client) (storeID string, storeAddr string, isLocalStore bool) 
 
 // TODO: consider moving the following functions into something like "pkg/pruneutils" since it is also used for exemplars.
 
+func fullExternalLabelsString(st Client) string {
+	return labelpb.PromLabelSetsToStringN(st.LabelSets(), 100000)
+}
+
+func (s *ProxyStore) filterByExclusiveExternalLabels(stores []Client, matchers []*labels.Matcher) ([]Client, []string) {
+	var storeDebugMsgs []string
+	if len(s.exclusiveExternalLabels) == 0 {
+		return stores, storeDebugMsgs
+	}
+	targetMatchers := make([]*labels.Matcher, 0, len(s.exclusiveExternalLabels))
+	for _, label := range s.exclusiveExternalLabels {
+		for _, matcher := range matchers {
+			if matcher.Name == label && (matcher.Type == labels.MatchEqual || matcher.Type == labels.MatchRegexp) {
+				targetMatchers = append(targetMatchers, matcher)
+				break
+			}
+		}
+	}
+	if len(targetMatchers) == 0 {
+		return stores, storeDebugMsgs
+	}
+	if s.debugLogging {
+		storeDebugMsgs = append(storeDebugMsgs, fmt.Sprintf("Filtering stores by exclusive external labels with target matchers: %v", targetMatchers))
+	}
+	matchedStores := make([]Client, 0, len(stores))
+	matchStore := func(st Client) bool {
+		for _, targetMatcher := range targetMatchers {
+			for _, labelSet := range st.LabelSets() {
+				if lv := labelSet.Get(targetMatcher.Name); targetMatcher.Value == lv {
+					if s.debugLogging {
+						storeDebugMsgs = append(storeDebugMsgs, fmt.Sprintf("Store %s matched exclusive external labels with its external label set: %v", st, labelSet))
+					}
+					return true
+				}
+			}
+		}
+		return false
+	}
+	for _, st := range stores {
+		if matchStore(st) {
+			matchedStores = append(matchedStores, st)
+		}
+	}
+
+	if len(matchedStores) == 0 {
+		return stores, storeDebugMsgs
+	}
+	return matchedStores, storeDebugMsgs
+}
+
 func (s *ProxyStore) matchingStores(ctx context.Context, minTime, maxTime int64, matchers []*labels.Matcher) ([]Client, []labels.Labels, []string) {
 	var (
 		stores         []Client
 		storeLabelSets []labels.Labels
 		storeDebugMsgs []string
 	)
+	totalStores := 0
 	for _, st := range s.stores() {
+		totalStores++
 		// We might be able to skip the store if its meta information indicates it cannot have series matching our query.
 		if ok, reason := storeMatches(ctx, s.debugLogging, st, minTime, maxTime, matchers...); !ok {
 			if s.debugLogging {
@@ -889,9 +995,11 @@ func (s *ProxyStore) matchingStores(ctx context.Context, minTime, maxTime int64,
 
 		stores = append(stores, st)
 		if s.debugLogging {
-			storeDebugMsgs = append(storeDebugMsgs, fmt.Sprintf("Store %s queried", st))
+			storeDebugMsgs = append(storeDebugMsgs, fmt.Sprintf("Store %s queried with full external labels: %s", st, fullExternalLabelsString(st)))
 		}
 	}
+
+	s.metrics.storesPerQueryBeforeFiltering.Set(float64(totalStores))
 
 	return stores, storeLabelSets, storeDebugMsgs
 }
@@ -968,7 +1076,8 @@ func LabelSetsMatch(matchers []*labels.Matcher, lset ...labels.Labels) bool {
 	for _, ls := range lset {
 		notMatched := false
 		for _, m := range matchers {
-			if lv := ls.Get(m.Name); ls.Has(m.Name) && !m.Matches(lv) {
+			// If m.Name is not in ls, ls.Get() return "" and it matches by design.
+			if lv := ls.Get(m.Name); len(lv) > 0 && !m.Matches(lv) {
 				notMatched = true
 				break
 			}

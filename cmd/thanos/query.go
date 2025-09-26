@@ -244,6 +244,8 @@ func registerQuery(app *extkingpin.App) {
 	tenantCertField := cmd.Flag("query.tenant-certificate-field", "Use TLS client's certificate field to determine tenant for write requests. Must be one of "+tenancy.CertificateFieldOrganization+", "+tenancy.CertificateFieldOrganizationalUnit+" or "+tenancy.CertificateFieldCommonName+". This setting will cause the query.tenant-header flag value to be ignored.").Default("").Enum("", tenancy.CertificateFieldOrganization, tenancy.CertificateFieldOrganizationalUnit, tenancy.CertificateFieldCommonName)
 	enforceTenancy := cmd.Flag("query.enforce-tenancy", "Enforce tenancy on Query APIs. Responses are returned only if the label value of the configured tenant-label-name and the value of the tenant header matches.").Default("false").Bool()
 	tenantLabel := cmd.Flag("query.tenant-label-name", "Label name to use when enforcing tenancy (if --query.enforce-tenancy is enabled).").Default(tenancy.DefaultTenantLabel).String()
+	exclusiveExternalLabels := cmd.Flag("query.exclusive-external-labels", "Comma-separated list of label names for store matching. If any stores have all of those labels and match the values not using any regex operators, e.g., .*, other stores should be filtered out.").
+		Default("").Strings()
 
 	rewriteAggregationLabelStrategy := cmd.Flag("query.aggregation-label-strategy", "The strategy to use when rewriting aggregation labels. Used during aggregator migration only.").Default(string(query.NoopLabelRewriter)).Hidden().Enum(string(query.NoopLabelRewriter), string(query.UpsertLabelRewriter), string(query.InsertOnlyLabelRewriter))
 	rewriteAggregationLabelTo := cmd.Flag("query.aggregation-label-value-override", "The value override for aggregation label. If set to x, all queries on aggregated metrics will have a `__agg_rule_type__=x` matcher. If empty, this behavior is disabled. Default is empty.").Hidden().Default("").String()
@@ -255,6 +257,7 @@ func registerQuery(app *extkingpin.App) {
 		Default("0s"))
 
 	blockQueryMetricsWithoutFilter := cmd.Flag("query.block-query-metrics-without-filter", "Comma-separated list of metric patterns to block queries without sufficient label filters. Helps prevent high-cardinality metric queries.").Default("").String()
+	forwardPartialStrategy := cmd.Flag("query.forward-partial-strategy", "Enable forward partial strategy for queries. This is used for a Queier stacked on the top of other Queiers.").Default("false").Bool()
 
 	var storeRateLimits store.SeriesSelectLimits
 	storeRateLimits.RegisterFlags(cmd)
@@ -410,6 +413,8 @@ func registerQuery(app *extkingpin.App) {
 			*lazyRetrievalMaxBufferedResponses,
 			time.Duration(*grpcStoreClientKeepAlivePingInterval),
 			blockedMetricPatterns,
+			*forwardPartialStrategy,
+			*exclusiveExternalLabels,
 		)
 	})
 }
@@ -499,6 +504,8 @@ func runQuery(
 	lazyRetrievalMaxBufferedResponses int,
 	grpcStoreClientKeepAlivePingInterval time.Duration,
 	blockedMetricPatterns []string,
+	forwardPartialStrategy bool,
+	exclusiveExternalLabels []string,
 ) error {
 	comp := component.Query
 	if alertQueryURL == "" {
@@ -597,6 +604,12 @@ func runQuery(
 	// Add blocked metric patterns option if specified
 	if len(blockedMetricPatterns) > 0 {
 		options = append(options, store.WithBlockedMetricPatterns(blockedMetricPatterns))
+	}
+	if forwardPartialStrategy {
+		options = append(options, store.WithoutForwardPartialStrategy())
+	}
+	if len(exclusiveExternalLabels) > 0 {
+		options = append(options, store.WithExclusiveExternalLabels(exclusiveExternalLabels))
 	}
 
 	// Parse and sanitize the provided replica labels flags.
