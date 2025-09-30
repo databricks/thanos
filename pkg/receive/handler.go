@@ -45,6 +45,7 @@ import (
 	"github.com/thanos-io/thanos/pkg/api"
 	statusapi "github.com/thanos-io/thanos/pkg/api/status"
 	"github.com/thanos-io/thanos/pkg/logging"
+	"github.com/thanos-io/thanos/pkg/pantheon"
 	"github.com/thanos-io/thanos/pkg/receive/writecapnp"
 
 	extpromhttp "github.com/thanos-io/thanos/pkg/extprom/http"
@@ -129,10 +130,11 @@ type Handler struct {
 	splitTenantLabelName string
 	httpSrv              *http.Server
 
-	mtx          sync.RWMutex
-	hashring     Hashring
-	peers        peersContainer
-	receiverMode ReceiverMode
+	mtx             sync.RWMutex
+	hashring        Hashring
+	pantheonCluster *pantheon.PantheonCluster
+	peers           peersContainer
+	receiverMode    ReceiverMode
 
 	forwardRequests   *prometheus.CounterVec
 	endpointFailures  *prometheus.CounterVec
@@ -264,7 +266,7 @@ func NewHandler(logger log.Logger, o *Options) *Handler {
 
 	ins := extpromhttp.NewNopInstrumentationMiddleware()
 	if o.Registry != nil {
-		var buckets = []float64{0.001, 0.005, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1, 0.25, 0.5, 0.75, 1, 2, 3, 4, 5}
+		buckets := []float64{0.001, 0.005, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1, 0.25, 0.5, 0.75, 1, 2, 3, 4, 5}
 
 		const bucketIncrement = 2.0
 		for curMax := 5.0 + bucketIncrement; curMax < o.ForwardTimeout.Seconds(); curMax += bucketIncrement {
@@ -343,6 +345,14 @@ func (h *Handler) Hashring(hashring Hashring) {
 
 	h.hashring = hashring
 	h.peers.reset()
+}
+
+// SetPantheonCluster sets the Pantheon cluster configuration for the handler.
+func (h *Handler) SetPantheonCluster(cluster *pantheon.PantheonCluster) {
+	h.mtx.Lock()
+	defer h.mtx.Unlock()
+
+	h.pantheonCluster = cluster
 }
 
 // getSortedStringSliceDiff returns items which are in slice1 but not in slice2.
@@ -921,7 +931,7 @@ func (h *Handler) distributeTimeseriesToReplicas(
 	remoteWrites := make(map[endpointReplica]map[string]trackedSeries)
 	localWrites := make(map[endpointReplica]map[string]trackedSeries)
 	for tsIndex, ts := range timeseries {
-		var tenant = tenantHTTP
+		tenant := tenantHTTP
 
 		if h.splitTenantLabelName != "" {
 			lbls := labelpb.ZLabelsToPromLabels(ts.Labels)
@@ -1020,7 +1030,7 @@ func (h *Handler) sendLocalWrite(
 
 	tenantSeriesMapping := map[string][]prompb.TimeSeries{}
 	for _, ts := range trackedSeries.timeSeries {
-		var tenant = tenantHTTP
+		tenant := tenantHTTP
 		if h.splitTenantLabelName != "" {
 			lbls := labelpb.ZLabelsToPromLabels(ts.Labels)
 			if tnt := lbls.Get(h.splitTenantLabelName); tnt != "" {
@@ -1040,7 +1050,6 @@ func (h *Handler) sendLocalWrite(
 		}
 	}
 	responses <- newWriteResponse(trackedSeries.seriesIDs, nil, writeDestination, "")
-
 }
 
 // sendRemoteWrite sends a write request to the remote node. It takes care of checking whether the endpoint is up or not
