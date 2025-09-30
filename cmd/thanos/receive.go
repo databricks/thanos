@@ -252,6 +252,7 @@ func runReceive(
 	}
 
 	relabeller, err := receive.NewRelabeller(conf.relabelConfigPath, reg, logger, conf.relabelConfigReloadTimer)
+
 	if err != nil {
 		return errors.Wrap(err, "get content of relabel configuration")
 	}
@@ -702,6 +703,7 @@ func setupHashring(g *run.Group,
 
 	cancel := make(chan struct{})
 	g.Add(func() error {
+
 		if enableIngestion {
 			defer close(hashringChangedChan)
 		}
@@ -993,7 +995,7 @@ func migrateLegacyStorage(logger log.Logger, dataDir, defaultTenantID string) er
 		return errors.Wrapf(err, "read legacy data dir: %v", dataDir)
 	}
 
-	if err := os.MkdirAll(defaultTenantDataDir, 0o750); err != nil {
+	if err := os.MkdirAll(defaultTenantDataDir, 0750); err != nil {
 		return errors.Wrapf(err, "create default tenant data dir: %v", defaultTenantDataDir)
 	}
 
