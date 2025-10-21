@@ -743,7 +743,10 @@ func (er *endpointRef) updateMetadata(metadata *endpointMetadata, err error) {
 	}
 
 	if err != nil && er.metadata == nil {
+		mint, maxt := er.timeRange()
 		er.metadata = maxRangeStoreMetadata()
+		er.metadata.Store.MinTime = mint
+		er.metadata.Store.MaxTime = maxt
 	}
 }
 
@@ -754,7 +757,7 @@ func (er *endpointRef) isQueryable() bool {
 	er.mtx.RLock()
 	defer er.mtx.RUnlock()
 
-	return er.isStrict || er.ignoreError || er.status.LastError == nil
+	return er.isStrict || er.status.LastError == nil
 }
 
 func (er *endpointRef) ComponentType() component.Component {

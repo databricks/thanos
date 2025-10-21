@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/go-kit/log"
-	"github.com/go-kit/log/level"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pkg/errors"
 
@@ -228,7 +227,6 @@ func newQuerierWithOpts(
 
 	partialResponseStrategy := storepb.PartialResponseStrategy_ABORT
 	if opts.GroupReplicaPartialResponseStrategy {
-		level.Debug(logger).Log("msg", "Enabled group-replica partial response strategy in newQuerierInternal")
 		partialResponseStrategy = storepb.PartialResponseStrategy_GROUP_REPLICA
 	} else if partialResponse {
 		partialResponseStrategy = storepb.PartialResponseStrategy_WARN
@@ -342,6 +340,7 @@ func (q *querier) Select(ctx context.Context, _ bool, hints *storage.SelectHints
 		"minTime":  hints.Start,
 		"maxTime":  hints.End,
 		"matchers": "{" + strings.Join(matchers, ",") + "}",
+		"tenant":   tenant,
 	})
 
 	promise := make(chan storage.SeriesSet, 1)
