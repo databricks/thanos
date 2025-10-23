@@ -462,7 +462,7 @@ func NewMatcherConverter(cacheCapacity int, reg prometheus.Registerer) (*Matcher
 }
 
 // MatchersToPromMatchers converts proto label matchers to Prometheus label matchers. It caches regex conversions.
-func (c *MatcherConverter) MatchersToPromMatchers(ms ...LabelMatcher) ([]*labels.Matcher, error) {
+func (c *MatcherConverter) MatchersToPromMatchers(withMetric bool, ms ...LabelMatcher) ([]*labels.Matcher, error) {
 	res := make([]*labels.Matcher, 0, len(ms))
 	for _, m := range ms {
 		if m.Type != LabelMatcher_RE && m.Type != LabelMatcher_NRE {
@@ -474,10 +474,14 @@ func (c *MatcherConverter) MatchersToPromMatchers(ms ...LabelMatcher) ([]*labels
 			res = append(res, pm)
 			continue
 		}
-		c.metrics.cacheTotalCount.Inc()
+		if withMetric {
+			c.metrics.cacheTotalCount.Inc()
+		}
 		if pm, ok := c.cache.Get(m); ok {
 			// cache hit
-			c.metrics.cacheHitCount.Inc()
+			if withMetric {
+				c.metrics.cacheHitCount.Inc()
+			}
 			res = append(res, pm)
 			continue
 		}
@@ -489,7 +493,9 @@ func (c *MatcherConverter) MatchersToPromMatchers(ms ...LabelMatcher) ([]*labels
 		c.cache.Add(m, pm)
 		res = append(res, pm)
 	}
-	c.metrics.cacheSizeGauge.Set(float64(c.cache.Len()))
+	if withMetric {
+		c.metrics.cacheSizeGauge.Set(float64(c.cache.Len()))
+	}
 	return res, nil
 }
 

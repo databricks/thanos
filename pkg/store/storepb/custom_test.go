@@ -742,7 +742,7 @@ func TestMatcherConverter_MatchersToPromMatchers(t *testing.T) {
 			cacheHitsBefore := getMetricValue(converter.metrics.cacheHitCount)
 			cacheTotalBefore := getMetricValue(converter.metrics.cacheTotalCount)
 
-			promMatchers, err := converter.MatchersToPromMatchers(c.inputMatchers...)
+			promMatchers, err := converter.MatchersToPromMatchers(true, c.inputMatchers...)
 
 			if c.expectError {
 				require.Error(t, err)
@@ -794,12 +794,12 @@ func BenchmarkMatcherConverter_REWithAndWithoutCache(b *testing.B) {
 	b.Run("With Cache", func(b *testing.B) {
 		// cache warm-up
 		for _, lm := range nonTrivialRegexes {
-			_, err := converter.MatchersToPromMatchers(lm)
+			_, err := converter.MatchersToPromMatchers(false, lm)
 			require.NoError(b, err)
 		}
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_, err := converter.MatchersToPromMatchers(nonTrivialRegexes...)
+			_, err := converter.MatchersToPromMatchers(false, nonTrivialRegexes...)
 			require.NoError(b, err)
 		}
 	})

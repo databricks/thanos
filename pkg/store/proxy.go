@@ -374,7 +374,7 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 		reqLogger = log.With(reqLogger, "request", originalRequest.String())
 	}
 
-	match, matchers, err := matchesExternalLabels(originalRequest.Matchers, s.selectorLabels, s.matcherConverter)
+	match, matchers, err := matchesExternalLabels(originalRequest.Matchers, s.selectorLabels, s.matcherConverter, true)
 	if err != nil {
 		return status.Error(codes.InvalidArgument, err.Error())
 	}
@@ -698,7 +698,7 @@ func (s *ProxyStore) LabelNames(ctx context.Context, originalRequest *storepb.La
 	if s.debugLogging {
 		reqLogger = log.With(reqLogger, "request", originalRequest.String())
 	}
-	match, matchers, err := matchesExternalLabels(originalRequest.Matchers, s.selectorLabels, s.matcherConverter)
+	match, matchers, err := matchesExternalLabels(originalRequest.Matchers, s.selectorLabels, s.matcherConverter, false)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
@@ -801,7 +801,7 @@ func (s *ProxyStore) LabelValues(ctx context.Context, originalRequest *storepb.L
 		return nil, status.Error(codes.InvalidArgument, "label name parameter cannot be empty")
 	}
 
-	match, matchers, err := matchesExternalLabels(originalRequest.Matchers, s.selectorLabels, s.matcherConverter)
+	match, matchers, err := matchesExternalLabels(originalRequest.Matchers, s.selectorLabels, s.matcherConverter, false)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
