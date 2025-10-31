@@ -12,7 +12,6 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-// TestAccessTenantPrefixes tests the accessTenantPrefixes function
 func TestAccessTenantPrefixes(t *testing.T) {
 	tests := []struct {
 		name             string
@@ -83,7 +82,6 @@ func TestAccessTenantPrefixes(t *testing.T) {
 	}
 }
 
-// TestTenantBucketConfigMarshaling tests YAML marshaling/unmarshaling of TenantBucketConfig
 func TestTenantBucketConfigMarshaling(t *testing.T) {
 	tests := []struct {
 		name             string
@@ -130,7 +128,6 @@ func TestTenantBucketConfigMarshaling(t *testing.T) {
 	}
 }
 
-// TestTenantPrefixBucketCreation tests that buckets are created correctly with tenant prefixes
 func TestTenantPrefixBucketCreation(t *testing.T) {
 	tests := []struct {
 		name             string
@@ -208,7 +205,6 @@ func TestTenantPrefixBucketCreation(t *testing.T) {
 	}
 }
 
-// TestBucketConfigPrefixPreservation tests that bucket config prefix is preserved
 func TestBucketConfigPrefixPreservation(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -258,7 +254,6 @@ func TestBucketConfigPrefixPreservation(t *testing.T) {
 	}
 }
 
-// TestTenantPrefixesFromYAML tests end-to-end tenant prefix extraction from YAML
 func TestTenantPrefixesFromYAML(t *testing.T) {
 	yamlConfig := `
 type: FILESYSTEM
