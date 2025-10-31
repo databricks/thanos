@@ -166,21 +166,11 @@ func newCompactMetrics(reg *prometheus.Registry, deleteDelay time.Duration) *com
 	return m
 }
 
-type TenantBucketConfig struct {
-	TenantPrefixes []string `yaml:"tenant_prefixes"`
-	// Other config fields can be added here if needed
-}
-
-func accessTenantPrefixes(bucketConf client.BucketConfig) ([]string, error) {
-	configBytes, err := yaml.Marshal(bucketConf.Config)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to marshal bucket config")
-	}
-	var tenantBucketConfig TenantBucketConfig
-	if err := yaml.Unmarshal(configBytes, &tenantBucketConfig); err != nil {
-		return nil, errors.Wrap(err, "failed to unmarshal into tenant bucket config")
-	}
-	return tenantBucketConfig.TenantPrefixes, nil
+type MultiTenancyBucketConfig struct {
+	Type           client.ObjProvider `yaml:"type"`
+	Config         interface{}        `yaml:"config"`
+	Prefix         string             `yaml:"prefix" default:""`
+	TenantPrefixes []string           `yaml:"tenant_prefixes"` // Example value: "v1/raw/tenant_a,v1/raw/tenant_b,v1/raw/tenant_c"
 }
 
 func runCompact(
@@ -226,26 +216,28 @@ func runCompact(
 	}
 
 	// Determine tenant prefixes to use (if provided)
-	var bucketConf client.BucketConfig
-	if err := yaml.Unmarshal(confContentYaml, &bucketConf); err != nil {
+	var multiTenancyBucketConfig MultiTenancyBucketConfig
+	if err := yaml.Unmarshal(confContentYaml, &multiTenancyBucketConfig); err != nil {
 		return errors.Wrap(err, "parse bucket config")
 	}
 
 	var tenantPrefixes []string
-	tenantPrefixes, err = accessTenantPrefixes(bucketConf)
-	if err != nil || len(tenantPrefixes) == 0 {
+	tenantPrefixes = multiTenancyBucketConfig.TenantPrefixes
+	if len(tenantPrefixes) == 0 {
 		tenantPrefixes = []string{""}
-		level.Info(logger).Log("msg", "tenant prefixes not found in bucket config, assuming single-tenant mode")
+		level.Info(logger).Log("msg", "tenant prefixes not provided by init container, assuming single-tenant mode")
 	} else {
-		level.Info(logger).Log("msg", "tenant prefixes found in bucket config, running in multi-tenant mode", "prefixes", strings.Join(tenantPrefixes, ","))
+		level.Info(logger).Log("msg", "tenant prefixes found, running in multi-tenant mode", "prefixes", strings.Join(tenantPrefixes, ","))
 	}
 
 	// Start compaction for each tenant
 	// Each will get its own bucket created via client.NewBucket with the appropriate prefix
 	for _, tenantPrefix := range tenantPrefixes {
 
-		if tenantPrefix != "" {
-			bucketConf.Prefix = "v1/raw/" + tenantPrefix
+		bucketConf := &client.BucketConfig{
+			Type:   multiTenancyBucketConfig.Type,
+			Config: multiTenancyBucketConfig.Config,
+			Prefix: multiTenancyBucketConfig.Prefix + tenantPrefix,
 		}
 
 		tenantConfYaml, err := yaml.Marshal(bucketConf)
@@ -255,13 +247,13 @@ func runCompact(
 
 		// Create bucket for this tenant
 		if tenantPrefix != "" {
-			level.Info(logger).Log("msg", "creating compactor bucket with tenant prefix", "prefix", "v1/raw/"+tenantPrefix)
+			level.Info(logger).Log("msg", "creating compactor bucket with tenant prefix", "prefix", tenantPrefix)
 		}
 		bkt, err := client.NewBucket(logger, tenantConfYaml, component.String(), nil)
 		if conf.enableFolderDeletion {
 			bkt, err = block.WrapWithAzDataLakeSdk(logger, tenantConfYaml, bkt)
 			if tenantPrefix != "" {
-				level.Info(logger).Log("msg", "azdatalake sdk wrapper enabled for tenant", "prefix", "v1/raw/"+tenantPrefix, "name", bkt.Name())
+				level.Info(logger).Log("msg", "azdatalake sdk wrapper enabled for tenant", "prefix", tenantPrefix, "name", bkt.Name())
 			} else {
 				level.Info(logger).Log("msg", "azdatalake sdk wrapper enabled", "name", bkt.Name())
 			}

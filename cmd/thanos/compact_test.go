@@ -12,102 +12,59 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-func TestAccessTenantPrefixes(t *testing.T) {
+func TestMultiTenancyBucketConfigMarshaling(t *testing.T) {
 	tests := []struct {
 		name             string
-		bucketConfig     client.BucketConfig
-		expectedPrefixes []string
-		expectError      bool
-	}{
-		{
-			name: "bucket config with tenant_prefixes",
-			bucketConfig: client.BucketConfig{
-				Type: client.FILESYSTEM,
-				Config: map[string]interface{}{
-					"directory":       "/tmp/test",
-					"tenant_prefixes": []interface{}{"tenant1", "tenant2", "tenant3"},
-				},
-			},
-			expectedPrefixes: []string{"tenant1", "tenant2", "tenant3"},
-			expectError:      false,
-		},
-		{
-			name: "bucket config without tenant_prefixes",
-			bucketConfig: client.BucketConfig{
-				Type: client.FILESYSTEM,
-				Config: map[string]interface{}{
-					"directory": "/tmp/test",
-				},
-			},
-			expectedPrefixes: nil,
-			expectError:      false,
-		},
-		{
-			name: "bucket config with empty tenant_prefixes",
-			bucketConfig: client.BucketConfig{
-				Type: client.FILESYSTEM,
-				Config: map[string]interface{}{
-					"directory":       "/tmp/test",
-					"tenant_prefixes": []interface{}{},
-				},
-			},
-			expectedPrefixes: []string{},
-			expectError:      false,
-		},
-		{
-			name: "bucket config with single tenant_prefix",
-			bucketConfig: client.BucketConfig{
-				Type: client.FILESYSTEM,
-				Config: map[string]interface{}{
-					"directory":       "/tmp/test",
-					"tenant_prefixes": []interface{}{"tenant-a"},
-				},
-			},
-			expectedPrefixes: []string{"tenant-a"},
-			expectError:      false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			prefixes, err := accessTenantPrefixes(tt.bucketConfig)
-
-			if tt.expectError {
-				testutil.NotOk(t, err)
-			} else {
-				testutil.Ok(t, err)
-				testutil.Equals(t, tt.expectedPrefixes, prefixes)
-			}
-		})
-	}
-}
-
-func TestTenantBucketConfigMarshaling(t *testing.T) {
-	tests := []struct {
-		name             string
-		config           TenantBucketConfig
+		config           MultiTenancyBucketConfig
 		expectedPrefixes []string
 	}{
 		{
 			name: "empty tenant prefixes",
-			config: TenantBucketConfig{
+			config: MultiTenancyBucketConfig{
+				Type: client.FILESYSTEM,
+				Config: map[string]interface{}{
+					"directory": "/tmp/test",
+				},
+				Prefix:         "",
 				TenantPrefixes: []string{},
 			},
 			expectedPrefixes: []string{},
 		},
 		{
 			name: "single tenant prefix",
-			config: TenantBucketConfig{
+			config: MultiTenancyBucketConfig{
+				Type: client.FILESYSTEM,
+				Config: map[string]interface{}{
+					"directory": "/tmp/test",
+				},
+				Prefix:         "",
 				TenantPrefixes: []string{"tenant-a"},
 			},
 			expectedPrefixes: []string{"tenant-a"},
 		},
 		{
 			name: "multiple tenant prefixes",
-			config: TenantBucketConfig{
+			config: MultiTenancyBucketConfig{
+				Type: client.FILESYSTEM,
+				Config: map[string]interface{}{
+					"directory": "/tmp/test",
+				},
+				Prefix:         "",
 				TenantPrefixes: []string{"tenant-a", "tenant-b", "tenant-c"},
 			},
 			expectedPrefixes: []string{"tenant-a", "tenant-b", "tenant-c"},
+		},
+		{
+			name: "with base prefix",
+			config: MultiTenancyBucketConfig{
+				Type: client.FILESYSTEM,
+				Config: map[string]interface{}{
+					"directory": "/tmp/test",
+				},
+				Prefix:         "v1/raw/",
+				TenantPrefixes: []string{"tenant-a", "tenant-b"},
+			},
+			expectedPrefixes: []string{"tenant-a", "tenant-b"},
 		},
 	}
 
@@ -118,80 +75,110 @@ func TestTenantBucketConfigMarshaling(t *testing.T) {
 			testutil.Ok(t, err)
 
 			// Unmarshal back
-			var unmarshaledConfig TenantBucketConfig
+			var unmarshaledConfig MultiTenancyBucketConfig
 			err = yaml.Unmarshal(yamlBytes, &unmarshaledConfig)
 			testutil.Ok(t, err)
 
 			// Verify prefixes are preserved
 			testutil.Equals(t, tt.expectedPrefixes, unmarshaledConfig.TenantPrefixes)
+			testutil.Equals(t, tt.config.Prefix, unmarshaledConfig.Prefix)
+			testutil.Equals(t, tt.config.Type, unmarshaledConfig.Type)
 		})
 	}
 }
 
 func TestTenantPrefixBucketCreation(t *testing.T) {
 	tests := []struct {
-		name             string
-		tenantPrefixes   []string
-		expectedPrefixes []string
+		name                      string
+		multiTenancyConfig        MultiTenancyBucketConfig
+		expectedPrefixes          []string
+		expectedEffectivePrefixes []string
 	}{
 		{
-			name:             "single-tenant mode (no prefixes)",
-			tenantPrefixes:   []string{},
-			expectedPrefixes: []string{""},
+			name: "single-tenant mode (no prefixes)",
+			multiTenancyConfig: MultiTenancyBucketConfig{
+				Type: client.FILESYSTEM,
+				Config: map[string]interface{}{
+					"directory": "/tmp/test",
+				},
+				Prefix:         "",
+				TenantPrefixes: []string{},
+			},
+			expectedPrefixes:          []string{""},
+			expectedEffectivePrefixes: []string{""},
 		},
 		{
-			name:             "multi-tenant mode with one tenant",
-			tenantPrefixes:   []string{"tenant1"},
-			expectedPrefixes: []string{"v1/raw/tenant1"},
+			name: "multi-tenant mode with one tenant",
+			multiTenancyConfig: MultiTenancyBucketConfig{
+				Type: client.FILESYSTEM,
+				Config: map[string]interface{}{
+					"directory": "/tmp/test",
+				},
+				Prefix:         "",
+				TenantPrefixes: []string{"tenant1"},
+			},
+			expectedPrefixes:          []string{"tenant1"},
+			expectedEffectivePrefixes: []string{"tenant1"},
 		},
 		{
-			name:             "multi-tenant mode with multiple tenants",
-			tenantPrefixes:   []string{"tenant1", "tenant2", "tenant3"},
-			expectedPrefixes: []string{"v1/raw/tenant1", "v1/raw/tenant2", "v1/raw/tenant3"},
+			name: "multi-tenant mode with multiple tenants",
+			multiTenancyConfig: MultiTenancyBucketConfig{
+				Type: client.FILESYSTEM,
+				Config: map[string]interface{}{
+					"directory": "/tmp/test",
+				},
+				Prefix:         "",
+				TenantPrefixes: []string{"tenant1", "tenant2", "tenant3"},
+			},
+			expectedPrefixes:          []string{"tenant1", "tenant2", "tenant3"},
+			expectedEffectivePrefixes: []string{"tenant1", "tenant2", "tenant3"},
+		},
+		{
+			name: "multi-tenant mode with base prefix",
+			multiTenancyConfig: MultiTenancyBucketConfig{
+				Type: client.FILESYSTEM,
+				Config: map[string]interface{}{
+					"directory": "/tmp/test",
+				},
+				Prefix:         "v1/raw/",
+				TenantPrefixes: []string{"tenant1", "tenant2"},
+			},
+			expectedPrefixes:          []string{"tenant1", "tenant2"},
+			expectedEffectivePrefixes: []string{"v1/raw/tenant1", "v1/raw/tenant2"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create base bucket config
-			baseBucketConf := client.BucketConfig{
-				Type: client.FILESYSTEM,
-				Config: map[string]interface{}{
-					"directory": t.TempDir(),
-				},
-				Prefix: "",
+			// Simulate what runCompact does
+			tenantPrefixes := tt.multiTenancyConfig.TenantPrefixes
+			if len(tenantPrefixes) == 0 {
+				tenantPrefixes = []string{""}
 			}
 
-			// Add tenant_prefixes if provided
-			if len(tt.tenantPrefixes) > 0 {
-				configMap := baseBucketConf.Config.(map[string]interface{})
-				configMap["tenant_prefixes"] = tt.tenantPrefixes
-				baseBucketConf.Config = configMap
-			}
+			testutil.Equals(t, tt.expectedPrefixes, tenantPrefixes)
 
-			baseYaml, err := yaml.Marshal(baseBucketConf)
-			testutil.Ok(t, err)
-
-			var bucketConf client.BucketConfig
-			err = yaml.Unmarshal(baseYaml, &bucketConf)
-			testutil.Ok(t, err)
-
-			// Get tenant prefixes (simulating what runCompact does)
-			tenantPrefixes := []string{""}
-			extractedPrefixes, err := accessTenantPrefixes(bucketConf)
-			if err == nil && len(extractedPrefixes) > 0 {
-				tenantPrefixes = extractedPrefixes
-			}
-
-			// Simulate what the code does: create buckets for each tenant
-			var actualPrefixes []string
+			// Simulate bucket creation for each tenant
+			var actualEffectivePrefixes []string
 			for _, tenantPrefix := range tenantPrefixes {
-				if tenantPrefix != "" {
-					bucketConf.Prefix = "v1/raw/" + tenantPrefix
+				bucketConf := &client.BucketConfig{
+					Type:   tt.multiTenancyConfig.Type,
+					Config: tt.multiTenancyConfig.Config,
+					Prefix: tt.multiTenancyConfig.Prefix + tenantPrefix,
 				}
-				actualPrefixes = append(actualPrefixes, bucketConf.Prefix)
+				actualEffectivePrefixes = append(actualEffectivePrefixes, bucketConf.Prefix)
 
 				// Verify the bucket can be created
+				// Use a real temp directory for filesystem buckets
+				if bucketConf.Type == client.FILESYSTEM {
+					configMap := make(map[string]interface{})
+					for k, v := range bucketConf.Config.(map[string]interface{}) {
+						configMap[k] = v
+					}
+					configMap["directory"] = t.TempDir()
+					bucketConf.Config = configMap
+				}
+
 				tenantYaml, err := yaml.Marshal(bucketConf)
 				testutil.Ok(t, err)
 
@@ -200,7 +187,7 @@ func TestTenantPrefixBucketCreation(t *testing.T) {
 				testutil.Ok(t, bkt.Close())
 			}
 
-			testutil.Equals(t, tt.expectedPrefixes, actualPrefixes)
+			testutil.Equals(t, tt.expectedEffectivePrefixes, actualEffectivePrefixes)
 		})
 	}
 }
@@ -255,25 +242,106 @@ func TestBucketConfigPrefixPreservation(t *testing.T) {
 }
 
 func TestTenantPrefixesFromYAML(t *testing.T) {
-	yamlConfig := `
+	tests := []struct {
+		name                   string
+		yamlConfig             string
+		expectedTenantPrefixes []string
+		expectedPrefix         string
+		expectedType           client.ObjProvider
+	}{
+		{
+			name: "multi-tenant config without base prefix",
+			yamlConfig: `
 type: FILESYSTEM
 config:
   directory: /tmp/test
-  tenant_prefixes:
-    - tenant-alpha
-    - tenant-beta
-    - tenant-gamma
 prefix: ""
-`
+tenant_prefixes:
+  - tenant-alpha
+  - tenant-beta
+  - tenant-gamma
+`,
+			expectedTenantPrefixes: []string{"tenant-alpha", "tenant-beta", "tenant-gamma"},
+			expectedPrefix:         "",
+			expectedType:           client.FILESYSTEM,
+		},
+		{
+			name: "multi-tenant config with base prefix",
+			yamlConfig: `
+type: FILESYSTEM
+config:
+  directory: /tmp/test
+prefix: "v1/raw/"
+tenant_prefixes:
+  - tenant-a
+  - tenant-b
+`,
+			expectedTenantPrefixes: []string{"tenant-a", "tenant-b"},
+			expectedPrefix:         "v1/raw/",
+			expectedType:           client.FILESYSTEM,
+		},
+		{
+			name: "single-tenant config (no tenant_prefixes)",
+			yamlConfig: `
+type: FILESYSTEM
+config:
+  directory: /tmp/test
+prefix: ""
+`,
+			expectedTenantPrefixes: nil,
+			expectedPrefix:         "",
+			expectedType:           client.FILESYSTEM,
+		},
+		{
+			name: "S3 multi-tenant config",
+			yamlConfig: `
+type: S3
+config:
+  bucket: test-bucket
+  endpoint: s3.amazonaws.com
+prefix: "data/"
+tenant_prefixes:
+  - org1
+  - org2
+`,
+			expectedTenantPrefixes: []string{"org1", "org2"},
+			expectedPrefix:         "data/",
+			expectedType:           client.S3,
+		},
+	}
 
-	var bucketConf client.BucketConfig
-	err := yaml.Unmarshal([]byte(yamlConfig), &bucketConf)
-	testutil.Ok(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var multiTenancyConfig MultiTenancyBucketConfig
+			err := yaml.Unmarshal([]byte(tt.yamlConfig), &multiTenancyConfig)
+			testutil.Ok(t, err)
 
-	// Extract tenant prefixes
-	tenantPrefixes, err := accessTenantPrefixes(bucketConf)
-	testutil.Ok(t, err)
+			// Verify all fields are correctly parsed
+			// For TenantPrefixes, both nil and empty slice are equivalent
+			if tt.expectedTenantPrefixes == nil && len(multiTenancyConfig.TenantPrefixes) == 0 {
+				// Both nil and [] are acceptable for "no tenant prefixes"
+			} else {
+				testutil.Equals(t, tt.expectedTenantPrefixes, multiTenancyConfig.TenantPrefixes)
+			}
+			testutil.Equals(t, tt.expectedPrefix, multiTenancyConfig.Prefix)
+			testutil.Equals(t, tt.expectedType, multiTenancyConfig.Type)
 
-	expected := []string{"tenant-alpha", "tenant-beta", "tenant-gamma"}
-	testutil.Equals(t, expected, tenantPrefixes)
+			// Verify we can marshal back
+			yamlBytes, err := yaml.Marshal(multiTenancyConfig)
+			testutil.Ok(t, err)
+
+			// Verify we can unmarshal again and get the same result
+			var roundtripConfig MultiTenancyBucketConfig
+			err = yaml.Unmarshal(yamlBytes, &roundtripConfig)
+			testutil.Ok(t, err)
+
+			// For roundtrip, verify lengths match (handles nil vs [] equivalence)
+			testutil.Equals(t, len(multiTenancyConfig.TenantPrefixes), len(roundtripConfig.TenantPrefixes))
+			if len(multiTenancyConfig.TenantPrefixes) > 0 {
+				testutil.Equals(t, multiTenancyConfig.TenantPrefixes, roundtripConfig.TenantPrefixes)
+			}
+			testutil.Equals(t, multiTenancyConfig.Prefix, roundtripConfig.Prefix)
+			testutil.Equals(t, multiTenancyConfig.Type, roundtripConfig.Type)
+		})
+	}
 }
