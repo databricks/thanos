@@ -246,18 +246,10 @@ func runCompact(
 			return errors.Wrap(err, "marshal tenant bucket config")
 		}
 
-		// Create bucket for this tenant
-		if tenantPrefix != "" {
-			level.Info(logger).Log("msg", "creating compactor bucket with tenant prefix", "prefix", tenantPrefix)
-		}
 		bkt, err := client.NewBucket(logger, tenantConfYaml, component.String(), nil)
 		if conf.enableFolderDeletion {
 			bkt, err = block.WrapWithAzDataLakeSdk(logger, tenantConfYaml, bkt)
-			if tenantPrefix != "" {
-				level.Info(logger).Log("msg", "azdatalake sdk wrapper enabled for tenant", "prefix", tenantPrefix, "name", bkt.Name())
-			} else {
-				level.Info(logger).Log("msg", "azdatalake sdk wrapper enabled", "name", bkt.Name())
-			}
+			level.Info(logger).Log("msg", "azdatalake sdk wrapper enabled", "prefix", bucketConf.Prefix, "name", bkt.Name())
 		}
 		if err != nil {
 			return err
