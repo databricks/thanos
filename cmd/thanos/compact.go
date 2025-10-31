@@ -218,7 +218,7 @@ func runCompact(
 	// Determine tenant prefixes to use (if provided)
 	var multiTenancyBucketConfig MultiTenancyBucketConfig
 	if err := yaml.Unmarshal(confContentYaml, &multiTenancyBucketConfig); err != nil {
-		return errors.Wrap(err, "parse bucket config")
+		return errors.Wrap(err, "failed to parse MultiTenancyBucketConfig")
 	}
 
 	var tenantPrefixes []string
@@ -239,6 +239,7 @@ func runCompact(
 			Config: multiTenancyBucketConfig.Config,
 			Prefix: multiTenancyBucketConfig.Prefix + tenantPrefix,
 		}
+		level.Info(logger).Log("msg", "starting compaction loop", "prefix", bucketConf.Prefix)
 
 		tenantConfYaml, err := yaml.Marshal(bucketConf)
 		if err != nil {
