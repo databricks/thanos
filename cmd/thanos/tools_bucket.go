@@ -1497,8 +1497,8 @@ func getBucketConfigContentYaml(objStoreConfig *extflag.PathOrContent) ([]byte, 
 		return nil, err
 	}
 
-	var multiTenancyBucketConfig MultiTenancyBucketConfig
-	if err := yaml.Unmarshal(confContentYamlWithTenantPrefixes, &multiTenancyBucketConfig); err != nil {
+	multiTenancyBucketConfig := &MultiTenancyBucketConfig{}
+	if err := yaml.Unmarshal(confContentYamlWithTenantPrefixes, multiTenancyBucketConfig); err != nil {
 		return nil, errors.Wrap(err, "failed to parse MultiTenancyBucketConfig when trying to convert to BucketConfig")
 	}
 
