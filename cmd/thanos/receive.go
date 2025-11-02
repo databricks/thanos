@@ -215,11 +215,6 @@ func runReceive(
 	}
 
 	var bkt objstore.Bucket
-	content, err := conf.objStoreConfig.Content()
-	if err != nil {
-		return errors.Wrap(err, "getting object store config")
-	}
-	level.Info(logger).Log("msg", "conf.objStoreConfig", "content", string(content))
 	confContentYaml, err := getBucketConfigContentYaml(conf.objStoreConfig)
 	if err != nil {
 		return err

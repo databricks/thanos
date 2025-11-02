@@ -79,11 +79,6 @@ func RunDownsample(
 	comp component.Component,
 	hashFunc metadata.HashFunc,
 ) error {
-	content, err := objStoreConfig.Content()
-	if err != nil {
-		return errors.Wrap(err, "getting object store config")
-	}
-	level.Info(logger).Log("msg", "conf.objStore", "content", string(content))
 	confContentYaml, err := getBucketConfigContentYaml(objStoreConfig)
 	if err != nil {
 		return err
