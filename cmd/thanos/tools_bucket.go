@@ -1497,12 +1497,24 @@ func getBucketConfigContentYaml(objStoreConfig *extflag.PathOrContent) ([]byte, 
 		return nil, err
 	}
 
+	// If the config is empty, return empty immediately (for optional configs like sidecar)
+	if len(confContentYamlWithTenantPrefixes) == 0 {
+		fmt.Fprintf(os.Stderr, "DEBUG getBucketConfigContentYaml input is empty, returning empty\n")
+		return []byte{}, nil
+	}
+
 	// DEBUG: Log input
 	fmt.Fprintf(os.Stderr, "DEBUG: getBucketConfigContentYaml input: %s\n", string(confContentYamlWithTenantPrefixes))
 
 	multiTenancyBucketConfig := &MultiTenancyBucketConfig{}
 	if err := yaml.Unmarshal(confContentYamlWithTenantPrefixes, multiTenancyBucketConfig); err != nil {
 		return nil, errors.Wrap(err, "failed to parse MultiTenancyBucketConfig when trying to convert to BucketConfig")
+	}
+
+	// Additional safety check: if Type is empty after unmarshalling, return empty immediately
+	if multiTenancyBucketConfig.Type == "" {
+		fmt.Fprintf(os.Stderr, "DEBUG getBucketConfigContentYaml Type is empty, returning empty after unmarshalling\n")
+		return []byte{}, nil
 	}
 
 	fmt.Fprintf(os.Stderr, "DEBUG getBucketConfigContentYaml parsed Type: '%s'\n", multiTenancyBucketConfig.Type)
