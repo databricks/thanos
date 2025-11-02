@@ -1497,10 +1497,15 @@ func getBucketConfigContentYaml(objStoreConfig *extflag.PathOrContent) ([]byte, 
 		return nil, err
 	}
 
+	// DEBUG: Log input
+	fmt.Fprintf(os.Stderr, "DEBUG: getBucketConfigContentYaml input: %s\n", string(confContentYamlWithTenantPrefixes))
+
 	multiTenancyBucketConfig := &MultiTenancyBucketConfig{}
 	if err := yaml.Unmarshal(confContentYamlWithTenantPrefixes, multiTenancyBucketConfig); err != nil {
 		return nil, errors.Wrap(err, "failed to parse MultiTenancyBucketConfig when trying to convert to BucketConfig")
 	}
+
+	fmt.Fprintf(os.Stderr, "DEBUG getBucketConfigContentYaml parsed Type: '%s'\n", multiTenancyBucketConfig.Type)
 
 	bucketConf := &client.BucketConfig{
 		Type:   multiTenancyBucketConfig.Type,
@@ -1512,6 +1517,8 @@ func getBucketConfigContentYaml(objStoreConfig *extflag.PathOrContent) ([]byte, 
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to marshal BucketConfig when trying to convert from MultiTenancyBucketConfig")
 	}
+
+	fmt.Fprintf(os.Stderr, "DEBUG getBucketConfigContentYaml output: %s\n", string(confContentYaml))
 
 	return confContentYaml, nil
 }
