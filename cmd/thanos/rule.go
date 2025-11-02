@@ -835,11 +835,7 @@ func runRule(
 		})
 	}
 
-	confContentYamlWithTenantPrefixes, err := conf.objStoreConfig.Content()
-	if err != nil {
-		return err
-	}
-	confContentYaml, err := getBucketConfigContentYaml(confContentYamlWithTenantPrefixes)
+	confContentYaml, err := getBucketConfigContentYaml(conf.objStoreConfig)
 	if err != nil {
 		return err
 	}

@@ -130,13 +130,9 @@ func runSidecar(
 		client:       promclient.NewWithTracingClient(logger, httpClient, "thanos-sidecar"),
 	}
 
-	confContentYamlWithTenantPrefixes, err := conf.objStore.Content()
+	confContentYaml, err := getBucketConfigContentYaml(&conf.objStore)
 	if err != nil {
 		return errors.Wrap(err, "getting object store config")
-	}
-	confContentYaml, err := getBucketConfigContentYaml(confContentYamlWithTenantPrefixes)
-	if err != nil {
-		return errors.Wrap(err, "converting object store config to BucketConfig")
 	}
 
 	var uploads = len(confContentYaml) != 0
