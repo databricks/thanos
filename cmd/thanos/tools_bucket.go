@@ -322,7 +322,11 @@ func registerBucketVerify(app extkingpin.AppClause, objStoreConfig *extflag.Path
 		"or compactor is ignoring the deletion because it's compacting the block at the same time.").
 		Default("0s"))
 	cmd.Setup(func(g *run.Group, logger log.Logger, reg *prometheus.Registry, _ opentracing.Tracer, _ <-chan struct{}, _ bool) error {
-		confContentYaml, err := getBucketConfigContentYaml(objStoreConfig)
+		confContentYamlWithTenantPrefixes, err := objStoreConfig.Content()
+		if err != nil {
+			return err
+		}
+		confContentYaml, err := getBucketConfigContentYaml(confContentYamlWithTenantPrefixes)
 		if err != nil {
 			return err
 		}
@@ -334,7 +338,11 @@ func registerBucketVerify(app extkingpin.AppClause, objStoreConfig *extflag.Path
 		insBkt := objstoretracing.WrapWithTraces(objstore.WrapWithMetrics(bkt, extprom.WrapRegistererWithPrefix("thanos_", reg), bkt.Name()))
 		defer runutil.CloseWithLogOnErr(logger, insBkt, "bucket client")
 
-		backupconfContentYaml, err := getBucketConfigContentYaml(objStoreBackupConfig)
+		backupconfContentYamlWithTenantPrefixes, err := objStoreBackupConfig.Content()
+		if err != nil {
+			return err
+		}
+		backupconfContentYaml, err := getBucketConfigContentYaml(backupconfContentYamlWithTenantPrefixes)
 		if err != nil {
 			return err
 		}
@@ -406,7 +414,11 @@ func registerBucketLs(app extkingpin.AppClause, objStoreConfig *extflag.PathOrCo
 	tbc.registerBucketLsFlag(cmd)
 
 	cmd.Setup(func(g *run.Group, logger log.Logger, reg *prometheus.Registry, _ opentracing.Tracer, _ <-chan struct{}, _ bool) error {
-		confContentYaml, err := getBucketConfigContentYaml(objStoreConfig)
+		confContentYamlWithTenantPrefixes, err := objStoreConfig.Content()
+		if err != nil {
+			return err
+		}
+		confContentYaml, err := getBucketConfigContentYaml(confContentYamlWithTenantPrefixes)
 		if err != nil {
 			return err
 		}
@@ -514,7 +526,11 @@ func registerBucketInspect(app extkingpin.AppClause, objStoreConfig *extflag.Pat
 			return errors.Wrap(err, "error parsing selector flag")
 		}
 
-		confContentYaml, err := getBucketConfigContentYaml(objStoreConfig)
+		confContentYamlWithTenantPrefixes, err := objStoreConfig.Content()
+		if err != nil {
+			return err
+		}
+		confContentYaml, err := getBucketConfigContentYaml(confContentYamlWithTenantPrefixes)
 		if err != nil {
 			return err
 		}
@@ -624,7 +640,11 @@ func registerBucketWeb(app extkingpin.AppClause, objStoreConfig *extflag.PathOrC
 
 		flagsMap := getFlagsMap(cmd.Flags())
 
-		confContentYaml, err := getBucketConfigContentYaml(objStoreConfig)
+		confContentYamlWithTenantPrefixes, err := objStoreConfig.Content()
+		if err != nil {
+			return err
+		}
+		confContentYaml, err := getBucketConfigContentYaml(confContentYamlWithTenantPrefixes)
 		if err != nil {
 			return err
 		}
@@ -811,7 +831,11 @@ func registerBucketCleanup(app extkingpin.AppClause, objStoreConfig *extflag.Pat
 
 	selectorRelabelConf := extkingpin.RegisterSelectorRelabelFlags(cmd)
 	cmd.Setup(func(g *run.Group, logger log.Logger, reg *prometheus.Registry, _ opentracing.Tracer, _ <-chan struct{}, _ bool) error {
-		confContentYaml, err := getBucketConfigContentYaml(objStoreConfig)
+		confContentYamlWithTenantPrefixes, err := objStoreConfig.Content()
+		if err != nil {
+			return err
+		}
+		confContentYaml, err := getBucketConfigContentYaml(confContentYamlWithTenantPrefixes)
 		if err != nil {
 			return err
 		}
@@ -1079,7 +1103,11 @@ func registerBucketMarkBlock(app extkingpin.AppClause, objStoreConfig *extflag.P
 	tbc.registerBucketMarkBlockFlag(cmd)
 
 	cmd.Setup(func(g *run.Group, logger log.Logger, reg *prometheus.Registry, _ opentracing.Tracer, _ <-chan struct{}, _ bool) error {
-		confContentYaml, err := getBucketConfigContentYaml(objStoreConfig)
+		confContentYamlWithTenantPrefixes, err := objStoreConfig.Content()
+		if err != nil {
+			return err
+		}
+		confContentYaml, err := getBucketConfigContentYaml(confContentYamlWithTenantPrefixes)
 		if err != nil {
 			return err
 		}
@@ -1159,7 +1187,11 @@ func registerBucketRewrite(app extkingpin.AppClause, objStoreConfig *extflag.Pat
 	toRelabel := extflag.RegisterPathOrContent(cmd, "rewrite.to-relabel-config", "YAML file that contains relabel configs that will be applied to blocks", extflag.WithEnvSubstitution())
 	provideChangeLog := cmd.Flag("rewrite.add-change-log", "If specified, all modifications are written to new block directory. Disable if latency is to high.").Default("true").Bool()
 	cmd.Setup(func(g *run.Group, logger log.Logger, reg *prometheus.Registry, _ opentracing.Tracer, _ <-chan struct{}, _ bool) error {
-		confContentYaml, err := getBucketConfigContentYaml(objStoreConfig)
+		confContentYamlWithTenantPrefixes, err := objStoreConfig.Content()
+		if err != nil {
+			return err
+		}
+		confContentYaml, err := getBucketConfigContentYaml(confContentYamlWithTenantPrefixes)
 		if err != nil {
 			return err
 		}
@@ -1357,7 +1389,11 @@ func registerBucketRetention(app extkingpin.AppClause, objStoreConfig *extflag.P
 			level.Info(logger).Log("msg", "retention policy of 1 hour aggregated samples is enabled", "duration", retentionByResolution[compact.ResolutionLevel1h])
 		}
 
-		confContentYaml, err := getBucketConfigContentYaml(objStoreConfig)
+		confContentYamlWithTenantPrefixes, err := objStoreConfig.Content()
+		if err != nil {
+			return err
+		}
+		confContentYaml, err := getBucketConfigContentYaml(confContentYamlWithTenantPrefixes)
 		if err != nil {
 			return err
 		}
@@ -1457,9 +1493,13 @@ func registerBucketUploadBlocks(app extkingpin.AppClause, objStoreConfig *extfla
 			return errors.Wrapf(err, "unable to access path '%s'", tbc.path)
 		}
 
-		confContentYaml, err := getBucketConfigContentYaml(objStoreConfig)
+		confContentYamlWithTenantPrefixes, err := objStoreConfig.Content()
 		if err != nil {
 			return errors.Wrap(err, "unable to parse objstore config")
+		}
+		confContentYaml, err := getBucketConfigContentYaml(confContentYamlWithTenantPrefixes)
+		if err != nil {
+			return err
 		}
 
 		bkt, err := client.NewBucket(logger, confContentYaml, component.Upload.String(), nil)
@@ -1491,12 +1531,7 @@ func registerBucketUploadBlocks(app extkingpin.AppClause, objStoreConfig *extfla
 
 // getBucketConfigContentYaml converts the objStoreConfig from a MultiTenancyBucketConfig to a BucketConfig and marshals it to a YAML string.
 // If the objStoreConfig is already a BucketConfig without the tenant_prefixes field, it effectively does not change anything.
-func getBucketConfigContentYaml(objStoreConfig *extflag.PathOrContent) ([]byte, error) {
-	confContentYamlWithTenantPrefixes, err := objStoreConfig.Content()
-	if err != nil {
-		return nil, err
-	}
-
+func getBucketConfigContentYaml(confContentYamlWithTenantPrefixes []byte) ([]byte, error) {
 	var multiTenancyBucketConfig MultiTenancyBucketConfig
 	if err := yaml.Unmarshal(confContentYamlWithTenantPrefixes, &multiTenancyBucketConfig); err != nil {
 		return nil, errors.Wrap(err, "failed to parse MultiTenancyBucketConfig when trying to convert to BucketConfig")

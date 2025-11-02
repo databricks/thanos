@@ -306,10 +306,15 @@ func runStore(
 		srv.Shutdown(err)
 	})
 
-	confContentYaml, err := getBucketConfigContentYaml(&conf.objStoreConfig)
+	confContentYamlWithTenantPrefixes, err := conf.objStoreConfig.Content()
 	if err != nil {
 		return err
 	}
+	confContentYaml, err := getBucketConfigContentYaml(confContentYamlWithTenantPrefixes)
+	if err != nil {
+		return err
+	}
+
 	customBktConfig := exthttp.DefaultCustomBucketConfig()
 	if err := yaml.Unmarshal(confContentYaml, &customBktConfig); err != nil {
 		return errors.Wrap(err, "parsing config YAML file")

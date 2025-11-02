@@ -79,7 +79,11 @@ func RunDownsample(
 	comp component.Component,
 	hashFunc metadata.HashFunc,
 ) error {
-	confContentYaml, err := getBucketConfigContentYaml(objStoreConfig)
+	confContentYamlWithTenantPrefixes, err := objStoreConfig.Content()
+	if err != nil {
+		return err
+	}
+	confContentYaml, err := getBucketConfigContentYaml(confContentYamlWithTenantPrefixes)
 	if err != nil {
 		return err
 	}
