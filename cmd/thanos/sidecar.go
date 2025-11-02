@@ -130,7 +130,7 @@ func runSidecar(
 		client:       promclient.NewWithTracingClient(logger, httpClient, "thanos-sidecar"),
 	}
 
-	confContentYaml, err := conf.objStore.Content()
+	confContentYaml, err := getBucketConfigContentYaml(&conf.objStore)
 	if err != nil {
 		return errors.Wrap(err, "getting object store config")
 	}

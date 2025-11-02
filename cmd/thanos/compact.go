@@ -210,6 +210,7 @@ func runCompact(
 		srv.Shutdown(err)
 	})
 
+	// Note: We don't use getBucketConfigContentYaml here because we need to handle the case where the objStoreConfig is a MultiTenancyBucketConfig.
 	confContentYaml, err := conf.objStore.Content()
 	if err != nil {
 		return err

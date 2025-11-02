@@ -215,7 +215,7 @@ func runReceive(
 	}
 
 	var bkt objstore.Bucket
-	confContentYaml, err := conf.objStoreConfig.Content()
+	confContentYaml, err := getBucketConfigContentYaml(conf.objStoreConfig)
 	if err != nil {
 		return err
 	}

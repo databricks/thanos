@@ -835,7 +835,7 @@ func runRule(
 		})
 	}
 
-	confContentYaml, err := conf.objStoreConfig.Content()
+	confContentYaml, err := getBucketConfigContentYaml(conf.objStoreConfig)
 	if err != nil {
 		return err
 	}
