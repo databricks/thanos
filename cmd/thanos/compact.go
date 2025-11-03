@@ -258,14 +258,12 @@ func runCompact(
 			return err
 		}
 
-		var tenantReg prometheus.Registerer
 		if tenantPrefix != "" {
-			// For multi-tenant mode, add tenant label to avoid metric collisions
-			tenantReg = prometheus.WrapRegistererWith(prometheus.Labels{"tenant_prefix": tenantPrefix}, reg)
-		} else {
-			tenantReg = reg
+			// For multi-tenant mode, we pass a nil registerer to avoid metric collisions
+			// TODO (willh-db): revisit metrics structure for multi-tenant mode
+			reg = nil
 		}
-		insBkt := objstoretracing.WrapWithTraces(objstore.WrapWithMetrics(bkt, extprom.WrapRegistererWithPrefix("thanos_", tenantReg), bkt.Name()))
+		insBkt := objstoretracing.WrapWithTraces(objstore.WrapWithMetrics(bkt, extprom.WrapRegistererWithPrefix("thanos_", reg), bkt.Name()))
 
 		// Create tenant-specific logger
 		tenantLogger := logger
@@ -298,12 +296,7 @@ func runCompact(
 		noCompactMarkerFilter := compact.NewGatherNoCompactionMarkFilter(logger, insBkt, conf.blockMetaFetchConcurrency)
 		noDownsampleMarkerFilter := downsample.NewGatherNoDownsampleMarkFilter(logger, insBkt, conf.blockMetaFetchConcurrency)
 		labelShardedMetaFilter := block.NewLabelShardedMetaFilter(relabelConfig)
-		var consistencyDelayMetaFilter *block.ConsistencyDelayMetaFilter
-		if tenantPrefix != "" {
-			consistencyDelayMetaFilter = block.NewConsistencyDelayMetaFilter(logger, conf.consistencyDelay, nil) // TODO (willh-db): revisit metrics here
-		} else {
-			consistencyDelayMetaFilter = block.NewConsistencyDelayMetaFilter(logger, conf.consistencyDelay, (extprom.WrapRegistererWithPrefix("thanos_", reg)))
-		}
+		consistencyDelayMetaFilter := block.NewConsistencyDelayMetaFilter(logger, conf.consistencyDelay, (extprom.WrapRegistererWithPrefix("thanos_", reg)))
 		timePartitionMetaFilter := block.NewTimePartitionMetaFilter(conf.filterConf.MinTime, conf.filterConf.MaxTime)
 
 		var blockLister block.Lister
@@ -315,12 +308,7 @@ func runCompact(
 		default:
 			return errors.Errorf("unknown sync strategy %s", conf.blockListStrategy)
 		}
-		var baseMetaFetcher *block.BaseFetcher
-		if tenantPrefix != "" {
-			baseMetaFetcher, err = block.NewBaseFetcher(logger, conf.blockMetaFetchConcurrency, insBkt, blockLister, conf.dataDir, nil) // TODO (willh-db): revisit metrics here
-		} else {
-			baseMetaFetcher, err = block.NewBaseFetcher(logger, conf.blockMetaFetchConcurrency, insBkt, blockLister, conf.dataDir, extprom.WrapRegistererWithPrefix("thanos_", reg))
-		}
+		baseMetaFetcher, err := block.NewBaseFetcher(logger, conf.blockMetaFetchConcurrency, insBkt, blockLister, conf.dataDir, extprom.WrapRegistererWithPrefix("thanos_", reg))
 		if err != nil {
 			return errors.Wrap(err, "create meta fetcher")
 		}
@@ -369,15 +357,9 @@ func runCompact(
 			if !conf.wait {
 				syncMetasTimeout = 0
 			}
-			var metaSyncerReg prometheus.Registerer
-			if tenantPrefix != "" {
-				metaSyncerReg = nil // TODO (willh-db): revisit metrics here
-			} else {
-				metaSyncerReg = reg
-			}
 			sy, err = compact.NewMetaSyncer(
 				logger,
-				metaSyncerReg,
+				reg,
 				insBkt,
 				cf,
 				duplicateBlocksFilter,
@@ -427,12 +409,7 @@ func runCompact(
 
 		// Instantiate the compactor with different time slices. Timestamps in TSDB
 		// are in milliseconds.
-		var comp *tsdb.LeveledCompactor
-		if tenantPrefix != "" {
-			comp, err = tsdb.NewLeveledCompactor(ctx, nil, tenantLogger, levels, downsample.NewPool(), mergeFunc) // TODO (willh-db): revisit metrics here
-		} else {
-			comp, err = tsdb.NewLeveledCompactor(ctx, reg, tenantLogger, levels, downsample.NewPool(), mergeFunc)
-		}
+		comp, err := tsdb.NewLeveledCompactor(ctx, reg, tenantLogger, levels, downsample.NewPool(), mergeFunc)
 		if err != nil {
 			return errors.Wrap(err, "create compactor")
 		}
@@ -450,18 +427,12 @@ func runCompact(
 			return errors.Wrap(err, "create working downsample directory")
 		}
 
-		var grouperReg prometheus.Registerer
-		if tenantPrefix != "" {
-			grouperReg = nil // TODO (willh-db): revisit metrics here
-		} else {
-			grouperReg = reg
-		}
 		grouper := compact.NewDefaultGrouper(
 			logger,
 			insBkt,
 			conf.acceptMalformedIndex,
 			enableVerticalCompaction,
-			grouperReg,
+			reg,
 			compactMetrics.blocksMarked.WithLabelValues(metadata.DeletionMarkFilename, ""),
 			compactMetrics.garbageCollectedBlocks,
 			compactMetrics.blocksMarked.WithLabelValues(metadata.NoCompactMarkFilename, metadata.OutOfOrderChunksNoCompactReason),
