@@ -259,14 +259,16 @@ func runCompact(
 		}
 
 		var insBkt objstore.InstrumentedBucket
+		var tenantReg prometheus.Registerer
 
 		if tenantPrefix != "" {
 			// For multi-tenant mode, we pass a nil registerer to avoid metric collisions
 			// TODO (willh-db): revisit metrics structure for multi-tenant mode
-			reg = nil
+			tenantReg = nil
 			insBkt = objstoretracing.WrapWithTraces(bkt)
 		} else {
-			insBkt = objstoretracing.WrapWithTraces(objstore.WrapWithMetrics(bkt, extprom.WrapRegistererWithPrefix("thanos_", reg), bkt.Name()))
+			tenantReg = reg
+			insBkt = objstoretracing.WrapWithTraces(objstore.WrapWithMetrics(bkt, extprom.WrapRegistererWithPrefix("thanos_", tenantReg), bkt.Name()))
 		}
 
 		// Create tenant-specific logger
@@ -304,7 +306,7 @@ func runCompact(
 		if tenantPrefix != "" {
 			consistencyDelayMetaFilter = block.NewConsistencyDelayMetaFilter(logger, conf.consistencyDelay, nil) // TODO (willh-db): revisit metrics here
 		} else {
-			consistencyDelayMetaFilter = block.NewConsistencyDelayMetaFilter(logger, conf.consistencyDelay, (extprom.WrapRegistererWithPrefix("thanos_", reg)))
+			consistencyDelayMetaFilter = block.NewConsistencyDelayMetaFilter(logger, conf.consistencyDelay, (extprom.WrapRegistererWithPrefix("thanos_", tenantReg)))
 		}
 		timePartitionMetaFilter := block.NewTimePartitionMetaFilter(conf.filterConf.MinTime, conf.filterConf.MaxTime)
 
@@ -321,7 +323,7 @@ func runCompact(
 		if tenantPrefix != "" {
 			baseMetaFetcher, err = block.NewBaseFetcher(logger, conf.blockMetaFetchConcurrency, insBkt, blockLister, conf.dataDir, nil) // TODO (willh-db): revisit metrics here
 		} else {
-			baseMetaFetcher, err = block.NewBaseFetcher(logger, conf.blockMetaFetchConcurrency, insBkt, blockLister, conf.dataDir, extprom.WrapRegistererWithPrefix("thanos_", reg))
+			baseMetaFetcher, err = block.NewBaseFetcher(logger, conf.blockMetaFetchConcurrency, insBkt, blockLister, conf.dataDir, extprom.WrapRegistererWithPrefix("thanos_", tenantReg))
 		}
 		if err != nil {
 			return errors.Wrap(err, "create meta fetcher")
@@ -362,7 +364,7 @@ func runCompact(
 			if tenantPrefix != "" {
 				cf = baseMetaFetcher.NewMetaFetcher(nil, filters) // TODO (willh-db): revisit metrics here
 			} else {
-				cf = baseMetaFetcher.NewMetaFetcher(extprom.WrapRegistererWithPrefix("thanos_", reg), filters)
+				cf = baseMetaFetcher.NewMetaFetcher(extprom.WrapRegistererWithPrefix("thanos_", tenantReg), filters)
 			}
 			cf.UpdateOnChange(func(blocks []metadata.Meta, err error) {
 				api.SetLoaded(blocks, err)
@@ -377,7 +379,7 @@ func runCompact(
 			}
 			sy, err = compact.NewMetaSyncer(
 				logger,
-				reg,
+				tenantReg,
 				insBkt,
 				cf,
 				duplicateBlocksFilter,
@@ -427,7 +429,7 @@ func runCompact(
 
 		// Instantiate the compactor with different time slices. Timestamps in TSDB
 		// are in milliseconds.
-		comp, err := tsdb.NewLeveledCompactor(ctx, reg, tenantLogger, levels, downsample.NewPool(), mergeFunc)
+		comp, err := tsdb.NewLeveledCompactor(ctx, tenantReg, tenantLogger, levels, downsample.NewPool(), mergeFunc)
 		if err != nil {
 			return errors.Wrap(err, "create compactor")
 		}
@@ -450,7 +452,7 @@ func runCompact(
 			insBkt,
 			conf.acceptMalformedIndex,
 			enableVerticalCompaction,
-			reg,
+			tenantReg,
 			compactMetrics.blocksMarked.WithLabelValues(metadata.DeletionMarkFilename, ""),
 			compactMetrics.garbageCollectedBlocks,
 			compactMetrics.blocksMarked.WithLabelValues(metadata.NoCompactMarkFilename, metadata.OutOfOrderChunksNoCompactReason),
@@ -716,7 +718,7 @@ func runCompact(
 				if tenantPrefix != "" {
 					f = baseMetaFetcher.NewMetaFetcher(nil, nil, "component", "globalBucketUI") // TODO (willh-db): revisit metrics here
 				} else {
-					f = baseMetaFetcher.NewMetaFetcher(extprom.WrapRegistererWithPrefix("thanos_bucket_ui", reg), nil, "component", "globalBucketUI")
+					f = baseMetaFetcher.NewMetaFetcher(extprom.WrapRegistererWithPrefix("thanos_bucket_ui", tenantReg), nil, "component", "globalBucketUI")
 				}
 				f.UpdateOnChange(func(blocks []metadata.Meta, err error) {
 					api.SetGlobal(blocks, err)
