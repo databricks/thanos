@@ -231,6 +231,8 @@ func runCompact(
 		level.Info(logger).Log("msg", "tenant prefixes found, running in multi-tenant mode", "prefixes", strings.Join(tenantPrefixes, ","))
 	}
 
+	overlappingCallback := compact.NewOverlappingCompactionLifecycleCallback(reg, logger, conf.enableOverlappingRemoval)
+
 	// Start compaction for each tenant
 	// Each will get its own bucket created via client.NewBucket with the appropriate prefix
 	for _, tenantPrefix := range tenantPrefixes {
@@ -462,7 +464,7 @@ func runCompact(
 			planner,
 			comp,
 			compact.DefaultBlockDeletableChecker{},
-			compact.NewOverlappingCompactionLifecycleCallback(reg, tenantLogger, conf.enableOverlappingRemoval),
+			overlappingCallback,
 			compactDir,
 			insBkt,
 			conf.compactionConcurrency,
@@ -674,7 +676,10 @@ func runCompact(
 		})
 
 		if conf.wait {
-			if !conf.disableWeb {
+			isFirstTenant := (tenantPrefix == tenantPrefixes[0])
+
+			// Only set up web UI and progress for the first tenant
+			if isFirstTenant && !conf.disableWeb {
 				r := route.New()
 
 				ins := extpromhttp.NewInstrumentationMiddleware(reg, nil)
@@ -743,7 +748,7 @@ func runCompact(
 			}
 
 			// Periodically calculate the progress of compaction, downsampling and retention.
-			if conf.progressCalculateInterval > 0 {
+			if isFirstTenant && conf.progressCalculateInterval > 0 {
 				g.Add(func() error {
 					ps := compact.NewCompactionProgressCalculator(reg, tsdbPlanner)
 					rs := compact.NewRetentionProgressCalculator(reg, retentionByResolution)
