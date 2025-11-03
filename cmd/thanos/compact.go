@@ -263,6 +263,7 @@ func runCompact(
 		if tenantPrefix != "" {
 			// For multi-tenant mode, we pass a nil registerer to avoid metric collisions
 			// TODO (willh-db): revisit metrics structure for multi-tenant mode
+			reg = nil
 			insBkt = objstoretracing.WrapWithTraces(bkt)
 		} else {
 			insBkt = objstoretracing.WrapWithTraces(objstore.WrapWithMetrics(bkt, extprom.WrapRegistererWithPrefix("thanos_", reg), bkt.Name()))
@@ -357,8 +358,12 @@ func runCompact(
 				filters = append(filters, noDownsampleMarkerFilter)
 			}
 			// Make sure all compactor meta syncs are done through Syncer.SyncMeta for readability.
-			cf := baseMetaFetcher.NewMetaFetcher(
-				extprom.WrapRegistererWithPrefix("thanos_", reg), filters)
+			var cf *block.MetaFetcher
+			if tenantPrefix != "" {
+				cf = baseMetaFetcher.NewMetaFetcher(nil, filters) // TODO (willh-db): revisit metrics here
+			} else {
+				cf = baseMetaFetcher.NewMetaFetcher(extprom.WrapRegistererWithPrefix("thanos_", reg), filters)
+			}
 			cf.UpdateOnChange(func(blocks []metadata.Meta, err error) {
 				api.SetLoaded(blocks, err)
 			})
@@ -707,7 +712,12 @@ func runCompact(
 
 				// Separate fetcher for global view.
 				// TODO(bwplotka): Allow Bucket UI to visualize the state of the block as well.
-				f := baseMetaFetcher.NewMetaFetcher(extprom.WrapRegistererWithPrefix("thanos_bucket_ui", reg), nil, "component", "globalBucketUI")
+				var f *block.MetaFetcher
+				if tenantPrefix != "" {
+					f = baseMetaFetcher.NewMetaFetcher(nil, nil, "component", "globalBucketUI") // TODO (willh-db): revisit metrics here
+				} else {
+					f = baseMetaFetcher.NewMetaFetcher(extprom.WrapRegistererWithPrefix("thanos_bucket_ui", reg), nil, "component", "globalBucketUI")
+				}
 				f.UpdateOnChange(func(blocks []metadata.Meta, err error) {
 					api.SetGlobal(blocks, err)
 				})
