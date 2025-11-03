@@ -259,7 +259,7 @@ func runCompact(
 		var tenantReg prometheus.Registerer
 		if tenantPrefix != "" {
 			// For multi-tenant mode, add tenant label to avoid metric collisions
-			tenantReg = prometheus.WrapRegistererWith(prometheus.Labels{"tenant": tenantPrefix}, reg)
+			tenantReg = prometheus.WrapRegistererWith(prometheus.Labels{"tenant_prefix": tenantPrefix}, reg)
 		} else {
 			tenantReg = reg
 		}
