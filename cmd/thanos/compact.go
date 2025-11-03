@@ -345,7 +345,7 @@ func runCompact(
 			}
 			// Make sure all compactor meta syncs are done through Syncer.SyncMeta for readability.
 			cf := baseMetaFetcher.NewMetaFetcher(
-				extprom.WrapRegistererWithPrefix("thanos_", tenantReg), filters)
+				extprom.WrapRegistererWithPrefix("thanos_", reg), filters)
 			cf.UpdateOnChange(func(blocks []metadata.Meta, err error) {
 				api.SetLoaded(blocks, err)
 			})
