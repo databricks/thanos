@@ -4,6 +4,7 @@
 package main
 
 import (
+	"path"
 	"testing"
 
 	"github.com/efficientgo/core/testutil"
@@ -164,7 +165,7 @@ func TestTenantPrefixBucketCreation(t *testing.T) {
 				bucketConf := &client.BucketConfig{
 					Type:   tt.multiTenancyConfig.Type,
 					Config: tt.multiTenancyConfig.Config,
-					Prefix: tt.multiTenancyConfig.Prefix + tenantPrefix,
+					Prefix: path.Join(tt.multiTenancyConfig.Prefix, tenantPrefix),
 				}
 				actualEffectivePrefixes = append(actualEffectivePrefixes, bucketConf.Prefix)
 

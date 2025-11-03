@@ -238,7 +238,7 @@ func runCompact(
 		bucketConf := &client.BucketConfig{
 			Type:   multiTenancyBucketConfig.Type,
 			Config: multiTenancyBucketConfig.Config,
-			Prefix: multiTenancyBucketConfig.Prefix + tenantPrefix,
+			Prefix: path.Join(multiTenancyBucketConfig.Prefix, tenantPrefix),
 		}
 		level.Info(logger).Log("msg", "starting compaction loop", "prefix", bucketConf.Prefix)
 
@@ -256,7 +256,14 @@ func runCompact(
 			return err
 		}
 
-		insBkt := objstoretracing.WrapWithTraces(objstore.WrapWithMetrics(bkt, extprom.WrapRegistererWithPrefix("thanos_", reg), bkt.Name()))
+		var tenantReg prometheus.Registerer
+		if tenantPrefix != "" {
+			// For multi-tenant mode, add tenant label to avoid metric collisions
+			tenantReg = prometheus.WrapRegistererWith(prometheus.Labels{"tenant": tenantPrefix}, reg)
+		} else {
+			tenantReg = reg
+		}
+		insBkt := objstoretracing.WrapWithTraces(objstore.WrapWithMetrics(bkt, extprom.WrapRegistererWithPrefix("thanos_", tenantReg), bkt.Name()))
 
 		// Create tenant-specific logger
 		tenantLogger := logger
@@ -289,7 +296,7 @@ func runCompact(
 		noCompactMarkerFilter := compact.NewGatherNoCompactionMarkFilter(logger, insBkt, conf.blockMetaFetchConcurrency)
 		noDownsampleMarkerFilter := downsample.NewGatherNoDownsampleMarkFilter(logger, insBkt, conf.blockMetaFetchConcurrency)
 		labelShardedMetaFilter := block.NewLabelShardedMetaFilter(relabelConfig)
-		consistencyDelayMetaFilter := block.NewConsistencyDelayMetaFilter(logger, conf.consistencyDelay, extprom.WrapRegistererWithPrefix("thanos_", reg))
+		consistencyDelayMetaFilter := block.NewConsistencyDelayMetaFilter(logger, conf.consistencyDelay, extprom.WrapRegistererWithPrefix("thanos_", tenantReg))
 		timePartitionMetaFilter := block.NewTimePartitionMetaFilter(conf.filterConf.MinTime, conf.filterConf.MaxTime)
 
 		var blockLister block.Lister
@@ -301,7 +308,7 @@ func runCompact(
 		default:
 			return errors.Errorf("unknown sync strategy %s", conf.blockListStrategy)
 		}
-		baseMetaFetcher, err := block.NewBaseFetcher(logger, conf.blockMetaFetchConcurrency, insBkt, blockLister, conf.dataDir, extprom.WrapRegistererWithPrefix("thanos_", reg))
+		baseMetaFetcher, err := block.NewBaseFetcher(logger, conf.blockMetaFetchConcurrency, insBkt, blockLister, conf.dataDir, extprom.WrapRegistererWithPrefix("thanos_", tenantReg))
 		if err != nil {
 			return errors.Wrap(err, "create meta fetcher")
 		}
@@ -338,7 +345,7 @@ func runCompact(
 			}
 			// Make sure all compactor meta syncs are done through Syncer.SyncMeta for readability.
 			cf := baseMetaFetcher.NewMetaFetcher(
-				extprom.WrapRegistererWithPrefix("thanos_", reg), filters)
+				extprom.WrapRegistererWithPrefix("thanos_", tenantReg), filters)
 			cf.UpdateOnChange(func(blocks []metadata.Meta, err error) {
 				api.SetLoaded(blocks, err)
 			})
@@ -352,7 +359,7 @@ func runCompact(
 			}
 			sy, err = compact.NewMetaSyncer(
 				logger,
-				reg,
+				tenantReg,
 				insBkt,
 				cf,
 				duplicateBlocksFilter,
@@ -402,7 +409,7 @@ func runCompact(
 
 		// Instantiate the compactor with different time slices. Timestamps in TSDB
 		// are in milliseconds.
-		comp, err := tsdb.NewLeveledCompactor(ctx, reg, tenantLogger, levels, downsample.NewPool(), mergeFunc)
+		comp, err := tsdb.NewLeveledCompactor(ctx, tenantReg, tenantLogger, levels, downsample.NewPool(), mergeFunc)
 		if err != nil {
 			return errors.Wrap(err, "create compactor")
 		}
@@ -425,7 +432,7 @@ func runCompact(
 			insBkt,
 			conf.acceptMalformedIndex,
 			enableVerticalCompaction,
-			reg,
+			tenantReg,
 			compactMetrics.blocksMarked.WithLabelValues(metadata.DeletionMarkFilename, ""),
 			compactMetrics.garbageCollectedBlocks,
 			compactMetrics.blocksMarked.WithLabelValues(metadata.NoCompactMarkFilename, metadata.OutOfOrderChunksNoCompactReason),
