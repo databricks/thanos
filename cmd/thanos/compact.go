@@ -263,7 +263,6 @@ func runCompact(
 		if tenantPrefix != "" {
 			// For multi-tenant mode, we pass a nil registerer to avoid metric collisions
 			// TODO (willh-db): revisit metrics structure for multi-tenant mode
-			reg = nil
 			insBkt = objstoretracing.WrapWithTraces(bkt)
 		} else {
 			insBkt = objstoretracing.WrapWithTraces(objstore.WrapWithMetrics(bkt, extprom.WrapRegistererWithPrefix("thanos_", reg), bkt.Name()))
@@ -300,7 +299,12 @@ func runCompact(
 		noCompactMarkerFilter := compact.NewGatherNoCompactionMarkFilter(logger, insBkt, conf.blockMetaFetchConcurrency)
 		noDownsampleMarkerFilter := downsample.NewGatherNoDownsampleMarkFilter(logger, insBkt, conf.blockMetaFetchConcurrency)
 		labelShardedMetaFilter := block.NewLabelShardedMetaFilter(relabelConfig)
-		consistencyDelayMetaFilter := block.NewConsistencyDelayMetaFilter(logger, conf.consistencyDelay, (extprom.WrapRegistererWithPrefix("thanos_", reg)))
+		var consistencyDelayMetaFilter *block.ConsistencyDelayMetaFilter
+		if tenantPrefix != "" {
+			consistencyDelayMetaFilter = block.NewConsistencyDelayMetaFilter(logger, conf.consistencyDelay, nil) // TODO (willh-db): revisit metrics here
+		} else {
+			consistencyDelayMetaFilter = block.NewConsistencyDelayMetaFilter(logger, conf.consistencyDelay, (extprom.WrapRegistererWithPrefix("thanos_", reg)))
+		}
 		timePartitionMetaFilter := block.NewTimePartitionMetaFilter(conf.filterConf.MinTime, conf.filterConf.MaxTime)
 
 		var blockLister block.Lister
@@ -312,7 +316,12 @@ func runCompact(
 		default:
 			return errors.Errorf("unknown sync strategy %s", conf.blockListStrategy)
 		}
-		baseMetaFetcher, err := block.NewBaseFetcher(logger, conf.blockMetaFetchConcurrency, insBkt, blockLister, conf.dataDir, extprom.WrapRegistererWithPrefix("thanos_", reg))
+		var baseMetaFetcher *block.BaseFetcher
+		if tenantPrefix != "" {
+			baseMetaFetcher, err = block.NewBaseFetcher(logger, conf.blockMetaFetchConcurrency, insBkt, blockLister, conf.dataDir, nil) // TODO (willh-db): revisit metrics here
+		} else {
+			baseMetaFetcher, err = block.NewBaseFetcher(logger, conf.blockMetaFetchConcurrency, insBkt, blockLister, conf.dataDir, extprom.WrapRegistererWithPrefix("thanos_", reg))
+		}
 		if err != nil {
 			return errors.Wrap(err, "create meta fetcher")
 		}
