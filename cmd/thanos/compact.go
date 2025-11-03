@@ -258,12 +258,16 @@ func runCompact(
 			return err
 		}
 
+		var insBkt objstore.InstrumentedBucket
+
 		if tenantPrefix != "" {
 			// For multi-tenant mode, we pass a nil registerer to avoid metric collisions
 			// TODO (willh-db): revisit metrics structure for multi-tenant mode
 			reg = nil
+			insBkt = objstoretracing.WrapWithTraces(bkt)
+		} else {
+			insBkt = objstoretracing.WrapWithTraces(objstore.WrapWithMetrics(bkt, extprom.WrapRegistererWithPrefix("thanos_", reg), bkt.Name()))
 		}
-		insBkt := objstoretracing.WrapWithTraces(objstore.WrapWithMetrics(bkt, extprom.WrapRegistererWithPrefix("thanos_", reg), bkt.Name()))
 
 		// Create tenant-specific logger
 		tenantLogger := logger
