@@ -125,7 +125,7 @@ func isExactMatcher(m tenantMatcher) bool {
 // hashring configurations and the associated PantheonCluster configuration.
 // This allows both configs to be hot-reloaded together from a single source.
 type PantheonV2WriterConfig struct {
-	Hashrings       []HashringConfig        `json:"hashrings"`
+	Hashrings       []HashringConfig          `json:"hashrings"`
 	PantheonCluster *pantheon.PantheonCluster `json:"pantheon_cluster,omitempty"`
 }
 
