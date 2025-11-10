@@ -306,7 +306,7 @@ func runStore(
 		srv.Shutdown(err)
 	})
 
-	confContentYaml, err := getBucketConfigContentYaml(&conf.objStoreConfig)
+	confContentYaml, err := conf.objStoreConfig.Content()
 	if err != nil {
 		return err
 	}

@@ -166,11 +166,19 @@ func newCompactMetrics(reg *prometheus.Registry, deleteDelay time.Duration) *com
 	return m
 }
 
-type MultiTenancyBucketConfig struct {
-	Type           client.ObjProvider `yaml:"type"`
-	Config         interface{}        `yaml:"config"`
-	Prefix         string             `yaml:"prefix" default:""`
-	TenantPrefixes []string           `yaml:"tenant_prefixes"` // Example value: "v1/raw/tenant_a,v1/raw/tenant_b,v1/raw/tenant_c"
+// TenantConfig is the config file that contains the tenant prefix assignment for a pod that is running compactor.
+type TenantConfig struct {
+	TenantPrefixes []string `yaml:"tenant_prefixes"` // Example value: "v1/raw/tenant_a,v1/raw/tenant_b,v1/raw/tenant_c"
+}
+
+func (tc *TenantConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	if err := unmarshal(tc); err != nil {
+		return err
+	}
+	if tc.TenantPrefixes == nil {
+		tc.TenantPrefixes = []string{""}
+	}
+	return nil
 }
 
 func runCompact(
@@ -210,20 +218,29 @@ func runCompact(
 		srv.Shutdown(err)
 	})
 
-	// Note: We don't use getBucketConfigContentYaml here because we need to handle the case where the objStoreConfig is a MultiTenancyBucketConfig.
 	confContentYaml, err := conf.objStore.Content()
 	if err != nil {
 		return err
 	}
 
-	// Determine tenant prefixes to use (if provided)
-	var multiTenancyBucketConfig MultiTenancyBucketConfig
-	if err := yaml.Unmarshal(confContentYaml, &multiTenancyBucketConfig); err != nil {
-		return errors.Wrap(err, "failed to parse MultiTenancyBucketConfig")
+	var initialBucketConf client.BucketConfig
+	if err := yaml.Unmarshal(confContentYaml, &initialBucketConf); err != nil {
+		return errors.Wrap(err, "failed to parse bucket configuration")
+	}
+
+	tenantConfigContentYaml, err := conf.tenantConfigFile.Content()
+	if err != nil {
+		level.Info(logger).Log("msg", "tenant configuration file not provided or invalid, assuming single-tenant mode")
+		tenantConfigContentYaml = []byte{}
+	}
+
+	var tenantConfig TenantConfig
+	if err := yaml.Unmarshal(tenantConfigContentYaml, &tenantConfig); err != nil {
+		return errors.Wrap(err, "failed to parse tenant configuration")
 	}
 
 	var tenantPrefixes []string
-	tenantPrefixes = multiTenancyBucketConfig.TenantPrefixes
+	tenantPrefixes = tenantConfig.TenantPrefixes
 	if len(tenantPrefixes) == 0 {
 		tenantPrefixes = []string{""}
 		level.Info(logger).Log("msg", "tenant prefixes not provided by init container, assuming single-tenant mode")
@@ -238,9 +255,9 @@ func runCompact(
 	for _, tenantPrefix := range tenantPrefixes {
 
 		bucketConf := &client.BucketConfig{
-			Type:   multiTenancyBucketConfig.Type,
-			Config: multiTenancyBucketConfig.Config,
-			Prefix: path.Join(multiTenancyBucketConfig.Prefix, tenantPrefix),
+			Type:   initialBucketConf.Type,
+			Config: initialBucketConf.Config,
+			Prefix: path.Join(initialBucketConf.Prefix, tenantPrefix),
 		}
 		level.Info(logger).Log("msg", "starting compaction loop", "prefix", bucketConf.Prefix)
 
@@ -884,6 +901,7 @@ type compactConfig struct {
 	progressCalculateInterval                      time.Duration
 	filterConf                                     *store.FilterConfig
 	disableAdminOperations                         bool
+	tenantConfigFile                               extflag.PathOrContent
 }
 
 func (cc *compactConfig) registerFlag(cmd extkingpin.FlagClause) {
@@ -999,6 +1017,8 @@ func (cc *compactConfig) registerFlag(cmd extkingpin.FlagClause) {
 	cmd.Flag("web.disable", "Disable Block Viewer UI.").Default("false").BoolVar(&cc.disableWeb)
 
 	cc.selectorRelabelConf = *extkingpin.RegisterSelectorRelabelFlags(cmd)
+
+	cc.tenantConfigFile = *extflag.RegisterPathOrContent(cmd, "compact.object-storage-tenants-generated", "YAML file that contains the tenant prefix assignment for a pod that is running compactor.", extflag.WithEnvSubstitution())
 
 	cc.webConf.registerFlag(cmd)
 
