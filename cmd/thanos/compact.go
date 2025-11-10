@@ -171,16 +171,6 @@ type TenantConfig struct {
 	TenantPrefixes []string `yaml:"tenant_prefixes"` // Example value: "v1/raw/tenant_a,v1/raw/tenant_b,v1/raw/tenant_c"
 }
 
-func (tc *TenantConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
-	if err := unmarshal(tc); err != nil {
-		return err
-	}
-	if tc.TenantPrefixes == nil {
-		tc.TenantPrefixes = []string{""}
-	}
-	return nil
-}
-
 func runCompact(
 	g *run.Group,
 	logger log.Logger,
