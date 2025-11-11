@@ -1008,7 +1008,7 @@ func (cc *compactConfig) registerFlag(cmd extkingpin.FlagClause) {
 
 	cc.selectorRelabelConf = *extkingpin.RegisterSelectorRelabelFlags(cmd)
 
-	cc.tenantConfigFile = *extflag.RegisterPathOrContent(cmd, "compact.object-storage-tenants-generated", "YAML file that contains the tenant prefix assignment for a pod that is running compactor.", extflag.WithEnvSubstitution())
+	cc.tenantConfigFile = *extflag.RegisterPathOrContent(cmd, "compact.tenant-config", "YAML file that contains the tenant prefix assignment for a pod that is running compactor.", extflag.WithEnvSubstitution())
 
 	cc.webConf.registerFlag(cmd)
 
