@@ -307,6 +307,7 @@ func TestReadTenantWeights(t *testing.T) {
 	} {
 		t.Run(tcase.name, func(t *testing.T) {
 			tempFile, err := os.CreateTemp("", "tenant_weights_*.json")
+			defer tempFile.Close()
 			if err != nil {
 				t.Fatalf("failed to create temp file: %v", err)
 			}
@@ -315,7 +316,6 @@ func TestReadTenantWeights(t *testing.T) {
 			if _, err := tempFile.Write([]byte(tcase.fileContent)); err != nil {
 				t.Fatalf("failed to write test data: %v", err)
 			}
-			tempFile.Close()
 
 			weights, err := readTenantWeights(tempFile.Name())
 
@@ -598,6 +598,15 @@ func TestDiscoverTenantsFromBucket(t *testing.T) {
 	}
 }
 
+func encodeTempFile(t *testing.T, tempFile *os.File, config interface{}) (string, error) {
+	t.Helper()
+
+	if err := json.NewEncoder(tempFile).Encode(config); err != nil {
+		return "", err
+	}
+	return tempFile.Name(), nil
+}
+
 func TestSetupTenantPartitioning(t *testing.T) {
 	ctx := context.Background()
 	logger := log.NewNopLogger()
@@ -625,6 +634,7 @@ func TestSetupTenantPartitioning(t *testing.T) {
 			},
 			setupConfigFile: func() (string, error) {
 				tempFile, err := os.CreateTemp("", "tenant_config_*.json")
+				defer tempFile.Close()
 				if err != nil {
 					return "", err
 				}
@@ -632,14 +642,10 @@ func TestSetupTenantPartitioning(t *testing.T) {
 					"active-1": 100,
 					"active-2": 80,
 				}
-				if err := json.NewEncoder(tempFile).Encode(config); err != nil {
-					return "", err
-				}
-				tempFile.Close()
-				return tempFile.Name(), nil
+				return encodeTempFile(t, tempFile, config)
 			},
 			commonPathPrefix:          "v1/raw/",
-			numShards:                 3,
+			numShards:                 2,
 			expectedActiveTenants:     2,
 			expectedDiscoveredTenants: 2,
 			expectError:               false,
@@ -651,6 +657,7 @@ func TestSetupTenantPartitioning(t *testing.T) {
 			},
 			setupConfigFile: func() (string, error) {
 				tempFile, err := os.CreateTemp("", "tenant_config_*.json")
+				defer tempFile.Close()
 				if err != nil {
 					return "", err
 				}
@@ -659,11 +666,7 @@ func TestSetupTenantPartitioning(t *testing.T) {
 					"tenant-b": 50,
 					"tenant-c": 50,
 				}
-				if err := json.NewEncoder(tempFile).Encode(config); err != nil {
-					return "", err
-				}
-				tempFile.Close()
-				return tempFile.Name(), nil
+				return encodeTempFile(t, tempFile, config)
 			},
 			commonPathPrefix:          "v1/raw/",
 			numShards:                 2,
@@ -683,15 +686,12 @@ func TestSetupTenantPartitioning(t *testing.T) {
 			},
 			setupConfigFile: func() (string, error) {
 				tempFile, err := os.CreateTemp("", "tenant_config_*.json")
+				defer tempFile.Close()
 				if err != nil {
 					return "", err
 				}
 				config := map[string]int{} // Empty config
-				if err := json.NewEncoder(tempFile).Encode(config); err != nil {
-					return "", err
-				}
-				tempFile.Close()
-				return tempFile.Name(), nil
+				return encodeTempFile(t, tempFile, config)
 			},
 			commonPathPrefix:          "v1/raw/",
 			numShards:                 2,
@@ -713,6 +713,7 @@ func TestSetupTenantPartitioning(t *testing.T) {
 			},
 			setupConfigFile: func() (string, error) {
 				tempFile, err := os.CreateTemp("", "tenant_config_*.json")
+				defer tempFile.Close()
 				if err != nil {
 					return "", err
 				}
@@ -723,14 +724,10 @@ func TestSetupTenantPartitioning(t *testing.T) {
 					"active-small-2": 10,
 					"active-small-3": 10,
 				}
-				if err := json.NewEncoder(tempFile).Encode(config); err != nil {
-					return "", err
-				}
-				tempFile.Close()
-				return tempFile.Name(), nil
+				return encodeTempFile(t, tempFile, config)
 			},
 			commonPathPrefix:          "v1/raw/",
-			numShards:                 5,
+			numShards:                 3,
 			expectedActiveTenants:     5,
 			expectedDiscoveredTenants: 20,
 			expectError:               false,
@@ -749,7 +746,7 @@ func TestSetupTenantPartitioning(t *testing.T) {
 			}
 			defer os.Remove(configPath)
 
-			err = SetupTenantPartitioning(ctx, bkt, logger, configPath, tcase.commonPathPrefix, tcase.numShards)
+			tenantAssignments, err := SetupTenantPartitioning(ctx, bkt, logger, configPath, tcase.commonPathPrefix, tcase.numShards)
 
 			if tcase.expectError {
 				if err == nil {
@@ -762,11 +759,7 @@ func TestSetupTenantPartitioning(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			// Note: We can't easily verify the exact assignments without exposing them,
-			// but the function logs them. In a real scenario, you might want to return
-			// the assignments for testing purposes or expose them through a different mechanism.
-			t.Logf("Successfully partitioned %d active and %d discovered tenants across %d shards",
-				tcase.expectedActiveTenants, tcase.expectedDiscoveredTenants, tcase.numShards)
+			t.Logf("tenant assignments: %v", tenantAssignments)
 		})
 	}
 }
@@ -776,7 +769,7 @@ func TestSetupTenantPartitioning_InvalidConfig(t *testing.T) {
 	logger := log.NewNopLogger()
 	bkt := objstore.NewInMemBucket()
 
-	err := SetupTenantPartitioning(ctx, bkt, logger, "/nonexistent/config.json", "v1/raw/", 3)
+	_, err := SetupTenantPartitioning(ctx, bkt, logger, "/nonexistent/config.json", "v1/raw/", 3)
 	if err == nil {
 		t.Error("expected error for nonexistent config file, got nil")
 	}

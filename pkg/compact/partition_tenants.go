@@ -124,7 +124,7 @@ func discoverTenantsFromBucket(ctx context.Context, bkt objstore.BucketReader, l
 		return nil, err
 	}
 
-	level.Info(logger).Log("msg", "tenant discovery complete", "new_tenants", len(discoveredTenants))
+	level.Info(logger).Log("msg", "tenant discovery complete", "discovered tenants", discoveredTenants)
 
 	return discoveredTenants, nil
 }
@@ -135,11 +135,11 @@ func tenantToShard(tenantName string, numShards int) int {
 	return int(h.Sum32()) % numShards
 }
 
-func SetupTenantPartitioning(ctx context.Context, bkt objstore.Bucket, logger log.Logger, configPath string, commonPathPrefix string, numShards int) error {
+func SetupTenantPartitioning(ctx context.Context, bkt objstore.Bucket, logger log.Logger, configPath string, commonPathPrefix string, numShards int) (map[int][]string, error) {
 	// Get active tenants from tenant weight config
 	activeTenants, err := readTenantWeights(configPath)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Compute tenant assignments for active tenants
@@ -148,7 +148,7 @@ func SetupTenantPartitioning(ctx context.Context, bkt objstore.Bucket, logger lo
 	// Discover additional tenants from S3
 	discoveredTenants, err := discoverTenantsFromBucket(ctx, bkt, logger, commonPathPrefix, activeTenants)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Assign discovered tenants to pods with hashmod algorithm
@@ -170,5 +170,5 @@ func SetupTenantPartitioning(ctx context.Context, bkt objstore.Bucket, logger lo
 			"total_weight", tenantWeights[shardID])
 	}
 
-	return nil
+	return tenantAssignments, nil
 }
