@@ -8,7 +8,6 @@ import (
 	"testing"
 )
 
-// Helper function to validate tenant assignments
 func validateTenantAssignments(t *testing.T, numShards int, tenantWeights []TenantWeight, buckets map[int][]string, weights map[int]int) {
 	t.Helper()
 
@@ -20,7 +19,6 @@ func validateTenantAssignments(t *testing.T, numShards int, tenantWeights []Tena
 		t.Errorf("expected %d weight entries, got %d", numShards, len(weights))
 	}
 
-	// Count total assigned tenants and track assignments
 	totalAssigned := 0
 	assignedTenants := make(map[string]int) // tenant -> shard mapping
 
@@ -31,7 +29,6 @@ func validateTenantAssignments(t *testing.T, numShards int, tenantWeights []Tena
 		}
 		totalAssigned += len(buckets[i])
 
-		// Track which tenants are assigned and to which shard
 		for _, tenant := range buckets[i] {
 			if prevShard, exists := assignedTenants[tenant]; exists {
 				t.Errorf("tenant %s assigned to multiple buckets (shard %d and %d)", tenant, prevShard, i)
@@ -55,7 +52,6 @@ func validateTenantAssignments(t *testing.T, numShards int, tenantWeights []Tena
 	for i := 0; i < numShards; i++ {
 		calculatedWeight := 0
 		for _, tenantName := range buckets[i] {
-			// Find the weight for this tenant
 			for _, tw := range tenantWeights {
 				if tw.TenantName == tenantName {
 					calculatedWeight += tw.Weight
@@ -207,10 +203,8 @@ func TestComputeTenantAssignments_DistributionFairness(t *testing.T) {
 		t.Run(tcase.name, func(t *testing.T) {
 			buckets, weights := computeTenantAssignments(tcase.numShards, tcase.tenantWeights)
 
-			// Validate basic assignment correctness
 			validateTenantAssignments(t, tcase.numShards, tcase.tenantWeights, buckets, weights)
 
-			// Calculate min and max weights
 			minWeight := weights[0]
 			maxWeight := weights[0]
 			for i := 1; i < tcase.numShards; i++ {
@@ -225,7 +219,6 @@ func TestComputeTenantAssignments_DistributionFairness(t *testing.T) {
 			weightDelta := maxWeight - minWeight
 			t.Logf("Weight distribution - min: %d, max: %d, delta: %d", minWeight, maxWeight, weightDelta)
 
-			// Check weight distribution if specified
 			if tcase.maxWeightDelta > 0 && weightDelta > tcase.maxWeightDelta {
 				t.Errorf("weight delta %d exceeds maximum allowed %d", weightDelta, tcase.maxWeightDelta)
 			}
@@ -250,7 +243,6 @@ func TestComputeTenantAssignments_DistributionFairness(t *testing.T) {
 				}
 			}
 
-			// Log distribution for debugging
 			for i := 0; i < tcase.numShards; i++ {
 				t.Logf("Shard %d: %d tenants, weight=%d, tenants=%v",
 					i, len(buckets[i]), weights[i], buckets[i])
@@ -307,7 +299,6 @@ func TestReadTenantWeights(t *testing.T) {
 		},
 	} {
 		t.Run(tcase.name, func(t *testing.T) {
-			// Create temporary file
 			tempFile, err := os.CreateTemp("", "tenant_weights_*.json")
 			if err != nil {
 				t.Fatalf("failed to create temp file: %v", err)
@@ -319,7 +310,6 @@ func TestReadTenantWeights(t *testing.T) {
 			}
 			tempFile.Close()
 
-			// Test reading the file
 			weights, err := readTenantWeights(tempFile.Name())
 
 			if tcase.expectError {
@@ -333,12 +323,10 @@ func TestReadTenantWeights(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			// Verify all tenants are loaded
 			if len(weights) != len(tcase.expectedData) {
 				t.Errorf("expected %d tenants, got %d", len(tcase.expectedData), len(weights))
 			}
 
-			// Verify each tenant and weight
 			foundTenants := make(map[string]int)
 			for _, tw := range weights {
 				foundTenants[tw.TenantName] = tw.Weight
@@ -352,7 +340,6 @@ func TestReadTenantWeights(t *testing.T) {
 				}
 			}
 
-			// Verify no extra tenants
 			for name := range foundTenants {
 				if _, ok := tcase.expectedData[name]; !ok {
 					t.Errorf("unexpected tenant %s in results", name)
