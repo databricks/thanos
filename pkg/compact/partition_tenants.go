@@ -124,7 +124,7 @@ func discoverTenantsFromBucket(ctx context.Context, bkt objstore.BucketReader, l
 		return nil, err
 	}
 
-	level.Info(logger).Log("msg", "tenant discovery complete", "discovered tenants", discoveredTenants)
+	level.Info(logger).Log("msg", "tenant discovery complete", "discovered tenants", strings.Join(discoveredTenants, ", "))
 
 	return discoveredTenants, nil
 }

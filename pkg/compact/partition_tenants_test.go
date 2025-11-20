@@ -307,10 +307,10 @@ func TestReadTenantWeights(t *testing.T) {
 	} {
 		t.Run(tcase.name, func(t *testing.T) {
 			tempFile, err := os.CreateTemp("", "tenant_weights_*.json")
-			defer tempFile.Close()
 			if err != nil {
 				t.Fatalf("failed to create temp file: %v", err)
 			}
+			defer tempFile.Close()
 			defer os.Remove(tempFile.Name())
 
 			if _, err := tempFile.Write([]byte(tcase.fileContent)); err != nil {
@@ -634,10 +634,10 @@ func TestSetupTenantPartitioning(t *testing.T) {
 			},
 			setupConfigFile: func() (string, error) {
 				tempFile, err := os.CreateTemp("", "tenant_config_*.json")
-				defer tempFile.Close()
 				if err != nil {
 					return "", err
 				}
+				defer tempFile.Close()
 				config := map[string]int{
 					"active-1": 100,
 					"active-2": 80,
@@ -657,10 +657,10 @@ func TestSetupTenantPartitioning(t *testing.T) {
 			},
 			setupConfigFile: func() (string, error) {
 				tempFile, err := os.CreateTemp("", "tenant_config_*.json")
-				defer tempFile.Close()
 				if err != nil {
 					return "", err
 				}
+				defer tempFile.Close()
 				config := map[string]int{
 					"tenant-a": 50,
 					"tenant-b": 50,
@@ -686,10 +686,10 @@ func TestSetupTenantPartitioning(t *testing.T) {
 			},
 			setupConfigFile: func() (string, error) {
 				tempFile, err := os.CreateTemp("", "tenant_config_*.json")
-				defer tempFile.Close()
 				if err != nil {
 					return "", err
 				}
+				defer tempFile.Close()
 				config := map[string]int{} // Empty config
 				return encodeTempFile(t, tempFile, config)
 			},
@@ -713,10 +713,10 @@ func TestSetupTenantPartitioning(t *testing.T) {
 			},
 			setupConfigFile: func() (string, error) {
 				tempFile, err := os.CreateTemp("", "tenant_config_*.json")
-				defer tempFile.Close()
 				if err != nil {
 					return "", err
 				}
+				defer tempFile.Close()
 				config := map[string]int{
 					"active-large":   1000,
 					"active-medium":  500,
