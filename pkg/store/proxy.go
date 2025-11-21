@@ -386,24 +386,40 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 		return status.Error(codes.InvalidArgument, errors.New("no matchers specified (excluding selector labels)").Error())
 	}
 
-	// Check X-Source header once for performance
+	// Check if this is a Bronson request by looking at context and headers
 	isBronsonRequest := s.isBronsonRequest(srv.Context())
+
+	// Log request source analysis for debugging
+	level.Debug(reqLogger).Log(
+		"msg", "Request source analysis completed",
+		"is_bronson_request", isBronsonRequest,
+	)
 
 	// Check if the query should be blocked due to insufficient filters
 	shouldBlock, metricName, matchedPattern := s.shouldBlockQuery(isBronsonRequest, matchers)
 	if shouldBlock {
-		// Log the blocked query with structured logging
 		filterCount := s.countAllFilters(matchers)
 		level.Warn(reqLogger).Log(
 			"msg", "query blocked due to high cardinality metric without sufficient filters",
+			"source", "Bronson",
 			"metric_name", metricName,
+			"matched_pattern", matchedPattern,
 			"filter_count", filterCount,
+			"action", "block",
 		)
 
 		// Increment metrics counter
 		s.metrics.blockedQueriesCount.WithLabelValues(metricName).Inc()
 
 		return status.Error(codes.InvalidArgument, fmt.Errorf("query blocked: high cardinality metric '%s' matches blocked pattern '%s', please add proper filters to reduce the amount of data to fetch", metricName, matchedPattern).Error())
+	} else {
+		// Log when no blocking is needed
+		level.Debug(reqLogger).Log(
+			"msg", "Query analysis complete - no blocking needed",
+			"is_bronson_request", isBronsonRequest,
+			"should_block", shouldBlock,
+			"metric_name", metricName,
+		)
 	}
 
 	// Track metrics for potential logging of high-cardinality queries
@@ -1089,13 +1105,96 @@ func (s *ProxyStore) countAllFilters(matchers []*labels.Matcher) int {
 	return filterCount
 }
 
-// isBronsonRequest checks if the request is from Bronson by examining the X-Source header.
+// isBronsonRequest checks if the request is from Bronson via gRPC metadata or context.
 func (s *ProxyStore) isBronsonRequest(ctx context.Context) bool {
-	if md, ok := metadata.FromIncomingContext(ctx); ok {
+	// Debug: Log entire context to see what's available
+	level.Info(s.logger).Log(
+		"msg", "isBronsonRequest: full context dump",
+		"context", fmt.Sprintf("%+v", ctx),
+	)
+
+	// Check gRPC metadata for Bronson identification
+	md, ok := metadata.FromIncomingContext(ctx)
+	if ok {
+		level.Info(s.logger).Log(
+			"msg", "isBronsonRequest: gRPC metadata found",
+			"metadata", fmt.Sprintf("%+v", md),
+		)
+
+		// Log all metadata keys for debugging
+		for key, values := range md {
+			level.Info(s.logger).Log(
+				"msg", "isBronsonRequest: metadata key-value",
+				"key", key,
+				"values", strings.Join(values, ","),
+			)
+		}
+
+		// Check for X-Source header in metadata
 		if sources := md.Get("x-source"); len(sources) > 0 {
-			return sources[0] == "Bronson"
+			level.Info(s.logger).Log(
+				"msg", "isBronsonRequest: found x-source in metadata",
+				"x-source", sources[0],
+			)
+			if sources[0] == "bronson" {
+				level.Info(s.logger).Log(
+					"msg", "Bronson request detected via gRPC metadata",
+					"detection_method", "grpc_metadata",
+					"source", sources[0],
+				)
+				return true
+			}
+		}
+
+		// Also check for query-source in metadata (in case it's passed differently)
+		if sources := md.Get("query-source"); len(sources) > 0 {
+			level.Info(s.logger).Log(
+				"msg", "isBronsonRequest: found query-source in metadata",
+				"query-source", sources[0],
+			)
+			if sources[0] == "bronson" {
+				level.Info(s.logger).Log(
+					"msg", "Bronson request detected via gRPC metadata",
+					"detection_method", "grpc_metadata_query_source",
+					"source", sources[0],
+				)
+				return true
+			}
+		}
+	} else {
+		level.Info(s.logger).Log(
+			"msg", "isBronsonRequest: no gRPC metadata found",
+		)
+	}
+
+	// Debug: Check if debug info is available in context
+	if debugInfo := ctx.Value("debug_request_info"); debugInfo != nil {
+		level.Info(s.logger).Log(
+			"msg", "isBronsonRequest: debug_request_info found",
+			"debug_info", fmt.Sprintf("%+v", debugInfo),
+		)
+	}
+
+	// Check if query_source was set in context (for HTTP path)
+	if sourceVal := ctx.Value("query_source"); sourceVal != nil {
+		source := sourceVal.(string)
+		level.Info(s.logger).Log(
+			"msg", "isBronsonRequest: found query_source in context",
+			"query_source", source,
+		)
+		if source == "bronson" {
+			level.Info(s.logger).Log(
+				"msg", "Bronson request detected via context",
+				"detection_method", "context_value",
+				"source", source,
+			)
+			return true
 		}
 	}
+
+	level.Info(s.logger).Log(
+		"msg", "isBronsonRequest: returning false (not Bronson)",
+	)
 	return false
 }
 
