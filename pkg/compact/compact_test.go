@@ -99,6 +99,24 @@ func TestRetryError(t *testing.T) {
 	testutil.Assert(t, IsHaltError(err), "not a halt error. Retry should not hide halt error")
 }
 
+func TestMissingChunkFilesError(t *testing.T) {
+	t.Parallel()
+
+	err := errors.New("test")
+	testutil.Assert(t, !IsMissingChunkFilesError(err), "should not be a missing chunk files error")
+
+	blockID := ulid.MustNew(1, nil)
+	err = missingChunkFilesError(errors.New("test"), blockID)
+	testutil.Assert(t, IsMissingChunkFilesError(err), "should be a missing chunk files error")
+	testutil.Equals(t, blockID, err.(MissingChunkFilesError).id)
+
+	err = errors.Wrap(missingChunkFilesError(errors.New("test"), blockID), "wrapped")
+	testutil.Assert(t, IsMissingChunkFilesError(err), "wrapped error should still be detected")
+
+	err = errors.Wrap(errors.Wrap(missingChunkFilesError(errors.New("test"), blockID), "inner"), "outer")
+	testutil.Assert(t, IsMissingChunkFilesError(err), "double wrapped error should still be detected")
+}
+
 func TestDetectCorruptedBlockFromError(t *testing.T) {
 	t.Parallel()
 
@@ -142,6 +160,24 @@ func TestDetectCorruptedBlockFromError(t *testing.T) {
 	err = errors.Errorf("cannot populate chunk 8 from block %s: segment index 0 out of range", unknownBlock.String())
 	id, ok = detectCorruptedBlockFromError(err, toCompact)
 	testutil.Assert(t, !ok, "error with unknown block ID should return false")
+
+	// Test: wrapped error with "from block {ULID}" pattern
+	err = errors.Wrap(
+		errors.Errorf("cannot populate chunk 8 from block %s: segment index 0 out of range", blockID2.String()),
+		"compaction failed")
+	id, ok = detectCorruptedBlockFromError(err, toCompact)
+	testutil.Assert(t, ok, "wrapped error with block ID should return true")
+	testutil.Equals(t, blockID2, id)
+
+	// Test: reference sequence out of range error (another variant)
+	err = errors.Errorf("cannot populate chunk 8 from block %s: reference sequence 0 out of range", blockID1.String())
+	id, ok = detectCorruptedBlockFromError(err, toCompact)
+	testutil.Assert(t, ok, "reference sequence out of range should also be detected")
+	testutil.Equals(t, blockID1, id)
+
+	// Test: empty toCompact slice
+	id, ok = detectCorruptedBlockFromError(errors.New("segment index 0 out of range"), []*metadata.Meta{})
+	testutil.Assert(t, !ok, "empty toCompact should return false")
 }
 
 func TestGroupKey(t *testing.T) {
