@@ -989,6 +989,28 @@ func IsOutOfOrderChunkError(err error) bool {
 	return ok
 }
 
+// MissingChunkFilesError is a type wrapper for errors when block metadata references
+// chunk files that don't exist in the bucket. This typically happens due to incomplete
+// or failed block uploads.
+type MissingChunkFilesError struct {
+	err error
+	id  ulid.ULID
+}
+
+func (e MissingChunkFilesError) Error() string {
+	return e.err.Error()
+}
+
+func missingChunkFilesError(err error, brokenBlock ulid.ULID) MissingChunkFilesError {
+	return MissingChunkFilesError{err: err, id: brokenBlock}
+}
+
+// IsMissingChunkFilesError returns true if the base error is a MissingChunkFilesError.
+func IsMissingChunkFilesError(err error) bool {
+	_, ok := errors.Cause(err).(MissingChunkFilesError)
+	return ok
+}
+
 // HaltError is a type wrapper for errors that should halt any further progress on compactions.
 type HaltError struct {
 	err error
@@ -1199,6 +1221,13 @@ func (cg *Group) compact(ctx context.Context, dir string, planner Planner, comp 
 		bdir := filepath.Join(dir, m.ULID.String())
 		func(ctx context.Context, meta *metadata.Meta) {
 			g.Go(func() error {
+				// Validate chunk files exist in bucket before downloading.
+				// This catches corrupted blocks where meta.json references chunk files
+				// that were never uploaded or were deleted.
+				if err := block.ValidateBlockChunkFilesExist(ctx, cg.logger, cg.bkt, meta); err != nil {
+					return missingChunkFilesError(errors.Wrapf(err, "block %s has missing chunk files in bucket", meta.ULID), meta.ULID)
+				}
+
 				start := time.Now()
 				if err := tracing.DoInSpanWithErr(ctx, "compaction_block_download", func(ctx context.Context) error {
 					return block.Download(ctx, cg.logger, cg.bkt, meta.ULID, bdir, objstore.WithFetchConcurrency(cg.blockFilesConcurrency))
@@ -1534,6 +1563,26 @@ func (c *BucketCompactor) Compact(ctx context.Context, progress *Progress) (rerr
 							finishedAllGroups = false
 							mtx.Unlock()
 							continue
+						}
+					}
+					// If block has missing chunk files (corrupted upload), mark it for deletion
+					// instead of halting the compactor.
+					if IsMissingChunkFilesError(err) {
+						blockID := err.(MissingChunkFilesError).id
+						level.Warn(c.logger).Log("msg", "block has missing chunk files, marking for deletion", "block", blockID, "err", err)
+						if markErr := block.MarkForDeletion(
+							ctx,
+							c.logger,
+							c.bkt,
+							blockID,
+							"MissingChunkFiles: block metadata references chunk files that don't exist in bucket",
+							c.sy.metrics.BlocksMarkedForDeletion); markErr == nil {
+							mtx.Lock()
+							finishedAllGroups = false
+							mtx.Unlock()
+							continue
+						} else {
+							level.Error(c.logger).Log("msg", "failed to mark corrupted block for deletion", "block", blockID, "err", markErr)
 						}
 					}
 					errChan <- errors.Wrapf(err, "group %s", g.Key())
