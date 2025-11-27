@@ -99,6 +99,51 @@ func TestRetryError(t *testing.T) {
 	testutil.Assert(t, IsHaltError(err), "not a halt error. Retry should not hide halt error")
 }
 
+func TestDetectCorruptedBlockFromError(t *testing.T) {
+	t.Parallel()
+
+	blockID1 := ulid.MustNew(1, nil)
+	blockID2 := ulid.MustNew(2, nil)
+
+	toCompact := []*metadata.Meta{
+		{BlockMeta: tsdb.BlockMeta{ULID: blockID1}},
+		{BlockMeta: tsdb.BlockMeta{ULID: blockID2}},
+	}
+
+	// Test: nil error returns false
+	id, ok := detectCorruptedBlockFromError(nil, toCompact)
+	testutil.Assert(t, !ok, "nil error should return false")
+	testutil.Equals(t, ulid.ULID{}, id)
+
+	// Test: unrelated error returns false
+	err := errors.New("some random error")
+	id, ok = detectCorruptedBlockFromError(err, toCompact)
+	testutil.Assert(t, !ok, "unrelated error should return false")
+
+	// Test: error with "out of range" but no block ID returns false (multiple blocks)
+	err = errors.New("segment index 0 out of range")
+	id, ok = detectCorruptedBlockFromError(err, toCompact)
+	testutil.Assert(t, !ok, "error without block ID should return false when multiple blocks")
+
+	// Test: error with "out of range" and single block returns that block
+	singleBlock := []*metadata.Meta{{BlockMeta: tsdb.BlockMeta{ULID: blockID1}}}
+	id, ok = detectCorruptedBlockFromError(err, singleBlock)
+	testutil.Assert(t, ok, "error with single block should return true")
+	testutil.Equals(t, blockID1, id)
+
+	// Test: error with "from block {ULID}" pattern
+	err = errors.Errorf("cannot populate chunk 8 from block %s: segment index 0 out of range", blockID1.String())
+	id, ok = detectCorruptedBlockFromError(err, toCompact)
+	testutil.Assert(t, ok, "error with block ID should return true")
+	testutil.Equals(t, blockID1, id)
+
+	// Test: error with block ID not in toCompact returns false
+	unknownBlock := ulid.MustNew(999, nil)
+	err = errors.Errorf("cannot populate chunk 8 from block %s: segment index 0 out of range", unknownBlock.String())
+	id, ok = detectCorruptedBlockFromError(err, toCompact)
+	testutil.Assert(t, !ok, "error with unknown block ID should return false")
+}
+
 func TestGroupKey(t *testing.T) {
 	t.Parallel()
 

@@ -92,56 +92,6 @@ func Download(ctx context.Context, logger log.Logger, bucket objstore.Bucket, id
 	return nil
 }
 
-// ValidateBlockChunkFilesExist checks that all chunk files referenced in the block's
-// metadata actually exist in the bucket. This detects corrupted blocks where the
-// meta.json references chunk files that were never uploaded or were deleted.
-// Returns nil if all files exist, or an error describing which files are missing.
-func ValidateBlockChunkFilesExist(ctx context.Context, logger log.Logger, bkt objstore.Bucket, meta *metadata.Meta) error {
-	if meta == nil {
-		return errors.New("meta is nil")
-	}
-
-	// Check if there are any chunk files referenced in metadata
-	var expectedChunkFiles []string
-	for _, f := range meta.Thanos.Files {
-		if strings.HasPrefix(f.RelPath, ChunksDirname+"/") {
-			expectedChunkFiles = append(expectedChunkFiles, f.RelPath)
-		}
-	}
-
-	// Also check deprecated SegmentFiles field
-	for _, sf := range meta.Thanos.SegmentFiles {
-		expectedChunkFiles = append(expectedChunkFiles, path.Join(ChunksDirname, sf))
-	}
-
-	if len(expectedChunkFiles) == 0 {
-		// No chunk files expected (empty block), nothing to validate
-		return nil
-	}
-
-	// Verify each expected chunk file exists in the bucket
-	var missingFiles []string
-	for _, relPath := range expectedChunkFiles {
-		fullPath := path.Join(meta.ULID.String(), relPath)
-		exists, err := bkt.Exists(ctx, fullPath)
-		if err != nil {
-			level.Warn(logger).Log("msg", "failed to check chunk file existence", "block", meta.ULID, "file", relPath, "err", err)
-			// Treat check failure as potentially missing to be safe
-			missingFiles = append(missingFiles, relPath)
-			continue
-		}
-		if !exists {
-			missingFiles = append(missingFiles, relPath)
-		}
-	}
-
-	if len(missingFiles) > 0 {
-		return errors.Errorf("block %s has missing chunk files: %v", meta.ULID, missingFiles)
-	}
-
-	return nil
-}
-
 // Upload uploads a TSDB block to the object storage. It verifies basic
 // features of Thanos block.
 func Upload(ctx context.Context, logger log.Logger, bkt objstore.Bucket, bdir string, hf metadata.HashFunc, options ...objstore.UploadOption) error {
