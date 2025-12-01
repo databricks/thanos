@@ -100,6 +100,11 @@ func registerCompact(app *extkingpin.App) {
 	})
 }
 
+func extractOrdinalFromHostname(hostname string) (int, error) {
+	parts := strings.Split(hostname, "-")
+	return strconv.Atoi(parts[len(parts)-1])
+}
+
 type compactMetrics struct {
 	halted                      prometheus.Gauge
 	retried                     prometheus.Counter
@@ -166,11 +171,6 @@ func newCompactMetrics(reg *prometheus.Registry, deleteDelay time.Duration) *com
 	return m
 }
 
-// TenantConfig is the config file that contains the tenant prefix assignment for a pod that is running compactor.
-type TenantConfig struct {
-	TenantPrefixes []string `yaml:"tenant_prefixes"` // Example value: "v1/raw/tenant_a,v1/raw/tenant_b,v1/raw/tenant_c"
-}
-
 func runCompact(
 	g *run.Group,
 	logger log.Logger,
@@ -218,24 +218,66 @@ func runCompact(
 		return errors.Wrap(err, "failed to parse bucket configuration")
 	}
 
-	tenantConfigContentYaml, err := conf.tenantConfigFile.Content()
-	if err != nil {
-		level.Info(logger).Log("msg", "tenant configuration file not provided or invalid, assuming single-tenant mode")
-		tenantConfigContentYaml = []byte{}
-	}
-
-	var tenantConfig TenantConfig
-	if err := yaml.Unmarshal(tenantConfigContentYaml, &tenantConfig); err != nil {
-		return errors.Wrap(err, "failed to parse tenant configuration")
-	}
-
+	// Setup tenant partitioning if enabled
 	var tenantPrefixes []string
-	tenantPrefixes = tenantConfig.TenantPrefixes
-	if len(tenantPrefixes) == 0 {
-		tenantPrefixes = []string{""}
-		level.Info(logger).Log("msg", "tenant prefixes not provided by init container, assuming single-tenant mode")
+
+	if conf.enableTenantPathPrefix {
+
+		hostname := os.Getenv("HOSTNAME")
+		ordinal, err := extractOrdinalFromHostname(hostname)
+		if err != nil {
+			return errors.Wrapf(err, "failed to extract ordinal from hostname %s", hostname)
+		}
+
+		if ordinal >= conf.totalShards {
+			return errors.Errorf("ordinal (%d) must be less than total-shards (%d)", ordinal, conf.totalShards)
+		}
+
+		// Read tenant weights file path
+		tenantWeightsPath := conf.tenantWeightsFile.Path()
+		if tenantWeightsPath == "" {
+			return errors.New("tenant weights file required when using tenant partitioning")
+		}
+
+		// Create a temporary bucket for tenant discovery (without prefix)
+		discoveryBkt, err := client.NewBucket(logger, confContentYaml, component.String(), nil)
+		if err != nil {
+			return errors.Wrap(err, "failed to create discovery bucket")
+		}
+		defer runutil.CloseWithLogOnErr(logger, discoveryBkt, "discovery bucket client")
+
+		level.Info(logger).Log("msg", "setting up tenant partitioning",
+			"ordinal", ordinal,
+			"total_shards", conf.totalShards,
+			"common_path_prefix", conf.commonPathPrefix)
+
+		// Get tenant assignments for this shard
+		ctx := context.Background()
+		tenantAssignments, err := compact.SetupTenantPartitioning(ctx, discoveryBkt, logger, tenantWeightsPath, conf.commonPathPrefix, conf.totalShards)
+		if err != nil {
+			return errors.Wrap(err, "failed to setup tenant partitioning")
+		}
+
+		// Get tenants assigned to this shard
+		assignedTenants := tenantAssignments[ordinal]
+		if len(assignedTenants) == 0 {
+			level.Warn(logger).Log("msg", "no tenants assigned to this shard", "ordinal", ordinal)
+			return nil // No tenants to compact
+		}
+
+		// Build tenant prefixes from assigned tenants
+		for _, tenant := range assignedTenants {
+			tenantPrefixes = append(tenantPrefixes, path.Join(conf.commonPathPrefix, tenant))
+		}
+
+		level.Info(logger).Log("msg", "tenant partitioning setup complete",
+			"ordinal", ordinal,
+			"assigned_tenants", len(assignedTenants),
+			"tenants", strings.Join(assignedTenants, ","))
 	} else {
-		level.Info(logger).Log("msg", "tenant prefixes found, running in multi-tenant mode", "prefixes", strings.Join(tenantPrefixes, ","))
+		// Single-tenant mode
+		tenantPrefixes = []string{""}
+		level.Info(logger).Log("msg", "running in single-tenant mode")
 	}
 
 	overlappingCallback := compact.NewOverlappingCompactionLifecycleCallback(reg, logger, conf.enableOverlappingRemoval)
@@ -891,7 +933,10 @@ type compactConfig struct {
 	progressCalculateInterval                      time.Duration
 	filterConf                                     *store.FilterConfig
 	disableAdminOperations                         bool
-	tenantConfigFile                               extflag.PathOrContent
+	tenantWeightsFile                              extflag.PathOrContent
+	totalShards                                    int
+	commonPathPrefix                               string
+	enableTenantPathPrefix                         bool
 }
 
 func (cc *compactConfig) registerFlag(cmd extkingpin.FlagClause) {
@@ -1008,7 +1053,16 @@ func (cc *compactConfig) registerFlag(cmd extkingpin.FlagClause) {
 
 	cc.selectorRelabelConf = *extkingpin.RegisterSelectorRelabelFlags(cmd)
 
-	cc.tenantConfigFile = *extflag.RegisterPathOrContent(cmd, "compact.tenant-config", "YAML file that contains the tenant prefix assignment for a pod that is running compactor.", extflag.WithEnvSubstitution())
+	cc.tenantWeightsFile = *extflag.RegisterPathOrContent(cmd, "compact.tenant-weights", "YAML file that contains the tenant weights for tenant partitioning.", extflag.WithEnvSubstitution())
+
+	cmd.Flag("compact.total-shards", "Total number of shards when using tenant partitioning.").
+		Default("1").IntVar(&cc.totalShards)
+
+	cmd.Flag("compact.common-path-prefix", "Common path prefix for tenant discovery when using tenant partitioning. This is the prefix before the tenant name in the object storage path.").
+		Default("v1/raw/").StringVar(&cc.commonPathPrefix)
+
+	cmd.Flag("compact.enable-tenant-path-prefix", "Enable tenant path prefix mode for backward compatibility. When disabled, compactor runs in single-tenant mode.").
+		Default("false").BoolVar(&cc.enableTenantPathPrefix)
 
 	cc.webConf.registerFlag(cmd)
 
