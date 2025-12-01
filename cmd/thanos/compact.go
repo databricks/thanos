@@ -229,8 +229,13 @@ func runCompact(
 			return errors.Wrapf(err, "failed to extract ordinal from hostname %s", hostname)
 		}
 
-		if ordinal >= conf.totalShards {
-			return errors.Errorf("ordinal (%d) must be less than total-shards (%d)", ordinal, conf.totalShards)
+		totalShards := conf.replicas / conf.replicationFactor
+		if conf.replicas%conf.replicationFactor != 0 || totalShards < 1 {
+			return errors.Errorf("replicas (%d) must be divisible by replication-factor (%d) and total-shards must be greater than 0", conf.replicas, conf.replicationFactor)
+		}
+
+		if ordinal >= totalShards {
+			return errors.Errorf("ordinal (%d) must be less than total-shards (%d)", ordinal, totalShards)
 		}
 
 		// Read tenant weights file path
@@ -248,12 +253,12 @@ func runCompact(
 
 		level.Info(logger).Log("msg", "setting up tenant partitioning",
 			"ordinal", ordinal,
-			"total_shards", conf.totalShards,
+			"total_shards", totalShards,
 			"common_path_prefix", conf.commonPathPrefix)
 
 		// Get tenant assignments for this shard
 		ctx := context.Background()
-		tenantAssignments, err := compact.SetupTenantPartitioning(ctx, discoveryBkt, logger, tenantWeightsPath, conf.commonPathPrefix, conf.totalShards)
+		tenantAssignments, err := compact.SetupTenantPartitioning(ctx, discoveryBkt, logger, tenantWeightsPath, conf.commonPathPrefix, totalShards)
 		if err != nil {
 			return errors.Wrap(err, "failed to setup tenant partitioning")
 		}
@@ -934,7 +939,8 @@ type compactConfig struct {
 	filterConf                                     *store.FilterConfig
 	disableAdminOperations                         bool
 	tenantWeightsFile                              extflag.PathOrContent
-	totalShards                                    int
+	replicas                                       int
+	replicationFactor                              int
 	commonPathPrefix                               string
 	enableTenantPathPrefix                         bool
 }
@@ -1055,8 +1061,11 @@ func (cc *compactConfig) registerFlag(cmd extkingpin.FlagClause) {
 
 	cc.tenantWeightsFile = *extflag.RegisterPathOrContent(cmd, "compact.tenant-weights", "YAML file that contains the tenant weights for tenant partitioning.", extflag.WithEnvSubstitution())
 
-	cmd.Flag("compact.total-shards", "Total number of shards when using tenant partitioning.").
-		Default("1").IntVar(&cc.totalShards)
+	cmd.Flag("compact.replicas", "Total replicas of the stateful set.").
+		Default("1").IntVar(&cc.replicas)
+
+	cmd.Flag("compact.replication-factor", "Replication factor of the stateful set.").
+		Default("1").IntVar(&cc.replicationFactor)
 
 	cmd.Flag("compact.common-path-prefix", "Common path prefix for tenant discovery when using tenant partitioning. This is the prefix before the tenant name in the object storage path.").
 		Default("v1/raw/").StringVar(&cc.commonPathPrefix)
