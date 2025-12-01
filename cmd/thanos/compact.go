@@ -1059,7 +1059,7 @@ func (cc *compactConfig) registerFlag(cmd extkingpin.FlagClause) {
 
 	cc.selectorRelabelConf = *extkingpin.RegisterSelectorRelabelFlags(cmd)
 
-	cc.tenantWeightsFile = *extflag.RegisterPathOrContent(cmd, "compact.tenant-weights", "YAML file that contains the tenant weights for tenant partitioning.", extflag.WithEnvSubstitution())
+	cc.tenantWeightsFile = *extflag.RegisterPathOrContent(cmd, "compact.tenant-weights-file", "YAML file that contains the tenant weights for tenant partitioning.", extflag.WithEnvSubstitution())
 
 	cmd.Flag("compact.replicas", "Total replicas of the stateful set.").
 		Default("1").IntVar(&cc.replicas)
