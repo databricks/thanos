@@ -326,9 +326,8 @@ func runCompact(
 		}
 
 		// Create tenant-specific logger
-		tenantLogger := logger
 		if tenantPrefix != "" {
-			tenantLogger = log.With(logger, "tenant_prefix", tenantPrefix)
+			logger = log.With(logger, "tenant_prefix", tenantPrefix)
 		}
 
 		relabelContentYaml, err := conf.selectorRelabelConf.Content()
@@ -377,7 +376,7 @@ func runCompact(
 		if tenantPrefix != "" {
 			baseMetaFetcher, err = block.NewBaseFetcher(logger, conf.blockMetaFetchConcurrency, insBkt, blockLister, conf.dataDir, nil) // TODO (willh-db): revisit metrics here
 		} else {
-			baseMetaFetcher, err = block.NewBaseFetcher(logger, conf.blockMetaFetchConcurrency, insBkt, blockLister, conf.dataDir, extprom.WrapRegistererWithPrefix("thanos_", tenantReg))
+			baseMetaFetcher, err = block.NewBaseFetcher(logger, conf.blockMetaFetchConcurrency, insBkt, blockLister, conf.dataDir, extprom.WrapRegistererWithPrefix("thanos_", reg))
 		}
 		if err != nil {
 			return errors.Wrap(err, "create meta fetcher")
@@ -387,12 +386,12 @@ func runCompact(
 		dedupReplicaLabels := strutil.ParseFlagLabels(conf.dedupReplicaLabels)
 		if len(dedupReplicaLabels) > 0 {
 			enableVerticalCompaction = true
-			level.Info(tenantLogger).Log(
+			level.Info(logger).Log(
 				"msg", "deduplication.replica-label specified, enabling vertical compaction", "dedupReplicaLabels", strings.Join(dedupReplicaLabels, ","),
 			)
 		}
 		if enableVerticalCompaction {
-			level.Info(tenantLogger).Log(
+			level.Info(logger).Log(
 				"msg", "vertical compaction is enabled", "compact.enable-vertical-compaction", fmt.Sprintf("%v", conf.enableVerticalCompaction),
 			)
 		}
@@ -418,7 +417,7 @@ func runCompact(
 			if tenantPrefix != "" {
 				cf = baseMetaFetcher.NewMetaFetcher(nil, filters) // TODO (willh-db): revisit metrics here
 			} else {
-				cf = baseMetaFetcher.NewMetaFetcher(extprom.WrapRegistererWithPrefix("thanos_", tenantReg), filters)
+				cf = baseMetaFetcher.NewMetaFetcher(extprom.WrapRegistererWithPrefix("thanos_", reg), filters)
 			}
 			cf.UpdateOnChange(func(blocks []metadata.Meta, err error) {
 				api.SetLoaded(blocks, err)
@@ -453,7 +452,7 @@ func runCompact(
 		}
 
 		if conf.maxCompactionLevel < compactions.maxLevel() {
-			level.Warn(tenantLogger).Log("msg", "Max compaction level is lower than should be", "current", conf.maxCompactionLevel, "default", compactions.maxLevel())
+			level.Warn(logger).Log("msg", "Max compaction level is lower than should be", "current", conf.maxCompactionLevel, "default", compactions.maxLevel())
 		}
 
 		ctx, cancel := context.WithCancel(context.Background())
@@ -483,7 +482,7 @@ func runCompact(
 
 		// Instantiate the compactor with different time slices. Timestamps in TSDB
 		// are in milliseconds.
-		comp, err := tsdb.NewLeveledCompactor(ctx, tenantReg, tenantLogger, levels, downsample.NewPool(), mergeFunc)
+		comp, err := tsdb.NewLeveledCompactor(ctx, tenantReg, logger, levels, downsample.NewPool(), mergeFunc)
 		if err != nil {
 			return errors.Wrap(err, "create compactor")
 		}
@@ -557,22 +556,22 @@ func runCompact(
 			if !conf.disableDownsampling && retentionByResolution[compact.ResolutionLevelRaw].Milliseconds() < downsample.ResLevel1DownsampleRange {
 				return errors.New("raw resolution must be higher than the minimum block size after which 5m resolution downsampling will occur (40 hours)")
 			}
-			level.Info(tenantLogger).Log("msg", "retention policy of raw samples is enabled", "duration", retentionByResolution[compact.ResolutionLevelRaw])
+			level.Info(logger).Log("msg", "retention policy of raw samples is enabled", "duration", retentionByResolution[compact.ResolutionLevelRaw])
 		}
 		if retentionByResolution[compact.ResolutionLevel5m].Milliseconds() != 0 {
 			// If retention is lower than minimum downsample range, then no downsampling at this resolution will be persisted
 			if !conf.disableDownsampling && retentionByResolution[compact.ResolutionLevel5m].Milliseconds() < downsample.ResLevel2DownsampleRange {
 				return errors.New("5m resolution retention must be higher than the minimum block size after which 1h resolution downsampling will occur (10 days)")
 			}
-			level.Info(tenantLogger).Log("msg", "retention policy of 5 min aggregated samples is enabled", "duration", retentionByResolution[compact.ResolutionLevel5m])
+			level.Info(logger).Log("msg", "retention policy of 5 min aggregated samples is enabled", "duration", retentionByResolution[compact.ResolutionLevel5m])
 		}
 		if retentionByResolution[compact.ResolutionLevel1h].Milliseconds() != 0 {
-			level.Info(tenantLogger).Log("msg", "retention policy of 1 hour aggregated samples is enabled", "duration", retentionByResolution[compact.ResolutionLevel1h])
+			level.Info(logger).Log("msg", "retention policy of 1 hour aggregated samples is enabled", "duration", retentionByResolution[compact.ResolutionLevel1h])
 		}
 
 		retentionByTenant, err := compact.ParesRetentionPolicyByTenant(logger, *conf.retentionTenants)
 		if err != nil {
-			level.Error(tenantLogger).Log("msg", "failed to parse retention policy by tenant", "err", err)
+			level.Error(logger).Log("msg", "failed to parse retention policy by tenant", "err", err)
 			return err
 		}
 
@@ -588,7 +587,7 @@ func runCompact(
 			}
 
 			progress.Set(compact.CleanBlocks)
-			compact.BestEffortCleanAbortedPartialUploads(ctx, tenantLogger, sy.Partial(), insBkt, compactMetrics.partialUploadDeleteAttempts, compactMetrics.blocksCleaned, compactMetrics.blockCleanupFailures)
+			compact.BestEffortCleanAbortedPartialUploads(ctx, logger, sy.Partial(), insBkt, compactMetrics.partialUploadDeleteAttempts, compactMetrics.blocksCleaned, compactMetrics.blockCleanupFailures)
 			if err := blocksCleaner.DeleteMarkedBlocks(ctx); err != nil {
 				return errors.Wrap(err, "cleaning marked blocks")
 			}
@@ -601,7 +600,7 @@ func runCompact(
 			defer progress.Idle()
 			// this should happen before any compaction to remove unnecessary process on backlogs beyond retention.
 			if len(retentionByTenant) != 0 && len(sy.Metas()) == 0 {
-				level.Info(tenantLogger).Log("msg", "sync before tenant retention due to no blocks")
+				level.Info(logger).Log("msg", "sync before tenant retention due to no blocks")
 				progress.Set(compact.SyncMeta)
 				if err := sy.SyncMetas(ctx); err != nil {
 					return errors.Wrap(err, "sync before tenant retention")
@@ -609,7 +608,7 @@ func runCompact(
 			}
 
 			progress.Set(compact.ApplyRetention)
-			if err := compact.ApplyRetentionPolicyByTenant(ctx, tenantLogger, insBkt, sy.Metas(), retentionByTenant, compactMetrics.blocksMarked.WithLabelValues(metadata.DeletionMarkFilename, metadata.TenantRetentionExpired)); err != nil {
+			if err := compact.ApplyRetentionPolicyByTenant(ctx, logger, insBkt, sy.Metas(), retentionByTenant, compactMetrics.blocksMarked.WithLabelValues(metadata.DeletionMarkFilename, metadata.TenantRetentionExpired)); err != nil {
 				return errors.Wrap(err, "retention by tenant failed")
 			}
 
@@ -621,7 +620,7 @@ func runCompact(
 				// After all compactions are done, work down the downsampling backlog.
 				// We run two passes of this to ensure that the 1h downsampling is generated
 				// for 5m downsamplings created in the first run.
-				level.Info(tenantLogger).Log("msg", "start first pass of downsampling")
+				level.Info(logger).Log("msg", "start first pass of downsampling")
 				progress.Set(compact.SyncMeta)
 				if err := sy.SyncMetas(ctx); err != nil {
 					return errors.Wrap(err, "sync before first pass of downsampling")
@@ -654,7 +653,7 @@ func runCompact(
 					return errors.Wrap(err, "first pass of downsampling failed")
 				}
 
-				level.Info(tenantLogger).Log("msg", "start second pass of downsampling")
+				level.Info(logger).Log("msg", "start second pass of downsampling")
 				progress.Set(compact.SyncMeta)
 				if err := sy.SyncMetas(ctx); err != nil {
 					return errors.Wrap(err, "sync before second pass of downsampling")
@@ -683,9 +682,9 @@ func runCompact(
 					return errors.Wrap(err, "second pass of downsampling failed")
 				}
 
-				level.Info(tenantLogger).Log("msg", "downsampling iterations done")
+				level.Info(logger).Log("msg", "downsampling iterations done")
 			} else {
-				level.Info(tenantLogger).Log("msg", "downsampling was explicitly disabled")
+				level.Info(logger).Log("msg", "downsampling was explicitly disabled")
 			}
 
 			// TODO(bwplotka): Find a way to avoid syncing if no op was done.
@@ -695,7 +694,7 @@ func runCompact(
 			}
 
 			progress.Set(compact.ApplyRetention)
-			if err := compact.ApplyRetentionPolicyByResolution(ctx, tenantLogger, insBkt, sy.Metas(), retentionByResolution, compactMetrics.blocksMarked.WithLabelValues(metadata.DeletionMarkFilename, "")); err != nil {
+			if err := compact.ApplyRetentionPolicyByResolution(ctx, logger, insBkt, sy.Metas(), retentionByResolution, compactMetrics.blocksMarked.WithLabelValues(metadata.DeletionMarkFilename, "")); err != nil {
 				return errors.Wrap(err, "retention failed")
 			}
 
@@ -724,7 +723,7 @@ func runCompact(
 				// for investigation. You should alert on this being halted.
 				if compact.IsHaltError(err) {
 					if conf.haltOnError {
-						level.Error(tenantLogger).Log("msg", "critical error detected; halting", "err", err)
+						level.Error(logger).Log("msg", "critical error detected; halting", "err", err)
 						compactMetrics.halted.Set(1)
 						select {}
 					} else {
@@ -735,7 +734,7 @@ func runCompact(
 				// The RetryError signals that we hit an retriable error (transient error, no connection).
 				// You should alert on this being triggered too frequently.
 				if compact.IsRetryError(err) {
-					level.Error(tenantLogger).Log("msg", "retriable error", "err", err)
+					level.Error(logger).Log("msg", "retriable error", "err", err)
 					compactMetrics.retried.Inc()
 					// TODO(bplotka): use actual "retry()" here instead of waiting 5 minutes?
 					return nil
@@ -764,7 +763,7 @@ func runCompact(
 					return logging.NoLogCall
 				})}
 				logMiddleware := logging.NewHTTPServerMiddleware(logger, opts...)
-				api.Register(r.WithPrefix("/api/v1"), tracer, tenantLogger, ins, logMiddleware)
+				api.Register(r.WithPrefix("/api/v1"), tracer, logger, ins, logMiddleware)
 
 				// Separate fetcher for global view.
 				// TODO(bwplotka): Allow Bucket UI to visualize the state of the block as well.
@@ -772,7 +771,7 @@ func runCompact(
 				if tenantPrefix != "" {
 					f = baseMetaFetcher.NewMetaFetcher(nil, nil, "component", "globalBucketUI") // TODO (willh-db): revisit metrics here
 				} else {
-					f = baseMetaFetcher.NewMetaFetcher(extprom.WrapRegistererWithPrefix("thanos_bucket_ui", tenantReg), nil, "component", "globalBucketUI")
+					f = baseMetaFetcher.NewMetaFetcher(extprom.WrapRegistererWithPrefix("thanos_bucket_ui", reg), nil, "component", "globalBucketUI")
 				}
 				f.UpdateOnChange(func(blocks []metadata.Meta, err error) {
 					api.SetGlobal(blocks, err)
@@ -811,7 +810,7 @@ func runCompact(
 						if err != nil && compact.IsRetryError(err) {
 							// The RetryError signals that we hit an retriable error (transient error, no connection).
 							// You should alert on this being triggered too frequently.
-							level.Error(tenantLogger).Log("msg", "retriable error", "err", err)
+							level.Error(logger).Log("msg", "retriable error", "err", err)
 							compactMetrics.retried.Inc()
 
 							return nil
@@ -842,7 +841,7 @@ func runCompact(
 							// The RetryError signals that we hit an retriable error (transient error, no connection).
 							// You should alert on this being triggered too frequently.
 							if compact.IsRetryError(err) {
-								level.Error(tenantLogger).Log("msg", "retriable error", "err", err)
+								level.Error(logger).Log("msg", "retriable error", "err", err)
 								compactMetrics.retried.Inc()
 
 								return nil
