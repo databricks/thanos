@@ -175,23 +175,23 @@ func runCompact(
 	g *run.Group,
 	logger log.Logger,
 	tracer opentracing.Tracer,
-	reg *prometheus.Registry,
+	baseReg *prometheus.Registry,
 	component component.Component,
 	conf compactConfig,
 	flagsMap map[string]string,
 ) (rerr error) {
 	deleteDelay := time.Duration(conf.deleteDelay)
-	compactMetrics := newCompactMetrics(reg, deleteDelay)
-	progressRegistry := compact.NewProgressRegistry(reg, logger)
-	downsampleMetrics := newDownsampleMetrics(reg)
+	compactMetrics := newCompactMetrics(baseReg, deleteDelay)
+	progressRegistry := compact.NewProgressRegistry(baseReg, logger)
+	downsampleMetrics := newDownsampleMetrics(baseReg)
 
 	httpProbe := prober.NewHTTP()
 	statusProber := prober.Combine(
 		httpProbe,
-		prober.NewInstrumentation(component, logger, extprom.WrapRegistererWithPrefix("thanos_", reg)),
+		prober.NewInstrumentation(component, logger, extprom.WrapRegistererWithPrefix("thanos_", baseReg)),
 	)
 
-	srv := httpserver.New(logger, reg, component, httpProbe,
+	srv := httpserver.New(logger, baseReg, component, httpProbe,
 		httpserver.WithListen(conf.http.bindAddress),
 		httpserver.WithGracePeriod(time.Duration(conf.http.gracePeriod)),
 		httpserver.WithTLSConfig(conf.http.tlsConfig),
@@ -285,7 +285,7 @@ func runCompact(
 		level.Info(logger).Log("msg", "running in single-tenant mode")
 	}
 
-	overlappingCallback := compact.NewOverlappingCompactionLifecycleCallback(reg, logger, conf.enableOverlappingRemoval)
+	isMultiTenant := len(tenantPrefixes) > 1
 
 	// Start compaction for each tenant
 	// Each will get its own bucket created via client.NewBucket with the appropriate prefix
@@ -313,20 +313,17 @@ func runCompact(
 		}
 
 		var insBkt objstore.InstrumentedBucket
-		var tenantReg prometheus.Registerer
+		var reg prometheus.Registerer
 
-		if tenantPrefix != "" {
-			// For multi-tenant mode, we pass a nil registerer to avoid metric collisions
-			// TODO (willh-db): revisit metrics structure for multi-tenant mode
-			tenantReg = nil
-			insBkt = objstoretracing.WrapWithTraces(bkt)
+		if isMultiTenant {
+			reg = prometheus.WrapRegistererWith(prometheus.Labels{"tenant": tenantPrefix}, baseReg)
 		} else {
-			tenantReg = reg
-			insBkt = objstoretracing.WrapWithTraces(objstore.WrapWithMetrics(bkt, extprom.WrapRegistererWithPrefix("thanos_", tenantReg), bkt.Name()))
+			reg = baseReg
 		}
+		insBkt = objstoretracing.WrapWithTraces(objstore.WrapWithMetrics(bkt, extprom.WrapRegistererWithPrefix("thanos_", reg), bkt.Name()))
 
 		// Create tenant-specific logger
-		if tenantPrefix != "" {
+		if isMultiTenant {
 			logger = log.With(logger, "tenant_prefix", tenantPrefix)
 		}
 
@@ -355,12 +352,7 @@ func runCompact(
 		noCompactMarkerFilter := compact.NewGatherNoCompactionMarkFilter(logger, insBkt, conf.blockMetaFetchConcurrency)
 		noDownsampleMarkerFilter := downsample.NewGatherNoDownsampleMarkFilter(logger, insBkt, conf.blockMetaFetchConcurrency)
 		labelShardedMetaFilter := block.NewLabelShardedMetaFilter(relabelConfig)
-		var consistencyDelayMetaFilter *block.ConsistencyDelayMetaFilter
-		if tenantPrefix != "" {
-			consistencyDelayMetaFilter = block.NewConsistencyDelayMetaFilter(logger, conf.consistencyDelay, nil) // TODO (willh-db): revisit metrics here
-		} else {
-			consistencyDelayMetaFilter = block.NewConsistencyDelayMetaFilter(logger, conf.consistencyDelay, (extprom.WrapRegistererWithPrefix("thanos_", tenantReg)))
-		}
+		consistencyDelayMetaFilter := block.NewConsistencyDelayMetaFilter(logger, conf.consistencyDelay, (extprom.WrapRegistererWithPrefix("thanos_", reg)))
 		timePartitionMetaFilter := block.NewTimePartitionMetaFilter(conf.filterConf.MinTime, conf.filterConf.MaxTime)
 
 		var blockLister block.Lister
@@ -372,12 +364,7 @@ func runCompact(
 		default:
 			return errors.Errorf("unknown sync strategy %s", conf.blockListStrategy)
 		}
-		var baseMetaFetcher *block.BaseFetcher
-		if tenantPrefix != "" {
-			baseMetaFetcher, err = block.NewBaseFetcher(logger, conf.blockMetaFetchConcurrency, insBkt, blockLister, conf.dataDir, nil) // TODO (willh-db): revisit metrics here
-		} else {
-			baseMetaFetcher, err = block.NewBaseFetcher(logger, conf.blockMetaFetchConcurrency, insBkt, blockLister, conf.dataDir, extprom.WrapRegistererWithPrefix("thanos_", reg))
-		}
+		baseMetaFetcher, err := block.NewBaseFetcher(logger, conf.blockMetaFetchConcurrency, insBkt, blockLister, conf.dataDir, extprom.WrapRegistererWithPrefix("thanos_", reg))
 		if err != nil {
 			return errors.Wrap(err, "create meta fetcher")
 		}
@@ -413,12 +400,7 @@ func runCompact(
 				filters = append(filters, noDownsampleMarkerFilter)
 			}
 			// Make sure all compactor meta syncs are done through Syncer.SyncMeta for readability.
-			var cf *block.MetaFetcher
-			if tenantPrefix != "" {
-				cf = baseMetaFetcher.NewMetaFetcher(nil, filters) // TODO (willh-db): revisit metrics here
-			} else {
-				cf = baseMetaFetcher.NewMetaFetcher(extprom.WrapRegistererWithPrefix("thanos_", reg), filters)
-			}
+			cf := baseMetaFetcher.NewMetaFetcher(extprom.WrapRegistererWithPrefix("thanos_", reg), filters) // TODO (willh-db): revisit metrics here
 			cf.UpdateOnChange(func(blocks []metadata.Meta, err error) {
 				api.SetLoaded(blocks, err)
 			})
@@ -432,7 +414,7 @@ func runCompact(
 			}
 			sy, err = compact.NewMetaSyncer(
 				logger,
-				tenantReg,
+				reg,
 				insBkt,
 				cf,
 				duplicateBlocksFilter,
@@ -482,7 +464,7 @@ func runCompact(
 
 		// Instantiate the compactor with different time slices. Timestamps in TSDB
 		// are in milliseconds.
-		comp, err := tsdb.NewLeveledCompactor(ctx, tenantReg, logger, levels, downsample.NewPool(), mergeFunc)
+		comp, err := tsdb.NewLeveledCompactor(ctx, reg, logger, levels, downsample.NewPool(), mergeFunc)
 		if err != nil {
 			return errors.Wrap(err, "create compactor")
 		}
@@ -505,7 +487,7 @@ func runCompact(
 			insBkt,
 			conf.acceptMalformedIndex,
 			enableVerticalCompaction,
-			tenantReg,
+			reg,
 			compactMetrics.blocksMarked.WithLabelValues(metadata.DeletionMarkFilename, ""),
 			compactMetrics.garbageCollectedBlocks,
 			compactMetrics.blocksMarked.WithLabelValues(metadata.NoCompactMarkFilename, metadata.OutOfOrderChunksNoCompactReason),
@@ -535,7 +517,7 @@ func runCompact(
 			planner,
 			comp,
 			compact.DefaultBlockDeletableChecker{},
-			overlappingCallback,
+			compact.NewOverlappingCompactionLifecycleCallback(baseReg, logger, conf.enableOverlappingRemoval),
 			compactDir,
 			insBkt,
 			conf.compactionConcurrency,
@@ -753,7 +735,7 @@ func runCompact(
 			if isFirstTenant && !conf.disableWeb {
 				r := route.New()
 
-				ins := extpromhttp.NewInstrumentationMiddleware(reg, nil)
+				ins := extpromhttp.NewInstrumentationMiddleware(baseReg, nil)
 
 				global := ui.NewBucketUI(logger, conf.webConf.externalPrefix, conf.webConf.prefixHeaderName, component)
 				global.Register(r, ins)
@@ -767,12 +749,7 @@ func runCompact(
 
 				// Separate fetcher for global view.
 				// TODO(bwplotka): Allow Bucket UI to visualize the state of the block as well.
-				var f *block.MetaFetcher
-				if tenantPrefix != "" {
-					f = baseMetaFetcher.NewMetaFetcher(nil, nil, "component", "globalBucketUI") // TODO (willh-db): revisit metrics here
-				} else {
-					f = baseMetaFetcher.NewMetaFetcher(extprom.WrapRegistererWithPrefix("thanos_bucket_ui", reg), nil, "component", "globalBucketUI")
-				}
+				f := baseMetaFetcher.NewMetaFetcher(extprom.WrapRegistererWithPrefix("thanos_bucket_ui", baseReg), nil, "component", "globalBucketUI")
 				f.UpdateOnChange(func(blocks []metadata.Meta, err error) {
 					api.SetGlobal(blocks, err)
 				})
@@ -826,11 +803,11 @@ func runCompact(
 			// Periodically calculate the progress of compaction, downsampling and retention.
 			if isFirstTenant && conf.progressCalculateInterval > 0 {
 				g.Add(func() error {
-					ps := compact.NewCompactionProgressCalculator(reg, tsdbPlanner)
-					rs := compact.NewRetentionProgressCalculator(reg, retentionByResolution)
+					ps := compact.NewCompactionProgressCalculator(baseReg, tsdbPlanner)
+					rs := compact.NewRetentionProgressCalculator(baseReg, retentionByResolution)
 					var ds *compact.DownsampleProgressCalculator
 					if !conf.disableDownsampling {
-						ds = compact.NewDownsampleProgressCalculator(reg)
+						ds = compact.NewDownsampleProgressCalculator(baseReg)
 					}
 
 					return runutil.Repeat(conf.progressCalculateInterval, ctx.Done(), func() error {
