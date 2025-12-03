@@ -312,7 +312,6 @@ func runCompact(
 			return err
 		}
 
-		var insBkt objstore.InstrumentedBucket
 		var reg prometheus.Registerer
 
 		if isMultiTenant {
@@ -320,7 +319,7 @@ func runCompact(
 		} else {
 			reg = baseReg
 		}
-		insBkt = objstoretracing.WrapWithTraces(objstore.WrapWithMetrics(bkt, extprom.WrapRegistererWithPrefix("thanos_", reg), bkt.Name()))
+		insBkt := objstoretracing.WrapWithTraces(objstore.WrapWithMetrics(bkt, extprom.WrapRegistererWithPrefix("thanos_", reg), bkt.Name()))
 
 		// Create tenant-specific logger
 		if isMultiTenant {
@@ -352,7 +351,7 @@ func runCompact(
 		noCompactMarkerFilter := compact.NewGatherNoCompactionMarkFilter(logger, insBkt, conf.blockMetaFetchConcurrency)
 		noDownsampleMarkerFilter := downsample.NewGatherNoDownsampleMarkFilter(logger, insBkt, conf.blockMetaFetchConcurrency)
 		labelShardedMetaFilter := block.NewLabelShardedMetaFilter(relabelConfig)
-		consistencyDelayMetaFilter := block.NewConsistencyDelayMetaFilter(logger, conf.consistencyDelay, (extprom.WrapRegistererWithPrefix("thanos_", reg)))
+		consistencyDelayMetaFilter := block.NewConsistencyDelayMetaFilter(logger, conf.consistencyDelay, extprom.WrapRegistererWithPrefix("thanos_", reg))
 		timePartitionMetaFilter := block.NewTimePartitionMetaFilter(conf.filterConf.MinTime, conf.filterConf.MaxTime)
 
 		var blockLister block.Lister
@@ -400,7 +399,8 @@ func runCompact(
 				filters = append(filters, noDownsampleMarkerFilter)
 			}
 			// Make sure all compactor meta syncs are done through Syncer.SyncMeta for readability.
-			cf := baseMetaFetcher.NewMetaFetcher(extprom.WrapRegistererWithPrefix("thanos_", reg), filters) // TODO (willh-db): revisit metrics here
+			cf := baseMetaFetcher.NewMetaFetcher(
+				extprom.WrapRegistererWithPrefix("thanos_", reg), filters)
 			cf.UpdateOnChange(func(blocks []metadata.Meta, err error) {
 				api.SetLoaded(blocks, err)
 			})
