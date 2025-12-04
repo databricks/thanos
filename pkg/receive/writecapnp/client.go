@@ -5,6 +5,7 @@ package writecapnp
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -111,7 +112,13 @@ func (r *RemoteWriteClient) RemoteWrite(ctx context.Context, in *storepb.WriteRe
 	case WriteError_invalidArgument:
 		return nil, status.Error(codes.InvalidArgument, "rpc failed")
 	case WriteError_internal:
-		return nil, status.Error(codes.Internal, "rpc failed")
+		extraContext, err := resp.ExtraErrorContext()
+		if err != nil || extraContext == "" {
+			extraContext = " (no additional context provided)"
+		} else {
+			extraContext = ": " + extraContext
+		}
+		return nil, status.Error(codes.Internal, fmt.Sprintf("rpc failed%s", extraContext))
 	default:
 		return &storepb.WriteResponse{}, nil
 	}
