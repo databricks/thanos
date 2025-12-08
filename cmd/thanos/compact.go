@@ -458,13 +458,19 @@ func runCompact(
 			}
 		}()
 
-		runCompactForTenant(g, ctx, tenantLogger, tracer, tenantReg, reg, component, conf, flagsMap, tenantPrefix, deleteDelay,
+		err = runCompactForTenant(g, ctx, tenantLogger, tenantReg, reg, conf, flagsMap, deleteDelay,
 			compactMetrics, progressRegistry, downsampleMetrics, insBkt, relabelConfig,
 			retentionByResolution, levels, dedupReplicaLabels, enableVerticalCompaction, mergeFunc,
 			compactDir, downsamplingDir, cancel)
+		if err != nil {
+			return errors.Wrap(err, "failed to run compact for tenant")
+		}
 	}
 
-	postProcess(g, ctx, logger, tracer, srv, conf, reg, component, progressRegistry, compactMetrics, baseMetaFetcher, globalAPI, statusProber, cancel)
+	err = postProcess(g, ctx, logger, tracer, srv, conf, reg, component, progressRegistry, baseMetaFetcher, globalAPI, cancel)
+	if err != nil {
+		return errors.Wrap(err, "failed to post process after compacting tenants")
+	}
 
 	level.Info(logger).Log("msg", "starting compact node")
 	statusProber.Ready()
@@ -475,13 +481,10 @@ func runCompactForTenant(
 	g *run.Group,
 	ctx context.Context,
 	logger log.Logger,
-	tracer opentracing.Tracer,
 	reg prometheus.Registerer,
 	baseReg *prometheus.Registry,
-	component component.Component,
 	conf compactConfig,
 	flagsMap map[string]string,
-	tenantPrefix string,
 	deleteDelay time.Duration,
 	compactMetrics *compactMetrics,
 	progressRegistry *compact.ProgressRegistry,
@@ -895,10 +898,8 @@ func postProcess(
 	reg *prometheus.Registry,
 	component component.Component,
 	progressRegistry *compact.ProgressRegistry,
-	compactMetrics *compactMetrics,
 	baseMetaFetcher *block.BaseFetcher,
 	globalAPI *blocksAPI.BlocksAPI,
-	statusProber prober.Probe,
 	cancel context.CancelFunc,
 ) error {
 	if conf.wait {
@@ -948,7 +949,7 @@ func postProcess(
 			})
 		}
 
-		// Note: Cleanup interval and progress calculation are now handled per-tenant
+		// Note: Cleanup interval and progress calculation are handled per-tenant
 		// in runCompactForTenant() since they require per-tenant components (syncer, grouper, planner).
 	}
 	return nil
