@@ -96,9 +96,10 @@ func TestProxyStore_Series(t *testing.T) {
 		storeAPIs      []Client
 		selectorLabels labels.Labels
 
-		req                *storepb.SeriesRequest
-		storeDebugMatchers [][]*labels.Matcher
-		blockedPatterns    []string
+		req                       *storepb.SeriesRequest
+		storeDebugMatchers        [][]*labels.Matcher
+		blockedPatterns           []string
+		blockedBroadRegexPatterns []string
 
 		expectedSeries      []rawSeries
 		expectedErr         error
@@ -1471,8 +1472,8 @@ func TestProxyStore_Series(t *testing.T) {
 					{Name: "__name__", Value: ".+", Type: storepb.LabelMatcher_RE},
 				},
 			},
-			blockedPatterns: []string{"dummy_"}, // Enable blocking feature
-			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: overly broad __name__ regex pattern '.+' is not allowed"),
+			blockedBroadRegexPatterns: []string{".+"},
+			expectedErr:               errors.New("rpc error: code = InvalidArgument desc = query blocked: overly broad __name__ regex pattern '.+' is not allowed"),
 		},
 		{
 			title: "blocked query: overly broad regex pattern .*",
@@ -1494,8 +1495,8 @@ func TestProxyStore_Series(t *testing.T) {
 					{Name: "__name__", Value: ".*", Type: storepb.LabelMatcher_RE},
 				},
 			},
-			blockedPatterns: []string{"dummy_"}, // Enable blocking feature
-			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: overly broad __name__ regex pattern '.*' is not allowed"),
+			blockedBroadRegexPatterns: []string{".*"},
+			expectedErr:               errors.New("rpc error: code = InvalidArgument desc = query blocked: overly broad __name__ regex pattern '.*' is not allowed"),
 		},
 		{
 			title: "blocked query: overly broad regex pattern .+|.*",
@@ -1517,8 +1518,8 @@ func TestProxyStore_Series(t *testing.T) {
 					{Name: "__name__", Value: ".+|.*", Type: storepb.LabelMatcher_RE},
 				},
 			},
-			blockedPatterns: []string{"dummy_"}, // Enable blocking feature
-			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: overly broad __name__ regex pattern '.+|.*' is not allowed"),
+			blockedBroadRegexPatterns: []string{".+|.*"},
+			expectedErr:               errors.New("rpc error: code = InvalidArgument desc = query blocked: overly broad __name__ regex pattern '.+|.*' is not allowed"),
 		},
 		{
 			title: "blocked query: overly broad regex pattern .*|.+",
@@ -1540,8 +1541,8 @@ func TestProxyStore_Series(t *testing.T) {
 					{Name: "__name__", Value: ".*|.+", Type: storepb.LabelMatcher_RE},
 				},
 			},
-			blockedPatterns: []string{"dummy_"}, // Enable blocking feature
-			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: overly broad __name__ regex pattern '.*|.+' is not allowed"),
+			blockedBroadRegexPatterns: []string{".*|.+"},
+			expectedErr:               errors.New("rpc error: code = InvalidArgument desc = query blocked: overly broad __name__ regex pattern '.*|.+' is not allowed"),
 		},
 		{
 			title: "not blocked query: specific regex pattern is allowed",
@@ -1615,6 +1616,9 @@ func TestProxyStore_Series(t *testing.T) {
 							}
 							if len(tc.blockedPatterns) > 0 {
 								options = append(options, WithBlockedMetricPatterns(tc.blockedPatterns))
+							}
+							if len(tc.blockedBroadRegexPatterns) > 0 {
+								options = append(options, WithBlockedBroadRegexPatterns(tc.blockedBroadRegexPatterns))
 							}
 
 							q := NewProxyStore(nil,

@@ -108,6 +108,7 @@ type ProxyStore struct {
 	lazyRetrievalMaxBufferedResponses int
 	blockedMetricPrefixes             *radix.Tree
 	blockedMetricExacts               map[string]struct{}
+	blockedBroadRegexPatterns         map[string]struct{}
 	forwardPartialStrategy            bool
 	exclusiveExternalLabels           []string
 }
@@ -249,6 +250,19 @@ func WithBlockedMetricPatterns(patterns []string) ProxyStoreOption {
 					// No * or _ at the end, store as exact match only
 					s.blockedMetricExacts[pattern] = struct{}{}
 				}
+			}
+		}
+	}
+}
+
+// WithBlockedBroadRegexPatterns returns a ProxyStoreOption that sets the blocked broad regex patterns.
+// These patterns (like ".+", ".*", ".+|.*") will be blocked unconditionally without filter checking.
+func WithBlockedBroadRegexPatterns(patterns []string) ProxyStoreOption {
+	return func(s *ProxyStore) {
+		s.blockedBroadRegexPatterns = make(map[string]struct{})
+		for _, pattern := range patterns {
+			if pattern != "" {
+				s.blockedBroadRegexPatterns[pattern] = struct{}{}
 			}
 		}
 	}
@@ -396,13 +410,15 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 		filterCount := s.countAllFilters(matchers)
 
 		var errorMsg string
-		if metricName == metricNameLabel {
+		// Check if this is a broad regex pattern block (matchedPattern starts with "BROAD_REGEX:")
+		if strings.HasPrefix(matchedPattern, "BROAD_REGEX:") {
 			// This is a broad regex pattern block
+			actualPattern := strings.TrimPrefix(matchedPattern, "BROAD_REGEX:")
 			level.Warn(reqLogger).Log(
 				"msg", "query blocked due to overly broad regex pattern",
-				"regex_pattern", matchedPattern,
+				"regex_pattern", actualPattern,
 			)
-			errorMsg = fmt.Sprintf("query blocked: overly broad __name__ regex pattern '%s' is not allowed", matchedPattern)
+			errorMsg = fmt.Sprintf("query blocked: overly broad __name__ regex pattern '%s' is not allowed", actualPattern)
 		} else {
 			// This is a normal blocked metric pattern
 			level.Warn(reqLogger).Log(
@@ -1102,45 +1118,36 @@ func (s *ProxyStore) countAllFilters(matchers []*labels.Matcher) int {
 	return filterCount
 }
 
-// hasOverlyBroadRegex checks if the query contains overly broad regex patterns on __name__.
-// Blocks specific patterns: ".+", ".*", ".+|.*".
-func (s *ProxyStore) hasOverlyBroadRegex(matchers []*labels.Matcher) (bool, string) {
-	for _, matcher := range matchers {
-		if matcher.Name == metricNameLabel && matcher.Type == labels.MatchRegexp {
-			// Check for specific overly broad patterns
-			switch matcher.Value {
-			case ".+", ".*", ".+|.*", ".*|.+":
-				return true, matcher.Value
-			}
-		}
-	}
-	return false, ""
-}
-
 // shouldBlockQuery determines if a query should be blocked based on metric patterns and label filters.
 // Returns (shouldBlock, metricName, matchedPattern).
+// When blocked due to broad regex, returns (true, pattern, "BROAD_REGEX:"+pattern) to distinguish it.
 func (s *ProxyStore) shouldBlockQuery(matchers []*labels.Matcher) (bool, string, string) {
-	// If blocking is not configured, don't block anything
-	if s.blockedMetricPrefixes == nil && s.blockedMetricExacts == nil {
-		return false, "", ""
-	}
-
-	// First check for overly broad regex patterns - block these when blocking is enabled
-	if hasBroadRegex, pattern := s.hasOverlyBroadRegex(matchers); hasBroadRegex {
-		return true, metricNameLabel, pattern
-	}
-
-	// Extract metric name from matchers
+	// Extract metric name from matchers (either MatchEqual or MatchRegexp)
 	var metricName string
 	for _, matcher := range matchers {
-		if matcher.Name == metricNameLabel && matcher.Type == labels.MatchEqual {
-			metricName = matcher.Value
-			break
+		if matcher.Name == metricNameLabel {
+			if matcher.Type == labels.MatchEqual || matcher.Type == labels.MatchRegexp {
+				metricName = matcher.Value
+				break
+			}
 		}
 	}
 
 	if metricName == "" {
 		return false, "", "" // No metric name found, allow query
+	}
+
+	// Check for broad regex patterns first - block unconditionally if configured
+	if s.blockedBroadRegexPatterns != nil {
+		if _, found := s.blockedBroadRegexPatterns[metricName]; found {
+			// Use special marker to indicate this is a broad regex block
+			return true, metricName, "BROAD_REGEX:" + metricName
+		}
+	}
+
+	// If normal blocking is not configured, don't block anything else
+	if s.blockedMetricPrefixes == nil && s.blockedMetricExacts == nil {
+		return false, "", ""
 	}
 
 	// Check if metric matches blocked patterns and find which pattern matched
