@@ -41,6 +41,9 @@ const UninitializedTSDBTime = math.MaxInt64
 // StoreMatcherKey is the context key for the store's allow list.
 const StoreMatcherKey = ctxKey(0)
 
+// metricNameLabel is the label name for metric names in Prometheus.
+const metricNameLabel = "__name__"
+
 // ErrorNoStoresMatched is returned if the query does not match any data.
 // This can happen with Query servers trees and external labels.
 var ErrorNoStoresMatched = errors.New("No StoreAPIs matched for this query")
@@ -393,7 +396,7 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 		filterCount := s.countAllFilters(matchers)
 
 		var errorMsg string
-		if metricName == "__name__" {
+		if metricName == metricNameLabel {
 			// This is a broad regex pattern block
 			level.Warn(reqLogger).Log(
 				"msg", "query blocked due to overly broad regex pattern",
@@ -1092,7 +1095,7 @@ func (s *ProxyStore) hasSufficientFilters(matchers []*labels.Matcher) bool {
 func (s *ProxyStore) countAllFilters(matchers []*labels.Matcher) int {
 	filterCount := 0
 	for _, matcher := range matchers {
-		if matcher.Name != "__name__" {
+		if matcher.Name != metricNameLabel {
 			filterCount++
 		}
 	}
@@ -1100,10 +1103,10 @@ func (s *ProxyStore) countAllFilters(matchers []*labels.Matcher) int {
 }
 
 // hasOverlyBroadRegex checks if the query contains overly broad regex patterns on __name__.
-// Blocks specific patterns: ".+", ".*", ".+|.*"
+// Blocks specific patterns: ".+", ".*", ".+|.*".
 func (s *ProxyStore) hasOverlyBroadRegex(matchers []*labels.Matcher) (bool, string) {
 	for _, matcher := range matchers {
-		if matcher.Name == "__name__" && matcher.Type == labels.MatchRegexp {
+		if matcher.Name == metricNameLabel && matcher.Type == labels.MatchRegexp {
 			// Check for specific overly broad patterns
 			switch matcher.Value {
 			case ".+", ".*", ".+|.*", ".*|.+":
@@ -1117,19 +1120,20 @@ func (s *ProxyStore) hasOverlyBroadRegex(matchers []*labels.Matcher) (bool, stri
 // shouldBlockQuery determines if a query should be blocked based on metric patterns and label filters.
 // Returns (shouldBlock, metricName, matchedPattern).
 func (s *ProxyStore) shouldBlockQuery(matchers []*labels.Matcher) (bool, string, string) {
-	// First check for overly broad regex patterns - always block these
-	if hasBroadRegex, pattern := s.hasOverlyBroadRegex(matchers); hasBroadRegex {
-		return true, "__name__", pattern
-	}
-
+	// If blocking is not configured, don't block anything
 	if s.blockedMetricPrefixes == nil && s.blockedMetricExacts == nil {
 		return false, "", ""
+	}
+
+	// First check for overly broad regex patterns - block these when blocking is enabled
+	if hasBroadRegex, pattern := s.hasOverlyBroadRegex(matchers); hasBroadRegex {
+		return true, metricNameLabel, pattern
 	}
 
 	// Extract metric name from matchers
 	var metricName string
 	for _, matcher := range matchers {
-		if matcher.Name == "__name__" && matcher.Type == labels.MatchEqual {
+		if matcher.Name == metricNameLabel && matcher.Type == labels.MatchEqual {
 			metricName = matcher.Value
 			break
 		}
