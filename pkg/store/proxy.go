@@ -386,24 +386,34 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 		return status.Error(codes.InvalidArgument, errors.New("no matchers specified (excluding selector labels)").Error())
 	}
 
-	// Check X-Source header once for performance
-	isBronsonRequest := s.isBronsonRequest(srv.Context())
-
 	// Check if the query should be blocked due to insufficient filters
-	shouldBlock, metricName, matchedPattern := s.shouldBlockQuery(isBronsonRequest, matchers)
+	shouldBlock, metricName, matchedPattern := s.shouldBlockQuery(matchers)
 	if shouldBlock {
 		// Log the blocked query with structured logging
 		filterCount := s.countAllFilters(matchers)
-		level.Warn(reqLogger).Log(
-			"msg", "query blocked due to high cardinality metric without sufficient filters",
-			"metric_name", metricName,
-			"filter_count", filterCount,
-		)
+
+		var errorMsg string
+		if metricName == "__name__" {
+			// This is a broad regex pattern block
+			level.Warn(reqLogger).Log(
+				"msg", "query blocked due to overly broad regex pattern",
+				"regex_pattern", matchedPattern,
+			)
+			errorMsg = fmt.Sprintf("query blocked: overly broad __name__ regex pattern '%s' is not allowed", matchedPattern)
+		} else {
+			// This is a normal blocked metric pattern
+			level.Warn(reqLogger).Log(
+				"msg", "query blocked due to high cardinality metric without sufficient filters",
+				"metric_name", metricName,
+				"filter_count", filterCount,
+			)
+			errorMsg = fmt.Sprintf("query blocked: high cardinality metric '%s' matches blocked pattern '%s', please add proper filters to reduce the amount of data to fetch", metricName, matchedPattern)
+		}
 
 		// Increment metrics counter
 		s.metrics.blockedQueriesCount.WithLabelValues(metricName).Inc()
 
-		return status.Error(codes.InvalidArgument, fmt.Errorf("query blocked: high cardinality metric '%s' matches blocked pattern '%s', please add proper filters to reduce the amount of data to fetch", metricName, matchedPattern).Error())
+		return status.Error(codes.InvalidArgument, errors.New(errorMsg).Error())
 	}
 
 	// Track metrics for potential logging of high-cardinality queries
@@ -1089,26 +1099,30 @@ func (s *ProxyStore) countAllFilters(matchers []*labels.Matcher) int {
 	return filterCount
 }
 
-// isBronsonRequest checks if the request is from Bronson by examining the X-Source header.
-func (s *ProxyStore) isBronsonRequest(ctx context.Context) bool {
-	if md, ok := metadata.FromIncomingContext(ctx); ok {
-		if sources := md.Get("x-source"); len(sources) > 0 {
-			return sources[0] == "Bronson"
+// hasOverlyBroadRegex checks if the query contains overly broad regex patterns on __name__.
+// Blocks specific patterns: ".+", ".*", ".+|.*"
+func (s *ProxyStore) hasOverlyBroadRegex(matchers []*labels.Matcher) (bool, string) {
+	for _, matcher := range matchers {
+		if matcher.Name == "__name__" && matcher.Type == labels.MatchRegexp {
+			// Check for specific overly broad patterns
+			switch matcher.Value {
+			case ".+", ".*", ".+|.*", ".*|.+":
+				return true, matcher.Value
+			}
 		}
 	}
-	return false
+	return false, ""
 }
 
 // shouldBlockQuery determines if a query should be blocked based on metric patterns and label filters.
-// Only blocks queries from Bronson (when isBronsonRequest is true).
 // Returns (shouldBlock, metricName, matchedPattern).
-func (s *ProxyStore) shouldBlockQuery(isBronsonRequest bool, matchers []*labels.Matcher) (bool, string, string) {
-	if s.blockedMetricPrefixes == nil && s.blockedMetricExacts == nil {
-		return false, "", ""
+func (s *ProxyStore) shouldBlockQuery(matchers []*labels.Matcher) (bool, string, string) {
+	// First check for overly broad regex patterns - always block these
+	if hasBroadRegex, pattern := s.hasOverlyBroadRegex(matchers); hasBroadRegex {
+		return true, "__name__", pattern
 	}
 
-	// Only apply blocking for Bronson requests
-	if !isBronsonRequest {
+	if s.blockedMetricPrefixes == nil && s.blockedMetricExacts == nil {
 		return false, "", ""
 	}
 
