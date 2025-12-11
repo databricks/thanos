@@ -1471,7 +1471,8 @@ func TestProxyStore_Series(t *testing.T) {
 					{Name: "__name__", Value: ".+", Type: storepb.LabelMatcher_RE},
 				},
 			},
-			expectedErr: errors.New("rpc error: code = InvalidArgument desc = query blocked: overly broad __name__ regex pattern '.+' is not allowed"),
+			blockedPatterns: []string{"dummy_"}, // Enable blocking feature
+			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: overly broad __name__ regex pattern '.+' is not allowed"),
 		},
 		{
 			title: "blocked query: overly broad regex pattern .*",
@@ -1493,7 +1494,8 @@ func TestProxyStore_Series(t *testing.T) {
 					{Name: "__name__", Value: ".*", Type: storepb.LabelMatcher_RE},
 				},
 			},
-			expectedErr: errors.New("rpc error: code = InvalidArgument desc = query blocked: overly broad __name__ regex pattern '.*' is not allowed"),
+			blockedPatterns: []string{"dummy_"}, // Enable blocking feature
+			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: overly broad __name__ regex pattern '.*' is not allowed"),
 		},
 		{
 			title: "blocked query: overly broad regex pattern .+|.*",
@@ -1515,7 +1517,8 @@ func TestProxyStore_Series(t *testing.T) {
 					{Name: "__name__", Value: ".+|.*", Type: storepb.LabelMatcher_RE},
 				},
 			},
-			expectedErr: errors.New("rpc error: code = InvalidArgument desc = query blocked: overly broad __name__ regex pattern '.+|.*' is not allowed"),
+			blockedPatterns: []string{"dummy_"}, // Enable blocking feature
+			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: overly broad __name__ regex pattern '.+|.*' is not allowed"),
 		},
 		{
 			title: "blocked query: overly broad regex pattern .*|.+",
@@ -1537,7 +1540,8 @@ func TestProxyStore_Series(t *testing.T) {
 					{Name: "__name__", Value: ".*|.+", Type: storepb.LabelMatcher_RE},
 				},
 			},
-			expectedErr: errors.New("rpc error: code = InvalidArgument desc = query blocked: overly broad __name__ regex pattern '.*|.+' is not allowed"),
+			blockedPatterns: []string{"dummy_"}, // Enable blocking feature
+			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: overly broad __name__ regex pattern '.*|.+' is not allowed"),
 		},
 		{
 			title: "not blocked query: specific regex pattern is allowed",
