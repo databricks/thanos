@@ -257,6 +257,7 @@ func registerQuery(app *extkingpin.App) {
 		Default("0s"))
 
 	blockQueryMetricsWithoutFilter := cmd.Flag("query.block-query-metrics-without-filter", "Comma-separated list of metric patterns to block queries without sufficient label filters. Helps prevent high-cardinality metric queries.").Default("").String()
+	blockQueryBroadRegexPatterns := cmd.Flag("query.block-query-broad-regex-patterns", "Comma-separated list of overly broad regex patterns (like .+, .*, etc.) to block unconditionally in __name__ regex queries. Helps prevent expensive broad regex queries.").Default("").String()
 	forwardPartialStrategy := cmd.Flag("query.forward-partial-strategy", "Enable forward partial strategy for queries. This is used for a Queier stacked on the top of other Queiers.").Default("false").Bool()
 
 	var storeRateLimits store.SeriesSelectLimits
@@ -328,6 +329,16 @@ func registerQuery(app *extkingpin.App) {
 				blockedMetricPatterns[i] = strings.TrimSpace(pattern)
 			}
 			level.Info(logger).Log("msg", "blocking query metrics without filter feature enabled", "patterns", strings.Join(blockedMetricPatterns, ","))
+		}
+
+		// Parse blocked broad regex patterns
+		var blockedBroadRegexPatterns []string
+		if *blockQueryBroadRegexPatterns != "" {
+			blockedBroadRegexPatterns = strings.Split(*blockQueryBroadRegexPatterns, ",")
+			for i, pattern := range blockedBroadRegexPatterns {
+				blockedBroadRegexPatterns[i] = strings.TrimSpace(pattern)
+			}
+			level.Info(logger).Log("msg", "blocking broad regex patterns feature enabled", "patterns", strings.Join(blockedBroadRegexPatterns, ","))
 		}
 
 		return runQuery(
@@ -413,6 +424,7 @@ func registerQuery(app *extkingpin.App) {
 			*lazyRetrievalMaxBufferedResponses,
 			time.Duration(*grpcStoreClientKeepAlivePingInterval),
 			blockedMetricPatterns,
+			blockedBroadRegexPatterns,
 			*forwardPartialStrategy,
 			*exclusiveExternalLabels,
 		)
@@ -504,6 +516,7 @@ func runQuery(
 	lazyRetrievalMaxBufferedResponses int,
 	grpcStoreClientKeepAlivePingInterval time.Duration,
 	blockedMetricPatterns []string,
+	blockedBroadRegexPatterns []string,
 	forwardPartialStrategy bool,
 	exclusiveExternalLabels []string,
 ) error {
@@ -604,6 +617,10 @@ func runQuery(
 	// Add blocked metric patterns option if specified
 	if len(blockedMetricPatterns) > 0 {
 		options = append(options, store.WithBlockedMetricPatterns(blockedMetricPatterns))
+	}
+	// Add blocked broad regex patterns option if specified
+	if len(blockedBroadRegexPatterns) > 0 {
+		options = append(options, store.WithBlockedBroadRegexPatterns(blockedBroadRegexPatterns))
 	}
 	if forwardPartialStrategy {
 		options = append(options, store.WithoutForwardPartialStrategy())
