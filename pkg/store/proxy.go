@@ -231,6 +231,9 @@ func WithBlockedMetricPatterns(patterns []string) ProxyStoreOption {
 		s.blockedMetricPrefixes = radix.New()
 		s.blockedMetricExacts = make(map[string]struct{})
 
+		var prefixPatterns []string
+		var exactPatterns []string
+
 		for _, pattern := range patterns {
 			if pattern == "" {
 				continue
@@ -243,15 +246,22 @@ func WithBlockedMetricPatterns(patterns []string) ProxyStoreOption {
 					// Extract prefix (everything before the *)
 					prefix := pattern[:len(pattern)-1]
 					s.blockedMetricPrefixes.Insert(prefix, pattern)
+					prefixPatterns = append(prefixPatterns, pattern)
 				} else if lastChar == '_' {
 					// Pattern ends with _ (like "kube_"), treat as prefix
 					s.blockedMetricPrefixes.Insert(pattern, pattern)
+					prefixPatterns = append(prefixPatterns, pattern)
 				} else {
 					// No * or _ at the end, store as exact match only
 					s.blockedMetricExacts[pattern] = struct{}{}
+					exactPatterns = append(exactPatterns, pattern)
 				}
 			}
 		}
+
+		level.Info(s.logger).Log("msg", "Loaded blocked metric patterns",
+			"num_prefix_patterns", len(prefixPatterns), "prefix_patterns", fmt.Sprintf("%v", prefixPatterns),
+			"num_exact_patterns", len(exactPatterns), "exact_patterns", fmt.Sprintf("%v", exactPatterns))
 	}
 }
 
@@ -260,11 +270,15 @@ func WithBlockedMetricPatterns(patterns []string) ProxyStoreOption {
 func WithBlockedBroadRegexPatterns(patterns []string) ProxyStoreOption {
 	return func(s *ProxyStore) {
 		s.blockedBroadRegexPatterns = make(map[string]struct{})
+		var loadedPatterns []string
 		for _, pattern := range patterns {
 			if pattern != "" {
 				s.blockedBroadRegexPatterns[pattern] = struct{}{}
+				loadedPatterns = append(loadedPatterns, pattern)
 			}
 		}
+		level.Info(s.logger).Log("msg", "Loaded blocked broad regex patterns",
+			"num_patterns", len(loadedPatterns), "patterns", fmt.Sprintf("%v", loadedPatterns))
 	}
 }
 
@@ -1134,53 +1148,81 @@ func (s *ProxyStore) shouldBlockQuery(matchers []*labels.Matcher) (bool, string,
 	}
 
 	if metricName == "" {
+		level.Debug(s.logger).Log("msg", "shouldBlockQuery: no metric name found in matchers, allowing query")
 		return false, "", "" // No metric name found, allow query
 	}
 
+	level.Debug(s.logger).Log("msg", "shouldBlockQuery: checking query", "metric_name", metricName)
+
 	// Check for broad regex patterns first - block unconditionally if configured
 	if s.blockedBroadRegexPatterns != nil {
+		level.Debug(s.logger).Log("msg", "shouldBlockQuery: checking broad regex patterns", "metric_name", metricName, "num_patterns", len(s.blockedBroadRegexPatterns))
 		if _, found := s.blockedBroadRegexPatterns[metricName]; found {
+			level.Info(s.logger).Log("msg", "shouldBlockQuery: BLOCKED by broad regex pattern", "metric_name", metricName)
 			// Use special marker to indicate this is a broad regex block
 			return true, metricName, "BROAD_REGEX:" + metricName
 		}
+		level.Debug(s.logger).Log("msg", "shouldBlockQuery: metric not in broad regex patterns", "metric_name", metricName)
+	} else {
+		level.Debug(s.logger).Log("msg", "shouldBlockQuery: no broad regex patterns configured")
 	}
 
 	// If normal blocking is not configured, don't block anything else
 	if s.blockedMetricPrefixes == nil && s.blockedMetricExacts == nil {
+		level.Debug(s.logger).Log("msg", "shouldBlockQuery: no metric patterns configured, allowing query", "metric_name", metricName)
 		return false, "", ""
 	}
+
+	level.Debug(s.logger).Log("msg", "shouldBlockQuery: checking metric patterns", "metric_name", metricName,
+		"has_prefixes", s.blockedMetricPrefixes != nil, "has_exacts", s.blockedMetricExacts != nil)
 
 	// Check if metric matches blocked patterns and find which pattern matched
 	matchedPattern := s.getMatchedBlockedPattern(metricName)
 	if matchedPattern != "" {
 		// Block if insufficient filters
 		shouldBlock := !s.hasSufficientFilters(matchers)
+		level.Info(s.logger).Log("msg", "shouldBlockQuery: pattern matched", "metric_name", metricName,
+			"matched_pattern", matchedPattern, "should_block", shouldBlock, "has_sufficient_filters", !shouldBlock)
 		return shouldBlock, metricName, matchedPattern
 	}
 
+	level.Debug(s.logger).Log("msg", "shouldBlockQuery: no pattern matched, allowing query", "metric_name", metricName)
 	return false, "", ""
 }
 
 // getMatchedBlockedPattern returns the first pattern that matches the metric name, or empty string if none match.
 // It first checks for exact matches, then checks for prefix matches in the radix tree.
 func (s *ProxyStore) getMatchedBlockedPattern(metricName string) string {
+	level.Debug(s.logger).Log("msg", "getMatchedBlockedPattern: checking patterns", "metric_name", metricName)
+
 	// First check for exact matches
 	if s.blockedMetricExacts != nil {
+		level.Debug(s.logger).Log("msg", "getMatchedBlockedPattern: checking exact matches", "metric_name", metricName, "num_exact_patterns", len(s.blockedMetricExacts))
 		if _, found := s.blockedMetricExacts[metricName]; found {
+			level.Info(s.logger).Log("msg", "getMatchedBlockedPattern: EXACT MATCH found", "metric_name", metricName)
 			return metricName
 		}
+		level.Debug(s.logger).Log("msg", "getMatchedBlockedPattern: no exact match", "metric_name", metricName)
+	} else {
+		level.Debug(s.logger).Log("msg", "getMatchedBlockedPattern: no exact patterns configured")
 	}
 
 	// Then check for prefix matches
 	if s.blockedMetricPrefixes != nil {
+		level.Debug(s.logger).Log("msg", "getMatchedBlockedPattern: checking prefix matches", "metric_name", metricName)
 		_, value, found := s.blockedMetricPrefixes.LongestPrefix(metricName)
 		if found {
 			if originalPattern, ok := value.(string); ok {
+				level.Info(s.logger).Log("msg", "getMatchedBlockedPattern: PREFIX MATCH found", "metric_name", metricName, "matched_pattern", originalPattern)
 				// The radix tree key is the prefix, but we return the original pattern
 				return originalPattern
 			}
 		}
+		level.Debug(s.logger).Log("msg", "getMatchedBlockedPattern: no prefix match", "metric_name", metricName)
+	} else {
+		level.Debug(s.logger).Log("msg", "getMatchedBlockedPattern: no prefix patterns configured")
 	}
 
+	level.Debug(s.logger).Log("msg", "getMatchedBlockedPattern: no match found", "metric_name", metricName)
 	return ""
 }
