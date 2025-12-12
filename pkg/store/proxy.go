@@ -261,11 +261,9 @@ func WithBlockedMetricPatterns(patterns []string) ProxyStoreOption {
 func WithBlockedBroadRegexPatterns(patterns []string) ProxyStoreOption {
 	return func(s *ProxyStore) {
 		s.blockedBroadRegexPatterns = make(map[string]struct{})
-		var loadedPatterns []string
 		for _, pattern := range patterns {
 			if pattern != "" {
 				s.blockedBroadRegexPatterns[pattern] = struct{}{}
-				loadedPatterns = append(loadedPatterns, pattern)
 			}
 		}
 	}
