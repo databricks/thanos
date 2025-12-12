@@ -1473,7 +1473,7 @@ func TestProxyStore_Series(t *testing.T) {
 				},
 			},
 			blockedBroadRegexPatterns: []string{".+"},
-			expectedErr:               errors.New("rpc error: code = InvalidArgument desc = query blocked: overly broad __name__ regex pattern '.+' is not allowed"),
+			expectedErr:               errors.New("rpc error: code = InvalidArgument desc = query blocked: high cardinality metric '.+' matches blocked pattern 'Metric is a Broad Regex Pattern: .+', please add proper filters to reduce the amount of data to fetch"),
 		},
 		{
 			title: "blocked query: overly broad regex pattern .*",
@@ -1496,7 +1496,7 @@ func TestProxyStore_Series(t *testing.T) {
 				},
 			},
 			blockedBroadRegexPatterns: []string{".*"},
-			expectedErr:               errors.New("rpc error: code = InvalidArgument desc = query blocked: overly broad __name__ regex pattern '.*' is not allowed"),
+			expectedErr:               errors.New("rpc error: code = InvalidArgument desc = query blocked: high cardinality metric '.*' matches blocked pattern 'Metric is a Broad Regex Pattern: .*', please add proper filters to reduce the amount of data to fetch"),
 		},
 		{
 			title: "blocked query: overly broad regex pattern .+|.*",
@@ -1519,7 +1519,7 @@ func TestProxyStore_Series(t *testing.T) {
 				},
 			},
 			blockedBroadRegexPatterns: []string{".+|.*"},
-			expectedErr:               errors.New("rpc error: code = InvalidArgument desc = query blocked: overly broad __name__ regex pattern '.+|.*' is not allowed"),
+			expectedErr:               errors.New("rpc error: code = InvalidArgument desc = query blocked: high cardinality metric '.+|.*' matches blocked pattern 'Metric is a Broad Regex Pattern: .+|.*', please add proper filters to reduce the amount of data to fetch"),
 		},
 		{
 			title: "blocked query: overly broad regex pattern .*|.+",
@@ -1542,7 +1542,7 @@ func TestProxyStore_Series(t *testing.T) {
 				},
 			},
 			blockedBroadRegexPatterns: []string{".*|.+"},
-			expectedErr:               errors.New("rpc error: code = InvalidArgument desc = query blocked: overly broad __name__ regex pattern '.*|.+' is not allowed"),
+			expectedErr:               errors.New("rpc error: code = InvalidArgument desc = query blocked: high cardinality metric '.*|.+' matches blocked pattern 'Metric is a Broad Regex Pattern: .*|.+', please add proper filters to reduce the amount of data to fetch"),
 		},
 		{
 			title: "not blocked query: specific regex pattern is allowed",
