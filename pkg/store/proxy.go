@@ -268,8 +268,6 @@ func WithBlockedBroadRegexPatterns(patterns []string) ProxyStoreOption {
 				loadedPatterns = append(loadedPatterns, pattern)
 			}
 		}
-		level.Info(s.logger).Log("msg", "Loaded blocked broad regex patterns",
-			"num_patterns", len(loadedPatterns), "patterns", fmt.Sprintf("%v", loadedPatterns))
 	}
 }
 
@@ -415,24 +413,14 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 		filterCount := s.countAllFilters(matchers)
 
 		var errorMsg string
-		// Check if this is a broad regex pattern block (matchedPattern starts with "BROAD_REGEX:")
-		if strings.HasPrefix(matchedPattern, "BROAD_REGEX:") {
-			// This is a broad regex pattern block
-			actualPattern := strings.TrimPrefix(matchedPattern, "BROAD_REGEX:")
-			level.Warn(reqLogger).Log(
-				"msg", "query blocked due to overly broad regex pattern",
-				"regex_pattern", actualPattern,
-			)
-			errorMsg = fmt.Sprintf("query blocked: overly broad __name__ regex pattern '%s' is not allowed", actualPattern)
-		} else {
-			// This is a normal blocked metric pattern
-			level.Warn(reqLogger).Log(
-				"msg", "query blocked due to high cardinality metric without sufficient filters",
-				"metric_name", metricName,
-				"filter_count", filterCount,
-			)
-			errorMsg = fmt.Sprintf("query blocked: high cardinality metric '%s' matches blocked pattern '%s', please add proper filters to reduce the amount of data to fetch", metricName, matchedPattern)
-		}
+
+		level.Warn(reqLogger).Log(
+			"msg", "query blocked due to high cardinality metric without sufficient filters OR metricname blocked by broad regex pattern",
+			"metric_name", metricName,
+			"filter_count", filterCount,
+			"matched_pattern", matchedPattern,
+		)
+		errorMsg = fmt.Sprintf("query blocked: high cardinality metric '%s' matches blocked pattern '%s', please add proper filters to reduce the amount of data to fetch", metricName, matchedPattern)
 
 		// Increment metrics counter
 		s.metrics.blockedQueriesCount.WithLabelValues(metricName).Inc()
@@ -1145,9 +1133,9 @@ func (s *ProxyStore) shouldBlockQuery(matchers []*labels.Matcher) (bool, string,
 	// Check for broad regex patterns first - block unconditionally if configured
 	if s.blockedBroadRegexPatterns != nil {
 		if _, found := s.blockedBroadRegexPatterns[metricName]; found {
-			level.Info(s.logger).Log("msg", "shouldBlockQuery: BLOCKED by broad regex pattern", "metric_name", metricName)
-			// Use special marker to indicate this is a broad regex block
-			return true, metricName, "BROAD_REGEX:" + metricName
+			level.Debug(s.logger).Log("msg", "shouldBlockQuery: BLOCKED by broad regex pattern", "metric_name", metricName)
+			// Add marker to indicate this is a block because metric name is a broad regex pattern
+			return true, metricName, "Metric is a Broad Regex Pattern: " + metricName
 		}
 	}
 
@@ -1161,7 +1149,7 @@ func (s *ProxyStore) shouldBlockQuery(matchers []*labels.Matcher) (bool, string,
 	if matchedPattern != "" {
 		// Block if insufficient filters
 		shouldBlock := !s.hasSufficientFilters(matchers)
-		level.Info(s.logger).Log("msg", "shouldBlockQuery: pattern matched", "metric_name", metricName,
+		level.Debug(s.logger).Log("msg", "shouldBlockQuery: pattern matched", "metric_name", metricName,
 			"matched_pattern", matchedPattern, "should_block", shouldBlock, "has_sufficient_filters", !shouldBlock)
 		return shouldBlock, metricName, matchedPattern
 	}
@@ -1172,36 +1160,26 @@ func (s *ProxyStore) shouldBlockQuery(matchers []*labels.Matcher) (bool, string,
 // getMatchedBlockedPattern returns the first pattern that matches the metric name, or empty string if none match.
 // It first checks for exact matches, then checks for prefix matches in the radix tree.
 func (s *ProxyStore) getMatchedBlockedPattern(metricName string) string {
-	level.Debug(s.logger).Log("msg", "getMatchedBlockedPattern: checking patterns", "metric_name", metricName)
 
 	// First check for exact matches
 	if s.blockedMetricExacts != nil {
-		level.Debug(s.logger).Log("msg", "getMatchedBlockedPattern: checking exact matches", "metric_name", metricName, "num_exact_patterns", len(s.blockedMetricExacts))
 		if _, found := s.blockedMetricExacts[metricName]; found {
-			level.Info(s.logger).Log("msg", "getMatchedBlockedPattern: EXACT MATCH found", "metric_name", metricName)
+			level.Debug(s.logger).Log("msg", "getMatchedBlockedPattern: EXACT MATCH found", "metric_name", metricName)
 			return metricName
 		}
-		level.Debug(s.logger).Log("msg", "getMatchedBlockedPattern: no exact match", "metric_name", metricName)
-	} else {
-		level.Debug(s.logger).Log("msg", "getMatchedBlockedPattern: no exact patterns configured")
 	}
 
 	// Then check for prefix matches
 	if s.blockedMetricPrefixes != nil {
-		level.Debug(s.logger).Log("msg", "getMatchedBlockedPattern: checking prefix matches", "metric_name", metricName)
 		_, value, found := s.blockedMetricPrefixes.LongestPrefix(metricName)
 		if found {
 			if originalPattern, ok := value.(string); ok {
-				level.Info(s.logger).Log("msg", "getMatchedBlockedPattern: PREFIX MATCH found", "metric_name", metricName, "matched_pattern", originalPattern)
+				level.Debug(s.logger).Log("msg", "getMatchedBlockedPattern: PREFIX MATCH found", "metric_name", metricName, "matched_pattern", originalPattern)
 				// The radix tree key is the prefix, but we return the original pattern
 				return originalPattern
 			}
 		}
-		level.Debug(s.logger).Log("msg", "getMatchedBlockedPattern: no prefix match", "metric_name", metricName)
-	} else {
-		level.Debug(s.logger).Log("msg", "getMatchedBlockedPattern: no prefix patterns configured")
 	}
 
-	level.Debug(s.logger).Log("msg", "getMatchedBlockedPattern: no match found", "metric_name", metricName)
 	return ""
 }
