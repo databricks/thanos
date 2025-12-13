@@ -107,8 +107,7 @@ type ProxyStore struct {
 	matcherConverter                  *storepb.MatcherConverter
 	lazyRetrievalMaxBufferedResponses int
 	blockedMetricPrefixes             *radix.Tree
-	blockedMetricExacts               map[string]struct{}
-	blockedBroadRegexPatterns         map[string]struct{}
+	unconditionalBlockedMetrics       map[string]struct{}
 	forwardPartialStrategy            bool
 	exclusiveExternalLabels           []string
 }
@@ -223,47 +222,33 @@ func WithProxyStoreMatcherConverter(mc *storepb.MatcherConverter) ProxyStoreOpti
 }
 
 // WithBlockedMetricPatterns returns a ProxyStoreOption that sets the blocked metric patterns.
-// It parses input patterns to extract prefixes (like "kube_", "envoy_") by checking suffix characters
-// and stores them in a radix tree for efficient prefix matching. Exact patterns
-// (like "up") are stored in a set for whole match checking.
+// Pattern format: "p<pattern>" for prefix match, "e<pattern>" for exact match.
+// Examples: "pkube_", "eup", "e.+", "e.*"
+// Exact match patterns ('e' prefix) and patterns containing "." are blocked unconditionally.
+// Prefix patterns ('p') are blocked only if insufficient filters are present.
 func WithBlockedMetricPatterns(patterns []string) ProxyStoreOption {
 	return func(s *ProxyStore) {
 		s.blockedMetricPrefixes = radix.New()
-		s.blockedMetricExacts = make(map[string]struct{})
+		s.unconditionalBlockedMetrics = make(map[string]struct{})
 
-		for _, pattern := range patterns {
-			if pattern == "" {
+		for _, input := range patterns {
+			if len(input) < 2 {
+				continue // Need at least 2 chars: type + pattern
+			}
+
+			typeChar := input[0]
+			pattern := input[1:]
+
+			// If pattern contains ".", block unconditionally (it's a regex pattern)
+			// If type is 'e', also block unconditionally (exact match)
+			if strings.Contains(pattern, ".") || typeChar == 'e' {
+				s.unconditionalBlockedMetrics[pattern] = struct{}{}
 				continue
 			}
 
-			// Check if pattern ends with * or _ for prefix matching
-			if len(pattern) > 0 {
-				lastChar := pattern[len(pattern)-1]
-				if lastChar == '*' {
-					// Extract prefix (everything before the *)
-					prefix := pattern[:len(pattern)-1]
-					s.blockedMetricPrefixes.Insert(prefix, pattern)
-				} else if lastChar == '_' {
-					// Pattern ends with _ (like "kube_"), treat as prefix
-					s.blockedMetricPrefixes.Insert(pattern, pattern)
-				} else {
-					// No * or _ at the end, store as exact match only
-					s.blockedMetricExacts[pattern] = struct{}{}
-				}
-			}
-		}
-
-	}
-}
-
-// WithBlockedBroadRegexPatterns returns a ProxyStoreOption that sets the blocked broad regex patterns.
-// These patterns (like ".+", ".*", ".+|.*") will be blocked unconditionally without filter checking.
-func WithBlockedBroadRegexPatterns(patterns []string) ProxyStoreOption {
-	return func(s *ProxyStore) {
-		s.blockedBroadRegexPatterns = make(map[string]struct{})
-		for _, pattern := range patterns {
-			if pattern != "" {
-				s.blockedBroadRegexPatterns[pattern] = struct{}{}
+			// Only 'p' (prefix) patterns without '.' go into conditional blocking
+			if typeChar == 'p' {
+				s.blockedMetricPrefixes.Insert(pattern, pattern)
 			}
 		}
 	}
@@ -411,14 +396,23 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 		filterCount := s.countAllFilters(matchers)
 
 		var errorMsg string
-
-		level.Warn(reqLogger).Log(
-			"msg", "query blocked due to high cardinality metric without sufficient filters OR metricname blocked by broad regex pattern",
-			"metric_name", metricName,
-			"filter_count", filterCount,
-			"matched_pattern", matchedPattern,
-		)
-		errorMsg = fmt.Sprintf("query blocked: high cardinality metric '%s' matches blocked pattern '%s', please add proper filters to reduce the amount of data to fetch", metricName, matchedPattern)
+		// Check if it's an unconditional block (exact match or pattern with '.')
+		_, isUnconditional := s.unconditionalBlockedMetrics[metricName]
+		if isUnconditional {
+			level.Warn(reqLogger).Log(
+				"msg", "query blocked due to disallowed metric name pattern",
+				"pattern", metricName,
+			)
+			errorMsg = fmt.Sprintf("query blocked: metric name pattern '%s' is not allowed", metricName)
+		} else {
+			level.Warn(reqLogger).Log(
+				"msg", "query blocked due to high cardinality metric without sufficient filters",
+				"metric_name", metricName,
+				"filter_count", filterCount,
+				"matched_pattern", matchedPattern,
+			)
+			errorMsg = fmt.Sprintf("query blocked: high cardinality metric '%s' matches blocked pattern '%s', please add proper filters to reduce the amount of data to fetch", metricName, matchedPattern)
+		}
 
 		// Increment metrics counter
 		s.metrics.blockedQueriesCount.WithLabelValues(metricName).Inc()
@@ -1111,7 +1105,6 @@ func (s *ProxyStore) countAllFilters(matchers []*labels.Matcher) int {
 
 // shouldBlockQuery determines if a query should be blocked based on metric patterns and label filters.
 // Returns (shouldBlock, metricName, matchedPattern).
-// When blocked due to broad regex, returns (true, pattern, "BROAD_REGEX:"+pattern) to distinguish it.
 func (s *ProxyStore) shouldBlockQuery(matchers []*labels.Matcher) (bool, string, string) {
 	// Extract metric name from matchers (either MatchEqual or MatchRegexp)
 	var metricName string
@@ -1128,17 +1121,16 @@ func (s *ProxyStore) shouldBlockQuery(matchers []*labels.Matcher) (bool, string,
 		return false, "", "" // No metric name found, allow query
 	}
 
-	// Check for broad regex patterns first - block unconditionally if configured
-	if s.blockedBroadRegexPatterns != nil {
-		if _, found := s.blockedBroadRegexPatterns[metricName]; found {
-			level.Debug(s.logger).Log("msg", "shouldBlockQuery: BLOCKED by broad regex pattern", "metric_name", metricName)
-			// Add marker to indicate this is a block because metric name is a broad regex pattern
-			return true, metricName, "Metric is a Broad Regex Pattern: " + metricName
+	// Check for unconditional blocks first (exact match patterns and patterns containing ".")
+	if s.unconditionalBlockedMetrics != nil {
+		if _, found := s.unconditionalBlockedMetrics[metricName]; found {
+			level.Debug(s.logger).Log("msg", "shouldBlockQuery: BLOCKED unconditionally", "metric_name", metricName)
+			return true, metricName, metricName
 		}
 	}
 
-	// If normal blocking is not configured, don't block anything else
-	if s.blockedMetricPrefixes == nil && s.blockedMetricExacts == nil {
+	// If prefix blocking is not configured, don't block anything else
+	if s.blockedMetricPrefixes == nil {
 		return false, "", ""
 	}
 
@@ -1156,18 +1148,9 @@ func (s *ProxyStore) shouldBlockQuery(matchers []*labels.Matcher) (bool, string,
 }
 
 // getMatchedBlockedPattern returns the first pattern that matches the metric name, or empty string if none match.
-// It first checks for exact matches, then checks for prefix matches in the radix tree.
+// It checks for prefix matches in the radix tree.
 func (s *ProxyStore) getMatchedBlockedPattern(metricName string) string {
-
-	// First check for exact matches
-	if s.blockedMetricExacts != nil {
-		if _, found := s.blockedMetricExacts[metricName]; found {
-			level.Debug(s.logger).Log("msg", "getMatchedBlockedPattern: EXACT MATCH found", "metric_name", metricName)
-			return metricName
-		}
-	}
-
-	// Then check for prefix matches
+	// Check for prefix matches
 	if s.blockedMetricPrefixes != nil {
 		_, value, found := s.blockedMetricPrefixes.LongestPrefix(metricName)
 		if found {

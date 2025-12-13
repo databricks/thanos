@@ -96,10 +96,9 @@ func TestProxyStore_Series(t *testing.T) {
 		storeAPIs      []Client
 		selectorLabels labels.Labels
 
-		req                       *storepb.SeriesRequest
-		storeDebugMatchers        [][]*labels.Matcher
-		blockedPatterns           []string
-		blockedBroadRegexPatterns []string
+		req                *storepb.SeriesRequest
+		storeDebugMatchers [][]*labels.Matcher
+		blockedPatterns    []string
 
 		expectedSeries      []rawSeries
 		expectedErr         error
@@ -1068,7 +1067,7 @@ func TestProxyStore_Series(t *testing.T) {
 					{Name: "__name__", Value: "high_cardinality_metric", Type: storepb.LabelMatcher_EQ},
 				},
 			},
-			blockedPatterns: []string{"high_cardinality_"},
+			blockedPatterns: []string{"phigh_cardinality_"},
 			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: high cardinality metric 'high_cardinality_metric' matches blocked pattern 'high_cardinality_', please add proper filters to reduce the amount of data to fetch")},
 		{
 			title: "blocked query: metric matches pattern but has sufficient filters - should succeed",
@@ -1091,7 +1090,7 @@ func TestProxyStore_Series(t *testing.T) {
 					{Name: "job", Value: "my_job", Type: storepb.LabelMatcher_EQ},
 				},
 			},
-			blockedPatterns: []string{"high_cardinality_"},
+			blockedPatterns: []string{"phigh_cardinality_"},
 			expectedSeries: []rawSeries{
 				{
 					lset:   labels.FromStrings("__name__", "high_cardinality_metric", "job", "my_job"),
@@ -1120,7 +1119,7 @@ func TestProxyStore_Series(t *testing.T) {
 					{Name: "job", Value: ".*", Type: storepb.LabelMatcher_RE},
 				},
 			},
-			blockedPatterns: []string{"high_cardinality_"},
+			blockedPatterns: []string{"phigh_cardinality_"},
 			expectedSeries: []rawSeries{
 				{
 					lset:   labels.FromStrings("__name__", "high_cardinality_metric", "job", "my_job"),
@@ -1148,7 +1147,7 @@ func TestProxyStore_Series(t *testing.T) {
 					{Name: "__name__", Value: "low_cardinality_metric", Type: storepb.LabelMatcher_EQ},
 				},
 			},
-			blockedPatterns: []string{"high_cardinality_"},
+			blockedPatterns: []string{"phigh_cardinality_"},
 			expectedSeries: []rawSeries{
 				{
 					lset:   labels.FromStrings("__name__", "low_cardinality_metric"),
@@ -1176,7 +1175,7 @@ func TestProxyStore_Series(t *testing.T) {
 					{Name: "job", Value: "my_job", Type: storepb.LabelMatcher_EQ},
 				},
 			},
-			blockedPatterns: []string{"high_cardinality_"},
+			blockedPatterns: []string{"phigh_cardinality_"},
 			expectedSeries: []rawSeries{
 				{
 					lset:   labels.FromStrings("job", "my_job"),
@@ -1204,7 +1203,7 @@ func TestProxyStore_Series(t *testing.T) {
 					{Name: "__name__", Value: "high_.*", Type: storepb.LabelMatcher_RE},
 				},
 			},
-			blockedPatterns: []string{"high_cardinality_"},
+			blockedPatterns: []string{"phigh_cardinality_"},
 			expectedSeries: []rawSeries{
 				{
 					lset:   labels.FromStrings("__name__", "high_cardinality_metric"),
@@ -1234,7 +1233,7 @@ func TestProxyStore_Series(t *testing.T) {
 					{Name: "instance", Value: "localhost", Type: storepb.LabelMatcher_EQ},
 				},
 			},
-			blockedPatterns: []string{"high_cardinality_"},
+			blockedPatterns: []string{"phigh_cardinality_"},
 			expectedSeries: []rawSeries{
 				{
 					lset:   labels.FromStrings("__name__", "high_cardinality_metric", "job", "my_job", "instance", "localhost"),
@@ -1263,7 +1262,7 @@ func TestProxyStore_Series(t *testing.T) {
 					{Name: "job", Value: "unwanted_job", Type: storepb.LabelMatcher_NEQ},
 				},
 			},
-			blockedPatterns: []string{"high_cardinality_"},
+			blockedPatterns: []string{"phigh_cardinality_"},
 			expectedSeries: []rawSeries{
 				{
 					lset:   labels.FromStrings("__name__", "high_cardinality_metric", "job", "my_job"),
@@ -1292,7 +1291,7 @@ func TestProxyStore_Series(t *testing.T) {
 					{Name: "job", Value: "unwanted.*", Type: storepb.LabelMatcher_NRE},
 				},
 			},
-			blockedPatterns: []string{"high_cardinality_"},
+			blockedPatterns: []string{"phigh_cardinality_"},
 			expectedSeries: []rawSeries{
 				{
 					lset:   labels.FromStrings("__name__", "high_cardinality_metric", "job", "my_job"),
@@ -1348,8 +1347,8 @@ func TestProxyStore_Series(t *testing.T) {
 					{Name: "__name__", Value: "upstream_connections", Type: storepb.LabelMatcher_EQ},
 				},
 			},
-			blockedPatterns: []string{"upstream*"},
-			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: high cardinality metric 'upstream_connections' matches blocked pattern 'upstream*', please add proper filters to reduce the amount of data to fetch")},
+			blockedPatterns: []string{"pupstream"},
+			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: high cardinality metric 'upstream_connections' matches blocked pattern 'upstream', please add proper filters to reduce the amount of data to fetch")},
 		{
 			title: "not blocked query: no prefix match",
 			storeAPIs: []Client{
@@ -1370,7 +1369,7 @@ func TestProxyStore_Series(t *testing.T) {
 					{Name: "__name__", Value: "low_cardinality_metric", Type: storepb.LabelMatcher_EQ},
 				},
 			},
-			blockedPatterns: []string{"high", "medium", "other"},
+			blockedPatterns: []string{"phigh", "pmedium", "pother"},
 			expectedSeries: []rawSeries{
 				{
 					lset:   labels.FromStrings("__name__", "low_cardinality_metric"),
@@ -1398,7 +1397,7 @@ func TestProxyStore_Series(t *testing.T) {
 					{Name: "__name__", Value: "uptime_seconds", Type: storepb.LabelMatcher_EQ},
 				},
 			},
-			blockedPatterns: []string{"up"}, // exact match pattern (no * or _)
+			blockedPatterns: []string{"eup"}, // exact match pattern
 			expectedSeries: []rawSeries{
 				{
 					lset:   labels.FromStrings("__name__", "uptime_seconds"),
@@ -1426,8 +1425,8 @@ func TestProxyStore_Series(t *testing.T) {
 					{Name: "__name__", Value: "up", Type: storepb.LabelMatcher_EQ},
 				},
 			},
-			blockedPatterns: []string{"up"}, // exact match pattern (no * or _)
-			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: high cardinality metric 'up' matches blocked pattern 'up', please add proper filters to reduce the amount of data to fetch"),
+			blockedPatterns: []string{"eup"}, // exact match pattern
+			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: metric name pattern 'up' is not allowed"),
 		},
 		{
 			title: "wildcard pattern: blocks metric with exact match too (up* blocks both up and upstream_*)",
@@ -1449,8 +1448,8 @@ func TestProxyStore_Series(t *testing.T) {
 					{Name: "__name__", Value: "up", Type: storepb.LabelMatcher_EQ},
 				},
 			},
-			blockedPatterns: []string{"up*"}, // wildcard pattern - broader than exact match
-			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: high cardinality metric 'up' matches blocked pattern 'up*', please add proper filters to reduce the amount of data to fetch"),
+			blockedPatterns: []string{"pup"}, // prefix pattern - broader than exact match
+			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: high cardinality metric 'up' matches blocked pattern 'up', please add proper filters to reduce the amount of data to fetch"),
 		},
 		{
 			title: "blocked query: overly broad regex pattern .+",
@@ -1472,8 +1471,8 @@ func TestProxyStore_Series(t *testing.T) {
 					{Name: "__name__", Value: ".+", Type: storepb.LabelMatcher_RE},
 				},
 			},
-			blockedBroadRegexPatterns: []string{".+"},
-			expectedErr:               errors.New("rpc error: code = InvalidArgument desc = query blocked: high cardinality metric '.+' matches blocked pattern 'Metric is a Broad Regex Pattern: .+', please add proper filters to reduce the amount of data to fetch"),
+			blockedPatterns: []string{"e.+"},
+			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: metric name pattern '.+' is not allowed"),
 		},
 		{
 			title: "blocked query: overly broad regex pattern .*",
@@ -1495,8 +1494,8 @@ func TestProxyStore_Series(t *testing.T) {
 					{Name: "__name__", Value: ".*", Type: storepb.LabelMatcher_RE},
 				},
 			},
-			blockedBroadRegexPatterns: []string{".*"},
-			expectedErr:               errors.New("rpc error: code = InvalidArgument desc = query blocked: high cardinality metric '.*' matches blocked pattern 'Metric is a Broad Regex Pattern: .*', please add proper filters to reduce the amount of data to fetch"),
+			blockedPatterns: []string{"e.*"},
+			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: metric name pattern '.*' is not allowed"),
 		},
 		{
 			title: "blocked query: overly broad regex pattern .+|.*",
@@ -1518,8 +1517,8 @@ func TestProxyStore_Series(t *testing.T) {
 					{Name: "__name__", Value: ".+|.*", Type: storepb.LabelMatcher_RE},
 				},
 			},
-			blockedBroadRegexPatterns: []string{".+|.*"},
-			expectedErr:               errors.New("rpc error: code = InvalidArgument desc = query blocked: high cardinality metric '.+|.*' matches blocked pattern 'Metric is a Broad Regex Pattern: .+|.*', please add proper filters to reduce the amount of data to fetch"),
+			blockedPatterns: []string{"e.+|.*"},
+			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: metric name pattern '.+|.*' is not allowed"),
 		},
 		{
 			title: "blocked query: overly broad regex pattern .*|.+",
@@ -1541,8 +1540,8 @@ func TestProxyStore_Series(t *testing.T) {
 					{Name: "__name__", Value: ".*|.+", Type: storepb.LabelMatcher_RE},
 				},
 			},
-			blockedBroadRegexPatterns: []string{".*|.+"},
-			expectedErr:               errors.New("rpc error: code = InvalidArgument desc = query blocked: high cardinality metric '.*|.+' matches blocked pattern 'Metric is a Broad Regex Pattern: .*|.+', please add proper filters to reduce the amount of data to fetch"),
+			blockedPatterns: []string{"e.*|.+"},
+			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: metric name pattern '.*|.+' is not allowed"),
 		},
 		{
 			title: "not blocked query: specific regex pattern is allowed",
@@ -1616,9 +1615,6 @@ func TestProxyStore_Series(t *testing.T) {
 							}
 							if len(tc.blockedPatterns) > 0 {
 								options = append(options, WithBlockedMetricPatterns(tc.blockedPatterns))
-							}
-							if len(tc.blockedBroadRegexPatterns) > 0 {
-								options = append(options, WithBlockedBroadRegexPatterns(tc.blockedBroadRegexPatterns))
 							}
 
 							q := NewProxyStore(nil,
