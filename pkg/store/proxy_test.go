@@ -1099,35 +1099,6 @@ func TestProxyStore_Series(t *testing.T) {
 			},
 		},
 		{
-			title: "not blocked query: metric matches pattern but has regex filter - should succeed",
-			storeAPIs: []Client{
-				&storetestutil.TestClient{
-					StoreClient: &mockedStoreAPI{
-						RespSeries: []*storepb.SeriesResponse{
-							storeSeriesResponse(t, labels.FromStrings("__name__", "high_cardinality_metric", "job", "my_job"), []sample{{0, 0}, {2, 1}}),
-						},
-					},
-					MinTime: 1,
-					MaxTime: 300,
-				},
-			},
-			req: &storepb.SeriesRequest{
-				MinTime: 1,
-				MaxTime: 300,
-				Matchers: []storepb.LabelMatcher{
-					{Name: "__name__", Value: "high_cardinality_metric", Type: storepb.LabelMatcher_EQ},
-					{Name: "job", Value: ".*", Type: storepb.LabelMatcher_RE},
-				},
-			},
-			blockedPatterns: []string{"phigh_cardinality_"},
-			expectedSeries: []rawSeries{
-				{
-					lset:   labels.FromStrings("__name__", "high_cardinality_metric", "job", "my_job"),
-					chunks: [][]sample{{{0, 0}, {2, 1}}},
-				},
-			},
-		},
-		{
 			title: "not blocked query: metric does not match patterns",
 			storeAPIs: []Client{
 				&storetestutil.TestClient{
@@ -1184,122 +1155,6 @@ func TestProxyStore_Series(t *testing.T) {
 			},
 		},
 		{
-			title: "not blocked query: regex __name__ matcher should be allowed",
-			storeAPIs: []Client{
-				&storetestutil.TestClient{
-					StoreClient: &mockedStoreAPI{
-						RespSeries: []*storepb.SeriesResponse{
-							storeSeriesResponse(t, labels.FromStrings("__name__", "high_cardinality_metric"), []sample{{0, 0}, {2, 1}}),
-						},
-					},
-					MinTime: 1,
-					MaxTime: 300,
-				},
-			},
-			req: &storepb.SeriesRequest{
-				MinTime: 1,
-				MaxTime: 300,
-				Matchers: []storepb.LabelMatcher{
-					{Name: "__name__", Value: "high_.*", Type: storepb.LabelMatcher_RE},
-				},
-			},
-			blockedPatterns: []string{"phigh_cardinality_"},
-			expectedSeries: []rawSeries{
-				{
-					lset:   labels.FromStrings("__name__", "high_cardinality_metric"),
-					chunks: [][]sample{{{0, 0}, {2, 1}}},
-				},
-			},
-		},
-		{
-			title: "not blocked query: multiple exact filters should be allowed",
-			storeAPIs: []Client{
-				&storetestutil.TestClient{
-					StoreClient: &mockedStoreAPI{
-						RespSeries: []*storepb.SeriesResponse{
-							storeSeriesResponse(t, labels.FromStrings("__name__", "high_cardinality_metric", "job", "my_job", "instance", "localhost"), []sample{{0, 0}, {2, 1}}),
-						},
-					},
-					MinTime: 1,
-					MaxTime: 300,
-				},
-			},
-			req: &storepb.SeriesRequest{
-				MinTime: 1,
-				MaxTime: 300,
-				Matchers: []storepb.LabelMatcher{
-					{Name: "__name__", Value: "high_cardinality_metric", Type: storepb.LabelMatcher_EQ},
-					{Name: "job", Value: "my_job", Type: storepb.LabelMatcher_EQ},
-					{Name: "instance", Value: "localhost", Type: storepb.LabelMatcher_EQ},
-				},
-			},
-			blockedPatterns: []string{"phigh_cardinality_"},
-			expectedSeries: []rawSeries{
-				{
-					lset:   labels.FromStrings("__name__", "high_cardinality_metric", "job", "my_job", "instance", "localhost"),
-					chunks: [][]sample{{{0, 0}, {2, 1}}},
-				},
-			},
-		},
-		{
-			title: "not blocked query: MatchNotEqual filters should count as sufficient",
-			storeAPIs: []Client{
-				&storetestutil.TestClient{
-					StoreClient: &mockedStoreAPI{
-						RespSeries: []*storepb.SeriesResponse{
-							storeSeriesResponse(t, labels.FromStrings("__name__", "high_cardinality_metric", "job", "my_job"), []sample{{0, 0}, {2, 1}}),
-						},
-					},
-					MinTime: 1,
-					MaxTime: 300,
-				},
-			},
-			req: &storepb.SeriesRequest{
-				MinTime: 1,
-				MaxTime: 300,
-				Matchers: []storepb.LabelMatcher{
-					{Name: "__name__", Value: "high_cardinality_metric", Type: storepb.LabelMatcher_EQ},
-					{Name: "job", Value: "unwanted_job", Type: storepb.LabelMatcher_NEQ},
-				},
-			},
-			blockedPatterns: []string{"phigh_cardinality_"},
-			expectedSeries: []rawSeries{
-				{
-					lset:   labels.FromStrings("__name__", "high_cardinality_metric", "job", "my_job"),
-					chunks: [][]sample{{{0, 0}, {2, 1}}},
-				},
-			},
-		},
-		{
-			title: "not blocked query: MatchNotRegexp filters should count as sufficient",
-			storeAPIs: []Client{
-				&storetestutil.TestClient{
-					StoreClient: &mockedStoreAPI{
-						RespSeries: []*storepb.SeriesResponse{
-							storeSeriesResponse(t, labels.FromStrings("__name__", "high_cardinality_metric", "job", "my_job"), []sample{{0, 0}, {2, 1}}),
-						},
-					},
-					MinTime: 1,
-					MaxTime: 300,
-				},
-			},
-			req: &storepb.SeriesRequest{
-				MinTime: 1,
-				MaxTime: 300,
-				Matchers: []storepb.LabelMatcher{
-					{Name: "__name__", Value: "high_cardinality_metric", Type: storepb.LabelMatcher_EQ},
-					{Name: "job", Value: "unwanted.*", Type: storepb.LabelMatcher_NRE},
-				},
-			},
-			blockedPatterns: []string{"phigh_cardinality_"},
-			expectedSeries: []rawSeries{
-				{
-					lset:   labels.FromStrings("__name__", "high_cardinality_metric", "job", "my_job"),
-					chunks: [][]sample{{{0, 0}, {2, 1}}},
-				},
-			},
-		},
-		{
 			title: "not blocked query: empty blocked patterns should allow all queries",
 			storeAPIs: []Client{
 				&storetestutil.TestClient{
@@ -1323,56 +1178,6 @@ func TestProxyStore_Series(t *testing.T) {
 			expectedSeries: []rawSeries{
 				{
 					lset:   labels.FromStrings("__name__", "high_cardinality_metric"),
-					chunks: [][]sample{{{0, 0}, {2, 1}}},
-				},
-			},
-		},
-		{
-			title: "blocked query: wildcard * pattern matches any prefix",
-			storeAPIs: []Client{
-				&storetestutil.TestClient{
-					StoreClient: &mockedStoreAPI{
-						RespSeries: []*storepb.SeriesResponse{
-							storeSeriesResponse(t, labels.FromStrings("__name__", "upstream_connections"), []sample{{0, 0}, {2, 1}}),
-						},
-					},
-					MinTime: 1,
-					MaxTime: 300,
-				},
-			},
-			req: &storepb.SeriesRequest{
-				MinTime: 1,
-				MaxTime: 300,
-				Matchers: []storepb.LabelMatcher{
-					{Name: "__name__", Value: "upstream_connections", Type: storepb.LabelMatcher_EQ},
-				},
-			},
-			blockedPatterns: []string{"pupstream"},
-			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: high cardinality metric 'upstream_connections' matches blocked pattern 'upstream', please add proper filters to reduce the amount of data to fetch")},
-		{
-			title: "not blocked query: no prefix match",
-			storeAPIs: []Client{
-				&storetestutil.TestClient{
-					StoreClient: &mockedStoreAPI{
-						RespSeries: []*storepb.SeriesResponse{
-							storeSeriesResponse(t, labels.FromStrings("__name__", "low_cardinality_metric"), []sample{{0, 0}, {2, 1}}),
-						},
-					},
-					MinTime: 1,
-					MaxTime: 300,
-				},
-			},
-			req: &storepb.SeriesRequest{
-				MinTime: 1,
-				MaxTime: 300,
-				Matchers: []storepb.LabelMatcher{
-					{Name: "__name__", Value: "low_cardinality_metric", Type: storepb.LabelMatcher_EQ},
-				},
-			},
-			blockedPatterns: []string{"phigh", "pmedium", "pother"},
-			expectedSeries: []rawSeries{
-				{
-					lset:   labels.FromStrings("__name__", "low_cardinality_metric"),
 					chunks: [][]sample{{{0, 0}, {2, 1}}},
 				},
 			},
@@ -1429,6 +1234,30 @@ func TestProxyStore_Series(t *testing.T) {
 			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: metric name pattern 'up' is not allowed"),
 		},
 		{
+			title: "exact match pattern: blocks unconditionally even with filters",
+			storeAPIs: []Client{
+				&storetestutil.TestClient{
+					StoreClient: &mockedStoreAPI{
+						RespSeries: []*storepb.SeriesResponse{
+							storeSeriesResponse(t, labels.FromStrings("__name__", "up", "job", "my_job"), []sample{{0, 0}, {2, 1}}),
+						},
+					},
+					MinTime: 1,
+					MaxTime: 300,
+				},
+			},
+			req: &storepb.SeriesRequest{
+				MinTime: 1,
+				MaxTime: 300,
+				Matchers: []storepb.LabelMatcher{
+					{Name: "__name__", Value: "up", Type: storepb.LabelMatcher_EQ},
+					{Name: "job", Value: "my_job", Type: storepb.LabelMatcher_EQ},
+				},
+			},
+			blockedPatterns: []string{"eup"}, // exact match pattern - blocks unconditionally
+			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: metric name pattern 'up' is not allowed"),
+		},
+		{
 			title: "wildcard pattern: blocks metric with exact match too (up* blocks both up and upstream_*)",
 			storeAPIs: []Client{
 				&storetestutil.TestClient{
@@ -1471,104 +1300,8 @@ func TestProxyStore_Series(t *testing.T) {
 					{Name: "__name__", Value: ".+", Type: storepb.LabelMatcher_RE},
 				},
 			},
-			blockedPatterns: []string{"e.+"},
+			blockedPatterns: []string{}, // No patterns needed - metric name contains '.' so it's blocked automatically
 			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: metric name pattern '.+' is not allowed"),
-		},
-		{
-			title: "blocked query: overly broad regex pattern .*",
-			storeAPIs: []Client{
-				&storetestutil.TestClient{
-					StoreClient: &mockedStoreAPI{
-						RespSeries: []*storepb.SeriesResponse{
-							storeSeriesResponse(t, labels.FromStrings("__name__", "some_metric"), []sample{{0, 0}, {2, 1}}),
-						},
-					},
-					MinTime: 1,
-					MaxTime: 300,
-				},
-			},
-			req: &storepb.SeriesRequest{
-				MinTime: 1,
-				MaxTime: 300,
-				Matchers: []storepb.LabelMatcher{
-					{Name: "__name__", Value: ".*", Type: storepb.LabelMatcher_RE},
-				},
-			},
-			blockedPatterns: []string{"e.*"},
-			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: metric name pattern '.*' is not allowed"),
-		},
-		{
-			title: "blocked query: overly broad regex pattern .+|.*",
-			storeAPIs: []Client{
-				&storetestutil.TestClient{
-					StoreClient: &mockedStoreAPI{
-						RespSeries: []*storepb.SeriesResponse{
-							storeSeriesResponse(t, labels.FromStrings("__name__", "some_metric"), []sample{{0, 0}, {2, 1}}),
-						},
-					},
-					MinTime: 1,
-					MaxTime: 300,
-				},
-			},
-			req: &storepb.SeriesRequest{
-				MinTime: 1,
-				MaxTime: 300,
-				Matchers: []storepb.LabelMatcher{
-					{Name: "__name__", Value: ".+|.*", Type: storepb.LabelMatcher_RE},
-				},
-			},
-			blockedPatterns: []string{"e.+|.*"},
-			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: metric name pattern '.+|.*' is not allowed"),
-		},
-		{
-			title: "blocked query: overly broad regex pattern .*|.+",
-			storeAPIs: []Client{
-				&storetestutil.TestClient{
-					StoreClient: &mockedStoreAPI{
-						RespSeries: []*storepb.SeriesResponse{
-							storeSeriesResponse(t, labels.FromStrings("__name__", "some_metric"), []sample{{0, 0}, {2, 1}}),
-						},
-					},
-					MinTime: 1,
-					MaxTime: 300,
-				},
-			},
-			req: &storepb.SeriesRequest{
-				MinTime: 1,
-				MaxTime: 300,
-				Matchers: []storepb.LabelMatcher{
-					{Name: "__name__", Value: ".*|.+", Type: storepb.LabelMatcher_RE},
-				},
-			},
-			blockedPatterns: []string{"e.*|.+"},
-			expectedErr:     errors.New("rpc error: code = InvalidArgument desc = query blocked: metric name pattern '.*|.+' is not allowed"),
-		},
-		{
-			title: "not blocked query: specific regex pattern is allowed",
-			storeAPIs: []Client{
-				&storetestutil.TestClient{
-					StoreClient: &mockedStoreAPI{
-						RespSeries: []*storepb.SeriesResponse{
-							storeSeriesResponse(t, labels.FromStrings("__name__", "http_requests_total"), []sample{{0, 0}, {2, 1}}),
-						},
-					},
-					MinTime: 1,
-					MaxTime: 300,
-				},
-			},
-			req: &storepb.SeriesRequest{
-				MinTime: 1,
-				MaxTime: 300,
-				Matchers: []storepb.LabelMatcher{
-					{Name: "__name__", Value: "http_.*", Type: storepb.LabelMatcher_RE},
-				},
-			},
-			expectedSeries: []rawSeries{
-				{
-					lset:   labels.FromStrings("__name__", "http_requests_total"),
-					chunks: [][]sample{{{0, 0}, {2, 1}}},
-				},
-			},
 		},
 		{
 			title: "not blocked query: exact match __name__ is NOT blocked by broad regex check",

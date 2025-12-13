@@ -223,9 +223,11 @@ func WithProxyStoreMatcherConverter(mc *storepb.MatcherConverter) ProxyStoreOpti
 
 // WithBlockedMetricPatterns returns a ProxyStoreOption that sets the blocked metric patterns.
 // Pattern format: "p<pattern>" for prefix match, "e<pattern>" for exact match.
-// Examples: "pkube_", "eup", "e.+", "e.*"
-// Exact match patterns ('e' prefix) and patterns containing "." are blocked unconditionally.
+// Examples: "pkube_", "eup"
+// Exact match patterns ('e' prefix) are blocked unconditionally.
 // Prefix patterns ('p') are blocked only if insufficient filters are present.
+// Additionally, any metric name containing '.' is ALWAYS blocked unconditionally,
+// even if no patterns are configured (regex patterns like ".+", ".*", etc.).
 func WithBlockedMetricPatterns(patterns []string) ProxyStoreOption {
 	return func(s *ProxyStore) {
 		s.blockedMetricPrefixes = radix.New()
@@ -239,15 +241,11 @@ func WithBlockedMetricPatterns(patterns []string) ProxyStoreOption {
 			typeChar := input[0]
 			pattern := input[1:]
 
-			// If pattern contains ".", block unconditionally (it's a regex pattern)
-			// If type is 'e', also block unconditionally (exact match)
-			if strings.Contains(pattern, ".") || typeChar == 'e' {
+			// Exact match patterns ('e') are blocked unconditionally
+			if typeChar == 'e' {
 				s.unconditionalBlockedMetrics[pattern] = struct{}{}
-				continue
-			}
-
-			// Only 'p' (prefix) patterns without '.' go into conditional blocking
-			if typeChar == 'p' {
+			} else if typeChar == 'p' {
+				// Prefix patterns are blocked conditionally (only if insufficient filters)
 				s.blockedMetricPrefixes.Insert(pattern, pattern)
 			}
 		}
@@ -390,23 +388,22 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 	}
 
 	// Check if the query should be blocked due to insufficient filters
-	shouldBlock, metricName, matchedPattern := s.shouldBlockQuery(matchers)
+	shouldBlock, metricName, matchedPattern, isUnconditional := s.shouldBlockQuery(matchers)
 	if shouldBlock {
-		// Log the blocked query with structured logging
-		filterCount := s.countAllFilters(matchers)
-
 		var errorMsg string
-		// Check if it's an unconditional block (exact match or pattern with '.')
-		_, isUnconditional := s.unconditionalBlockedMetrics[metricName]
+
 		if isUnconditional {
+			// Unconditional block: exact match or regex pattern (contains '.')
 			level.Warn(reqLogger).Log(
-				"msg", "query blocked due to disallowed metric name pattern",
+				"msg", "query blocked: unconditional block on metric name pattern",
 				"pattern", metricName,
 			)
 			errorMsg = fmt.Sprintf("query blocked: metric name pattern '%s' is not allowed", metricName)
 		} else {
+			// Conditional block: prefix match without sufficient filters
+			filterCount := s.countAllFilters(matchers)
 			level.Warn(reqLogger).Log(
-				"msg", "query blocked due to high cardinality metric without sufficient filters",
+				"msg", "query blocked: high cardinality metric without sufficient filters",
 				"metric_name", metricName,
 				"filter_count", filterCount,
 				"matched_pattern", matchedPattern,
@@ -1104,8 +1101,9 @@ func (s *ProxyStore) countAllFilters(matchers []*labels.Matcher) int {
 }
 
 // shouldBlockQuery determines if a query should be blocked based on metric patterns and label filters.
-// Returns (shouldBlock, metricName, matchedPattern).
-func (s *ProxyStore) shouldBlockQuery(matchers []*labels.Matcher) (bool, string, string) {
+// Returns (shouldBlock, metricName, matchedPattern, isUnconditional).
+// isUnconditional is true when the block is unconditional (exact match or contains '.').
+func (s *ProxyStore) shouldBlockQuery(matchers []*labels.Matcher) (bool, string, string, bool) {
 	// Extract metric name from matchers (either MatchEqual or MatchRegexp)
 	var metricName string
 	for _, matcher := range matchers {
@@ -1118,20 +1116,32 @@ func (s *ProxyStore) shouldBlockQuery(matchers []*labels.Matcher) (bool, string,
 	}
 
 	if metricName == "" {
-		return false, "", "" // No metric name found, allow query
+		return false, "", "", false // No metric name found, allow query
 	}
 
-	// Check for unconditional blocks first (exact match patterns and patterns containing ".")
+	// If metric name contains '.', it's a regex pattern - ALWAYS block unconditionally
+	// This happens regardless of whether any blocking patterns are configured
+	if strings.Contains(metricName, ".") {
+		level.Debug(s.logger).Log("msg", "shouldBlockQuery: BLOCKED unconditionally (contains '.')", "metric_name", metricName)
+		return true, metricName, metricName, true
+	}
+
+	// If blocking is not configured at all, allow everything else
+	if s.blockedMetricPrefixes == nil && s.unconditionalBlockedMetrics == nil {
+		return false, "", "", false
+	}
+
+	// Check for unconditional blocks (exact match patterns)
 	if s.unconditionalBlockedMetrics != nil {
 		if _, found := s.unconditionalBlockedMetrics[metricName]; found {
-			level.Debug(s.logger).Log("msg", "shouldBlockQuery: BLOCKED unconditionally", "metric_name", metricName)
-			return true, metricName, metricName
+			level.Debug(s.logger).Log("msg", "shouldBlockQuery: BLOCKED unconditionally (exact match)", "metric_name", metricName)
+			return true, metricName, metricName, true
 		}
 	}
 
 	// If prefix blocking is not configured, don't block anything else
 	if s.blockedMetricPrefixes == nil {
-		return false, "", ""
+		return false, "", "", false
 	}
 
 	// Check if metric matches blocked patterns and find which pattern matched
@@ -1141,10 +1151,10 @@ func (s *ProxyStore) shouldBlockQuery(matchers []*labels.Matcher) (bool, string,
 		shouldBlock := !s.hasSufficientFilters(matchers)
 		level.Debug(s.logger).Log("msg", "shouldBlockQuery: pattern matched", "metric_name", metricName,
 			"matched_pattern", matchedPattern, "should_block", shouldBlock, "has_sufficient_filters", !shouldBlock)
-		return shouldBlock, metricName, matchedPattern
+		return shouldBlock, metricName, matchedPattern, false
 	}
 
-	return false, "", ""
+	return false, "", "", false
 }
 
 // getMatchedBlockedPattern returns the first pattern that matches the metric name, or empty string if none match.
