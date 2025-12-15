@@ -719,7 +719,7 @@ func checkVerticalCompaction(logger log.Logger, conf *compactConfig) (bool, []st
 	enableVerticalCompaction := conf.enableVerticalCompaction
 	dedupReplicaLabels := strutil.ParseFlagLabels(conf.dedupReplicaLabels)
 
-	if len(dedupReplicaLabels) == 0 {
+	if len(dedupReplicaLabels) > 0 {
 		enableVerticalCompaction = true
 		level.Info(logger).Log(
 			"msg", "deduplication.replica-label specified, enabling vertical compaction", "dedupReplicaLabels", strings.Join(dedupReplicaLabels, ","),
