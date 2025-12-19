@@ -24,6 +24,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/common/route"
+	"github.com/prometheus/prometheus/model/relabel"
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/tsdb"
 
@@ -179,6 +180,16 @@ func runCompact(
 	progressRegistry := compact.NewProgressRegistry(reg, logger)
 	downsampleMetrics := newDownsampleMetrics(reg)
 
+	ctx, cancel := context.WithCancel(context.Background())
+	ctx = tracing.ContextWithTracer(ctx, tracer)
+	ctx = objstoretracing.ContextWithTracer(ctx, tracer) // objstore tracing uses a different tracer key in context.
+
+	defer func() {
+		if rerr != nil {
+			cancel()
+		}
+	}()
+
 	httpProbe := prober.NewHTTP()
 	statusProber := prober.Combine(
 		httpProbe,
@@ -234,6 +245,46 @@ func runCompact(
 		}
 	}()
 
+	globalBlockLister, err := getBlockLister(logger, &conf, insBkt)
+	if err != nil {
+		return errors.Wrap(err, "create global block lister")
+	}
+	globalBaseMetaFetcher, err := block.NewBaseFetcher(logger, conf.blockMetaFetchConcurrency, insBkt, globalBlockLister, conf.dataDir, extprom.WrapRegistererWithPrefix("thanos_", reg))
+	if err != nil {
+		return errors.Wrap(err, "create global meta fetcher")
+	}
+
+	api := blocksAPI.NewBlocksAPI(logger, conf.webConf.disableCORS, conf.label, flagsMap, insBkt)
+
+	if err := runWebServer(g, ctx, logger, cancel, reg, &conf, component, tracer, progressRegistry, globalBaseMetaFetcher, api, srv); err != nil {
+		return errors.Wrap(err, "web server")
+	}
+
+	err = runCompactForTenant(g, ctx, logger, cancel, reg, insBkt, deleteDelay, conf, relabelConfig, flagsMap, compactMetrics, progressRegistry, downsampleMetrics)
+	if err != nil {
+		return err
+	}
+
+	level.Info(logger).Log("msg", "starting compact node")
+	statusProber.Ready()
+	return nil
+}
+
+func runCompactForTenant(
+	g *run.Group,
+	ctx context.Context,
+	logger log.Logger,
+	cancel context.CancelFunc,
+	reg *prometheus.Registry,
+	insBkt objstore.InstrumentedBucket,
+	deleteDelay time.Duration,
+	conf compactConfig,
+	relabelConfig []*relabel.Config,
+	flagsMap map[string]string,
+	compactMetrics *compactMetrics,
+	progressRegistry *compact.ProgressRegistry,
+	downsampleMetrics *DownsampleMetrics,
+) error {
 	// While fetching blocks, we filter out blocks that were marked for deletion by using IgnoreDeletionMarkFilter.
 	// The delay of deleteDelay/2 is added to ensure we fetch blocks that are meant to be deleted but do not have a replacement yet.
 	// This is to make sure compactor will not accidentally perform compactions with gap instead.
@@ -307,16 +358,6 @@ func runCompact(
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	ctx = tracing.ContextWithTracer(ctx, tracer)
-	ctx = objstoretracing.ContextWithTracer(ctx, tracer) // objstore tracing uses a different tracer key in context.
-
-	defer func() {
-		if rerr != nil {
-			cancel()
-		}
-	}()
 
 	mergeFunc, err := getMergeFunc(&conf, dedupReplicaLabels)
 	if err != nil {
@@ -561,6 +602,27 @@ func runCompact(
 		cancel()
 	})
 
+	err = runCleanup(g, ctx, logger, cancel, reg, &conf, progressRegistry, compactMetrics, tsdbPlanner, sy, retentionByResolution, downsampleMetrics, cleanPartialMarked, grouper)
+	if err != nil {
+		return errors.Wrap(err, "cleanup")
+	}
+	return nil
+}
+
+func runWebServer(
+	g *run.Group,
+	ctx context.Context,
+	logger log.Logger,
+	cancel context.CancelFunc,
+	reg *prometheus.Registry,
+	conf *compactConfig,
+	component component.Component,
+	tracer opentracing.Tracer,
+	progressRegistry *compact.ProgressRegistry,
+	baseMetaFetcher *block.BaseFetcher,
+	api *blocksAPI.BlocksAPI,
+	srv *httpserver.Server,
+) error {
 	if conf.wait {
 		if !conf.disableWeb {
 			r := route.New()
@@ -607,7 +669,27 @@ func runCompact(
 				cancel()
 			})
 		}
+	}
+	return nil
+}
 
+func runCleanup(
+	g *run.Group,
+	ctx context.Context,
+	logger log.Logger,
+	cancel context.CancelFunc,
+	reg *prometheus.Registry,
+	conf *compactConfig,
+	progressRegistry *compact.ProgressRegistry,
+	compactMetrics *compactMetrics,
+	tsdbPlanner compact.Planner,
+	sy *compact.Syncer,
+	retentionByResolution map[compact.ResolutionLevel]time.Duration,
+	downsampleMetrics *DownsampleMetrics,
+	cleanPartialMarked func(*compact.Progress) error,
+	grouper *compact.DefaultGrouper,
+) error {
+	if conf.wait {
 		// Periodically remove partial blocks and blocks marked for deletion
 		// since one iteration potentially could take a long time.
 		if conf.cleanupBlocksInterval > 0 {
@@ -698,9 +780,6 @@ func runCompact(
 			})
 		}
 	}
-
-	level.Info(logger).Log("msg", "starting compact node")
-	statusProber.Ready()
 	return nil
 }
 
