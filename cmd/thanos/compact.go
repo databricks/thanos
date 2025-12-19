@@ -256,9 +256,7 @@ func runCompact(
 
 	api := blocksAPI.NewBlocksAPI(logger, conf.webConf.disableCORS, conf.label, flagsMap, insBkt)
 
-	if err := runWebServer(g, ctx, logger, cancel, reg, &conf, component, tracer, progressRegistry, globalBaseMetaFetcher, api, srv); err != nil {
-		return errors.Wrap(err, "web server")
-	}
+	runWebServer(g, ctx, logger, cancel, reg, &conf, component, tracer, progressRegistry, globalBaseMetaFetcher, api, srv)
 
 	err = runCompactForTenant(g, ctx, logger, cancel, reg, insBkt, deleteDelay, conf, relabelConfig, flagsMap, compactMetrics, progressRegistry, downsampleMetrics)
 	if err != nil {
@@ -602,10 +600,8 @@ func runCompactForTenant(
 		cancel()
 	})
 
-	err = runCleanup(g, ctx, logger, cancel, reg, &conf, progressRegistry, compactMetrics, tsdbPlanner, sy, retentionByResolution, downsampleMetrics, cleanPartialMarked, grouper)
-	if err != nil {
-		return errors.Wrap(err, "cleanup")
-	}
+	runCleanup(g, ctx, logger, cancel, reg, &conf, progressRegistry, compactMetrics, tsdbPlanner, sy, retentionByResolution, downsampleMetrics, cleanPartialMarked, grouper)
+
 	return nil
 }
 
@@ -622,7 +618,7 @@ func runWebServer(
 	baseMetaFetcher *block.BaseFetcher,
 	api *blocksAPI.BlocksAPI,
 	srv *httpserver.Server,
-) error {
+) {
 	if conf.wait {
 		if !conf.disableWeb {
 			r := route.New()
@@ -670,7 +666,6 @@ func runWebServer(
 			})
 		}
 	}
-	return nil
 }
 
 func runCleanup(
@@ -685,10 +680,9 @@ func runCleanup(
 	tsdbPlanner compact.Planner,
 	sy *compact.Syncer,
 	retentionByResolution map[compact.ResolutionLevel]time.Duration,
-	downsampleMetrics *DownsampleMetrics,
 	cleanPartialMarked func(*compact.Progress) error,
 	grouper *compact.DefaultGrouper,
-) error {
+) {
 	if conf.wait {
 		// Periodically remove partial blocks and blocks marked for deletion
 		// since one iteration potentially could take a long time.
@@ -780,7 +774,6 @@ func runCleanup(
 			})
 		}
 	}
-	return nil
 }
 
 func getBlockLister(logger log.Logger, conf *compactConfig, insBkt objstore.InstrumentedBucketReader) (block.Lister, error) {
