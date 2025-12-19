@@ -600,7 +600,7 @@ func runCompactForTenant(
 		cancel()
 	})
 
-	runCleanup(g, ctx, logger, cancel, reg, &conf, progressRegistry, compactMetrics, tsdbPlanner, sy, retentionByResolution, downsampleMetrics, cleanPartialMarked, grouper)
+	runCleanup(g, ctx, logger, cancel, reg, &conf, progressRegistry, compactMetrics, tsdbPlanner, sy, retentionByResolution, cleanPartialMarked, grouper)
 
 	return nil
 }
