@@ -240,7 +240,7 @@ func runCompact(
 
 	// Ensure we close up everything properly.
 	defer func() {
-		if err != nil {
+		if rerr != nil {
 			runutil.CloseWithLogOnErr(logger, insBkt, "bucket client")
 		}
 	}()
