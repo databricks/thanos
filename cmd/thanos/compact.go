@@ -240,7 +240,7 @@ func runCompact(
 
 	// Ensure we close up everything properly.
 	defer func() {
-		if rerr != nil {
+		if err != nil {
 			runutil.CloseWithLogOnErr(logger, insBkt, "bucket client")
 		}
 	}()
@@ -258,7 +258,7 @@ func runCompact(
 
 	runWebServer(g, ctx, logger, cancel, reg, &conf, component, tracer, progressRegistry, globalBaseMetaFetcher, api, srv)
 
-	err = runCompactForTenant(g, ctx, logger, cancel, reg, insBkt, deleteDelay, conf, relabelConfig, flagsMap, compactMetrics, progressRegistry, downsampleMetrics)
+	err = runCompactForTenant(g, ctx, logger, cancel, reg, insBkt, deleteDelay, conf, relabelConfig, flagsMap, compactMetrics, progressRegistry, downsampleMetrics, globalBaseMetaFetcher)
 	if err != nil {
 		return err
 	}
@@ -282,6 +282,7 @@ func runCompactForTenant(
 	compactMetrics *compactMetrics,
 	progressRegistry *compact.ProgressRegistry,
 	downsampleMetrics *DownsampleMetrics,
+	baseMetaFetcher *block.BaseFetcher,
 ) error {
 	// While fetching blocks, we filter out blocks that were marked for deletion by using IgnoreDeletionMarkFilter.
 	// The delay of deleteDelay/2 is added to ensure we fetch blocks that are meant to be deleted but do not have a replacement yet.
@@ -293,15 +294,6 @@ func runCompactForTenant(
 	labelShardedMetaFilter := block.NewLabelShardedMetaFilter(relabelConfig)
 	consistencyDelayMetaFilter := block.NewConsistencyDelayMetaFilter(logger, conf.consistencyDelay, extprom.WrapRegistererWithPrefix("thanos_", reg))
 	timePartitionMetaFilter := block.NewTimePartitionMetaFilter(conf.filterConf.MinTime, conf.filterConf.MaxTime)
-
-	blockLister, err := getBlockLister(logger, &conf, insBkt)
-	if err != nil {
-		return errors.Wrap(err, "create block lister")
-	}
-	baseMetaFetcher, err := block.NewBaseFetcher(logger, conf.blockMetaFetchConcurrency, insBkt, blockLister, conf.dataDir, extprom.WrapRegistererWithPrefix("thanos_", reg))
-	if err != nil {
-		return errors.Wrap(err, "create meta fetcher")
-	}
 
 	enableVerticalCompaction, dedupReplicaLabels := checkVerticalCompaction(logger, &conf)
 
@@ -336,6 +328,7 @@ func runCompactForTenant(
 		if !conf.wait {
 			syncMetasTimeout = 0
 		}
+		var err error
 		sy, err = compact.NewMetaSyncer(
 			logger,
 			reg,
