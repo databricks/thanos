@@ -294,6 +294,13 @@ func runCompact(
 	if err != nil {
 		return errors.Wrap(err, "failed to create global bucket")
 	}
+	if conf.enableFolderDeletion {
+		globalBkt, err = block.WrapWithAzDataLakeSdk(logger, confContentYaml, globalBkt)
+		if err != nil {
+			return errors.Wrap(err, "failed to wrap global bucket with Azure SDK")
+		}
+		level.Info(logger).Log("msg", "azdatalake sdk wrapper enabled for global bucket", "name", globalBkt.Name())
+	}
 	globalInsBkt := objstoretracing.WrapWithTraces(objstore.WrapWithMetrics(globalBkt, extprom.WrapRegistererWithPrefix("thanos_", reg), globalBkt.Name()))
 
 	// Ensure we close up everything properly.
@@ -329,22 +336,29 @@ func runCompact(
 			return errors.Wrap(err, "failed to marshal tenant bucket configuration")
 		}
 
-		bkt, err := client.NewBucket(logger, tenantConfYaml, component.String(), nil)
-		if conf.enableFolderDeletion {
-			bkt, err = block.WrapWithAzDataLakeSdk(logger, tenantConfYaml, bkt)
-			level.Info(logger).Log("msg", "azdatalake sdk wrapper enabled", "prefix", bucketConf.Prefix, "name", bkt.Name())
-		}
-		if err != nil {
-			return errors.Wrap(err, "failed to create tenant bucket")
+		var bkt objstore.Bucket
+		if isMultiTenant {
+			bkt, err = client.NewBucket(logger, tenantConfYaml, component.String(), nil)
+			if conf.enableFolderDeletion {
+				bkt, err = block.WrapWithAzDataLakeSdk(logger, tenantConfYaml, bkt)
+				level.Info(logger).Log("msg", "azdatalake sdk wrapper enabled", "prefix", bucketConf.Prefix, "name", bkt.Name())
+			}
+			if err != nil {
+				return errors.Wrap(err, "failed to create tenant bucket")
+			}
+		} else {
+			bkt = globalBkt
 		}
 
 		var tenantReg prometheus.Registerer
+		var insBkt objstore.InstrumentedBucket
 		if isMultiTenant {
 			tenantReg = prometheus.WrapRegistererWith(prometheus.Labels{"tenant": tenantPrefix}, reg)
+			insBkt = objstoretracing.WrapWithTraces(objstore.WrapWithMetrics(bkt, extprom.WrapRegistererWithPrefix("thanos_", tenantReg), bkt.Name()))
 		} else {
 			tenantReg = reg
+			insBkt = globalInsBkt
 		}
-		insBkt := objstoretracing.WrapWithTraces(objstore.WrapWithMetrics(bkt, extprom.WrapRegistererWithPrefix("thanos_", tenantReg), bkt.Name()))
 
 		var tenantLogger log.Logger
 		if isMultiTenant {
@@ -355,8 +369,9 @@ func runCompact(
 
 		err = runCompactForTenant(g, ctx, tenantLogger, cancel, tenantReg, insBkt, deleteDelay, conf, relabelConfig, flagsMap, compactMetrics, progressRegistry, downsampleMetrics, globalBaseMetaFetcher)
 
-		// Always close bucket client after compaction attempt
-		runutil.CloseWithLogOnErr(tenantLogger, insBkt, "bucket client")
+		if isMultiTenant {
+			runutil.CloseWithLogOnErr(tenantLogger, insBkt, "bucket client")
+		}
 
 		if err != nil {
 			return err
