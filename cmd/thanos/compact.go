@@ -246,7 +246,7 @@ func runCompact(
 			return errors.Errorf("ordinal %d is greater than total shards %d", ordinal, totalShards)
 		}
 
-		tenantWeightsPath := conf.tenantWeightsFile.Path()
+		tenantWeightsPath := conf.tenantWeights.Path()
 		if tenantWeightsPath == "" {
 			return errors.New("tenant weights file is not set")
 		}
@@ -1023,7 +1023,7 @@ type compactConfig struct {
 	progressCalculateInterval                      time.Duration
 	filterConf                                     *store.FilterConfig
 	disableAdminOperations                         bool
-	tenantWeightsFile                              extflag.PathOrContent
+	tenantWeights                                  extflag.PathOrContent
 	replicas                                       int
 	replicationFactor                              int
 	commonPathPrefix                               string
@@ -1144,7 +1144,7 @@ func (cc *compactConfig) registerFlag(cmd extkingpin.FlagClause) {
 
 	cc.selectorRelabelConf = *extkingpin.RegisterSelectorRelabelFlags(cmd)
 
-	cc.tenantWeightsFile = *extflag.RegisterPathOrContent(cmd, "compact.tenant-weights-file", "YAML file that contains the tenant weights for tenant partitioning.", extflag.WithEnvSubstitution())
+	cc.tenantWeights = *extflag.RegisterPathOrContent(cmd, "compact.tenant-weights", "YAML file that contains the tenant weights for tenant partitioning.", extflag.WithEnvSubstitution())
 
 	cmd.Flag("compact.replicas", "Total replicas of the stateful set.").
 		Default("1").IntVar(&cc.replicas)
