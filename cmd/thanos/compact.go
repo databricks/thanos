@@ -61,11 +61,9 @@ type idempotentRegisterer struct {
 
 func (r *idempotentRegisterer) Register(c prometheus.Collector) error {
 	err := r.Registerer.Register(c)
-	if err != nil {
-		// Check if this is a duplicate registration error - if so, ignore it
-		if _, isDupError := err.(prometheus.AlreadyRegisteredError); isDupError {
-			return nil
-		}
+	// Ignore duplicate registration errors - expected in multi-tenant mode
+	if _, ok := err.(prometheus.AlreadyRegisteredError); ok {
+		return nil
 	}
 	return err
 }
