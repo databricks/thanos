@@ -363,9 +363,11 @@ func runCompact(
 		if isMultiTenant {
 			tenantReg = prometheus.WrapRegistererWith(prometheus.Labels{"tenant": tenantPrefix}, reg)
 			tenantLogger = log.With(logger, "tenant", tenantPrefix)
-			// Use empty string for bucket name to avoid constant label conflicts
-			// The tenant label from WrapRegistererWith will differentiate metrics
-			insBkt = objstoretracing.WrapWithTraces(objstore.WrapWithMetrics(bkt, extprom.WrapRegistererWithPrefix("thanos_", tenantReg), ""))
+			// Only wrap with tracing, not metrics
+			// WrapRegistererWith adds the tenant as a constant label, which causes conflicts
+			// when multiple tenants register the same bucket metrics to the same base registry.
+			// Per-tenant metrics are still available for compaction operations via tenantReg.
+			insBkt = objstoretracing.WrapWithTraces(bkt)
 		} else {
 			tenantReg = reg
 			tenantLogger = logger
