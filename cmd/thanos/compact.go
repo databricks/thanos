@@ -53,6 +53,29 @@ import (
 	"github.com/thanos-io/thanos/pkg/ui"
 )
 
+// idempotentRegisterer wraps a prometheus.Registerer and ignores duplicate registration errors.
+// This allows running runCompactForTenant multiple times with the same registry without panicking.
+type idempotentRegisterer struct {
+	prometheus.Registerer
+}
+
+func (r *idempotentRegisterer) Register(c prometheus.Collector) error {
+	err := r.Registerer.Register(c)
+	if err != nil {
+		// Check if this is a duplicate registration error - if so, ignore it
+		if _, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			return nil
+		}
+	}
+	return err
+}
+
+func (r *idempotentRegisterer) MustRegister(cs ...prometheus.Collector) {
+	for _, c := range cs {
+		_ = r.Register(c) // Ignores duplicates
+	}
+}
+
 var (
 	compactions = compactionSet{
 		1 * time.Hour,
@@ -361,12 +384,11 @@ func runCompact(
 		var tenantLogger log.Logger
 
 		if isMultiTenant {
-			tenantReg = prometheus.WrapRegistererWith(prometheus.Labels{"tenant": tenantPrefix}, reg)
+			// Use idempotent registerer to ignore duplicate metric registrations across tenants.
+			// Components extract tenant from block metadata and use it as a variable label.
+			tenantReg = &idempotentRegisterer{Registerer: reg}
 			tenantLogger = log.With(logger, "tenant", tenantPrefix)
-			// Only wrap with tracing, not metrics
-			// WrapRegistererWith adds the tenant as a constant label, which causes conflicts
-			// when multiple tenants register the same bucket metrics to the same base registry.
-			// Per-tenant metrics are still available for compaction operations via tenantReg.
+			// Only wrap with tracing, not metrics (to avoid duplicate bucket metric registration)
 			insBkt = objstoretracing.WrapWithTraces(bkt)
 		} else {
 			tenantReg = reg
