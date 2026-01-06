@@ -358,20 +358,18 @@ func runCompact(
 
 		var tenantReg prometheus.Registerer
 		var insBkt objstore.InstrumentedBucket
+		var tenantLogger log.Logger
+
 		if isMultiTenant {
 			tenantReg = prometheus.WrapRegistererWith(prometheus.Labels{"tenant": tenantPrefix}, reg)
-			// Use only tenant prefix as the distinguishing part for bucket metrics
-			insBkt = objstoretracing.WrapWithTraces(objstore.WrapWithMetrics(bkt, extprom.WrapRegistererWithPrefix("thanos_", tenantReg), tenantPrefix))
+			tenantLogger = log.With(logger, "tenant", tenantPrefix)
+			// Use empty string for bucket name to avoid constant label conflicts
+			// The tenant label from WrapRegistererWith will differentiate metrics
+			insBkt = objstoretracing.WrapWithTraces(objstore.WrapWithMetrics(bkt, extprom.WrapRegistererWithPrefix("thanos_", tenantReg), ""))
 		} else {
 			tenantReg = reg
-			insBkt = globalInsBkt
-		}
-
-		var tenantLogger log.Logger
-		if isMultiTenant {
-			tenantLogger = log.With(logger, "tenant", tenantPrefix)
-		} else {
 			tenantLogger = logger
+			insBkt = globalInsBkt
 		}
 
 		err = runCompactForTenant(g, ctx, tenantLogger, cancel, tenantReg, insBkt, deleteDelay, conf, relabelConfig, flagsMap, compactMetrics, progressRegistry, downsampleMetrics, globalBaseMetaFetcher)
