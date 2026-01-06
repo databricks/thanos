@@ -269,8 +269,14 @@ func runCompact(
 			level.Warn(logger).Log("msg", "no tenants assigned to this shard", "ordinal", ordinal)
 		}
 
+		// Deduplicate tenants to avoid duplicate metric registration
+		seenTenants := make(map[string]bool)
 		for _, tenant := range assignedTenants {
-			tenantPrefixes = append(tenantPrefixes, path.Join(conf.commonPathPrefix, tenant))
+			tenantPrefix := path.Join(conf.commonPathPrefix, tenant)
+			if !seenTenants[tenantPrefix] {
+				seenTenants[tenantPrefix] = true
+				tenantPrefixes = append(tenantPrefixes, tenantPrefix)
+			}
 		}
 
 		level.Info(logger).Log("msg", "tenant partitioning setup complete", "tenant_prefixes", strings.Join(tenantPrefixes, ","))
