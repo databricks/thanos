@@ -63,7 +63,7 @@ func (r *idempotentRegisterer) Register(c prometheus.Collector) error {
 	err := r.Registerer.Register(c)
 	if err != nil {
 		// Check if this is a duplicate registration error - if so, ignore it
-		if _, ok := err.(prometheus.AlreadyRegisteredError); ok {
+		if _, isDupError := err.(prometheus.AlreadyRegisteredError); isDupError {
 			return nil
 		}
 	}
