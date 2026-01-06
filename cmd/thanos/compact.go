@@ -360,9 +360,8 @@ func runCompact(
 		var insBkt objstore.InstrumentedBucket
 		if isMultiTenant {
 			tenantReg = prometheus.WrapRegistererWith(prometheus.Labels{"tenant": tenantPrefix}, reg)
-			// Use tenant-specific bucket name for metrics to avoid conflicts
-			bucketNameForMetrics := fmt.Sprintf("%s/%s", bkt.Name(), tenantPrefix)
-			insBkt = objstoretracing.WrapWithTraces(objstore.WrapWithMetrics(bkt, extprom.WrapRegistererWithPrefix("thanos_", tenantReg), bucketNameForMetrics))
+			// Use only tenant prefix as the distinguishing part for bucket metrics
+			insBkt = objstoretracing.WrapWithTraces(objstore.WrapWithMetrics(bkt, extprom.WrapRegistererWithPrefix("thanos_", tenantReg), tenantPrefix))
 		} else {
 			tenantReg = reg
 			insBkt = globalInsBkt
