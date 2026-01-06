@@ -394,7 +394,7 @@ func runCompact(
 			insBkt = globalInsBkt
 		}
 
-		err = runCompactForTenant(g, ctx, tenantLogger, cancel, tenantReg, insBkt, deleteDelay, conf, relabelConfig, flagsMap, compactMetrics, progressRegistry, downsampleMetrics, globalBaseMetaFetcher)
+		err = runCompactForTenant(g, ctx, tenantLogger, cancel, tenantReg, insBkt, deleteDelay, conf, relabelConfig, flagsMap, compactMetrics, progressRegistry, downsampleMetrics, globalBaseMetaFetcher, tenantPrefix)
 
 		if isMultiTenant {
 			runutil.CloseWithLogOnErr(tenantLogger, insBkt, "bucket client")
@@ -426,6 +426,7 @@ func runCompactForTenant(
 	progressRegistry *compact.ProgressRegistry,
 	downsampleMetrics *DownsampleMetrics,
 	baseMetaFetcher *block.BaseFetcher,
+	tenant string,
 ) error {
 	// While fetching blocks, we filter out blocks that were marked for deletion by using IgnoreDeletionMarkFilter.
 	// The delay of deleteDelay/2 is added to ensure we fetch blocks that are meant to be deleted but do not have a replacement yet.
@@ -736,7 +737,7 @@ func runCompactForTenant(
 		cancel()
 	})
 
-	runCleanup(g, ctx, logger, cancel, reg, &conf, progressRegistry, compactMetrics, tsdbPlanner, sy, retentionByResolution, cleanPartialMarked, grouper)
+	runCleanup(g, ctx, logger, cancel, reg, &conf, progressRegistry, compactMetrics, tsdbPlanner, sy, retentionByResolution, cleanPartialMarked, grouper, tenant)
 
 	return nil
 }
@@ -818,6 +819,7 @@ func runCleanup(
 	retentionByResolution map[compact.ResolutionLevel]time.Duration,
 	cleanPartialMarked func(*compact.Progress) error,
 	grouper *compact.DefaultGrouper,
+	tenant string,
 ) {
 	if conf.wait {
 		// Periodically remove partial blocks and blocks marked for deletion
@@ -845,11 +847,11 @@ func runCleanup(
 		// Periodically calculate the progress of compaction, downsampling and retention.
 		if conf.progressCalculateInterval > 0 {
 			g.Add(func() error {
-				ps := compact.NewCompactionProgressCalculator(reg, tsdbPlanner)
-				rs := compact.NewRetentionProgressCalculator(reg, retentionByResolution)
+				ps := compact.NewCompactionProgressCalculator(reg, tsdbPlanner, tenant)
+				rs := compact.NewRetentionProgressCalculator(reg, retentionByResolution, tenant)
 				var ds *compact.DownsampleProgressCalculator
 				if !conf.disableDownsampling {
-					ds = compact.NewDownsampleProgressCalculator(reg)
+					ds = compact.NewDownsampleProgressCalculator(reg, tenant)
 				}
 
 				return runutil.Repeat(conf.progressCalculateInterval, ctx.Done(), func() error {
