@@ -380,6 +380,7 @@ func runCompact(
 		var tenantReg prometheus.Registerer
 		var insBkt objstore.InstrumentedBucket
 		var tenantLogger log.Logger
+		var baseMetaFetcher *block.BaseFetcher
 
 		if isMultiTenant {
 			// Use idempotent registerer to ignore duplicate metric registrations across tenants.
@@ -388,13 +389,24 @@ func runCompact(
 			tenantLogger = log.With(logger, "tenant", tenantPrefix)
 			// Only wrap with tracing, not metrics (to avoid duplicate bucket metric registration)
 			insBkt = objstoretracing.WrapWithTraces(bkt)
+
+			// Create tenant-scoped block lister and fetcher so each tenant only sees their own blocks
+			tenantBlockLister, err := getBlockLister(tenantLogger, &conf, insBkt)
+			if err != nil {
+				return errors.Wrap(err, "create tenant block lister")
+			}
+			baseMetaFetcher, err = block.NewBaseFetcher(tenantLogger, conf.blockMetaFetchConcurrency, insBkt, tenantBlockLister, conf.dataDir, extprom.WrapRegistererWithPrefix("thanos_", tenantReg))
+			if err != nil {
+				return errors.Wrap(err, "create tenant meta fetcher")
+			}
 		} else {
 			tenantReg = reg
 			tenantLogger = logger
 			insBkt = globalInsBkt
+			baseMetaFetcher = globalBaseMetaFetcher
 		}
 
-		err = runCompactForTenant(g, ctx, tenantLogger, cancel, tenantReg, insBkt, deleteDelay, conf, relabelConfig, flagsMap, compactMetrics, progressRegistry, downsampleMetrics, globalBaseMetaFetcher, tenantPrefix)
+		err = runCompactForTenant(g, ctx, tenantLogger, cancel, tenantReg, insBkt, deleteDelay, conf, relabelConfig, flagsMap, compactMetrics, progressRegistry, downsampleMetrics, baseMetaFetcher, tenantPrefix)
 
 		if err != nil {
 			return err
