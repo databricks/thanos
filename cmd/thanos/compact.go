@@ -514,10 +514,16 @@ func runCompactForTenant(
 		return errors.Wrap(err, "create compactor")
 	}
 
-	var (
-		compactDir      = path.Join(conf.dataDir, "compact")
+	var compactDir, downsamplingDir string
+	if tenant != "" {
+		// In multi-tenant mode, each tenant gets its own working directory to avoid conflicts
+		compactDir = path.Join(conf.dataDir, "compact", tenant)
+		downsamplingDir = path.Join(conf.dataDir, "downsample", tenant)
+	} else {
+		// Single-tenant mode uses the base directories
+		compactDir = path.Join(conf.dataDir, "compact")
 		downsamplingDir = path.Join(conf.dataDir, "downsample")
-	)
+	}
 
 	if err := os.MkdirAll(compactDir, os.ModePerm); err != nil {
 		return errors.Wrap(err, "create working compact directory")
