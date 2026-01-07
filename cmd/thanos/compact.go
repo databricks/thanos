@@ -396,10 +396,6 @@ func runCompact(
 
 		err = runCompactForTenant(g, ctx, tenantLogger, cancel, tenantReg, insBkt, deleteDelay, conf, relabelConfig, flagsMap, compactMetrics, progressRegistry, downsampleMetrics, globalBaseMetaFetcher, tenantPrefix)
 
-		if isMultiTenant {
-			runutil.CloseWithLogOnErr(tenantLogger, insBkt, "bucket client")
-		}
-
 		if err != nil {
 			return err
 		}
