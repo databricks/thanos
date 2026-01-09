@@ -245,66 +245,9 @@ func runCompact(
 		return errors.Wrap(err, "failed to parse initial bucket configuration")
 	}
 
-	// Set up tenant partitioning if enabled
-	var tenantPrefixes []string
-	var isMultiTenant bool
-
-	if conf.enableTenantPathPrefix {
-		isMultiTenant = true
-
-		hostname := os.Getenv("HOSTNAME")
-		ordinal, err := extractOrdinalFromHostname(hostname)
-		if err != nil {
-			return errors.Wrapf(err, "failed to extract ordinal from hostname %s", hostname)
-		}
-
-		totalShards := conf.replicas / conf.replicationFactor
-		if conf.replicas%conf.replicationFactor != 0 || conf.replicationFactor <= 0 {
-			return errors.Errorf("replicas %d must be divisible by replication factor %d and total shards must be greater than 0", conf.replicas, conf.replicationFactor)
-		}
-
-		if ordinal >= totalShards {
-			return errors.Errorf("ordinal %d is greater than total shards %d", ordinal, totalShards)
-		}
-
-		tenantWeightsPath := conf.tenantWeights.Path()
-		if tenantWeightsPath == "" {
-			return errors.New("tenant weights file is not set")
-		}
-
-		discoveryBkt, err := client.NewBucket(logger, confContentYaml, component.String(), nil)
-		if err != nil {
-			return errors.Wrapf(err, "failed to create discovery bucket")
-		}
-
-		level.Info(logger).Log("msg", "setting up tenant partitioning", "ordinal", ordinal, "total_shards", totalShards)
-
-		tenantAssignments, err := compact.SetupTenantPartitioning(ctx, discoveryBkt, logger, tenantWeightsPath, conf.commonPathPrefix, totalShards)
-		runutil.CloseWithLogOnErr(logger, discoveryBkt, "discovery bucket")
-		if err != nil {
-			return errors.Wrap(err, "failed to setup tenant partitioning")
-		}
-
-		assignedTenants := tenantAssignments[ordinal]
-		if len(assignedTenants) == 0 {
-			level.Warn(logger).Log("msg", "no tenants assigned to this shard", "ordinal", ordinal)
-		}
-
-		// Deduplicate tenants to avoid duplicate metric registration
-		seenTenants := make(map[string]bool)
-		for _, tenant := range assignedTenants {
-			tenantPrefix := path.Join(conf.commonPathPrefix, tenant)
-			if !seenTenants[tenantPrefix] {
-				seenTenants[tenantPrefix] = true
-				tenantPrefixes = append(tenantPrefixes, tenantPrefix)
-			}
-		}
-
-		level.Info(logger).Log("msg", "tenant partitioning setup complete", "tenant_prefixes", strings.Join(tenantPrefixes, ","))
-	} else {
-		isMultiTenant = false
-		tenantPrefixes = []string{""}
-		level.Info(logger).Log("msg", "single tenant mode")
+	tenantPrefixes, isMultiTenant, err := getTenantsForCompactor(ctx, logger, conf, confContentYaml, component)
+	if err != nil {
+		return errors.Wrap(err, "failed to get tenants for compactor")
 	}
 
 	relabelContentYaml, err := conf.selectorRelabelConf.Content()
@@ -363,47 +306,14 @@ func runCompact(
 			return errors.Wrap(err, "failed to marshal tenant bucket configuration")
 		}
 
-		var bkt objstore.Bucket
-		if isMultiTenant {
-			bkt, err = client.NewBucket(logger, tenantConfYaml, component.String(), nil)
-			if conf.enableFolderDeletion {
-				bkt, err = block.WrapWithAzDataLakeSdk(logger, tenantConfYaml, bkt)
-				level.Info(logger).Log("msg", "azdatalake sdk wrapper enabled", "prefix", bucketConf.Prefix, "name", bkt.Name())
-			}
-			if err != nil {
-				return errors.Wrap(err, "failed to create tenant bucket")
-			}
-		} else {
-			bkt = globalBkt
+		bkt, err := getBucketForTenant(logger, isMultiTenant, tenantConfYaml, component, conf, bucketConf, globalBkt)
+		if err != nil {
+			return errors.Wrap(err, "failed to get bucket for tenant")
 		}
 
-		var tenantReg prometheus.Registerer
-		var insBkt objstore.InstrumentedBucket
-		var tenantLogger log.Logger
-		var baseMetaFetcher *block.BaseFetcher
-
-		if isMultiTenant {
-			// Use idempotent registerer to ignore duplicate metric registrations across tenants.
-			// Components extract tenant from block metadata and use it as a variable label.
-			tenantReg = &idempotentRegisterer{Registerer: reg}
-			tenantLogger = log.With(logger, "tenant", tenantPrefix)
-			// Only wrap with tracing, not metrics (to avoid duplicate bucket metric registration)
-			insBkt = objstoretracing.WrapWithTraces(bkt)
-
-			// Create tenant-scoped block lister and fetcher so each tenant only sees their own blocks
-			tenantBlockLister, err := getBlockLister(tenantLogger, &conf, insBkt)
-			if err != nil {
-				return errors.Wrap(err, "create tenant block lister")
-			}
-			baseMetaFetcher, err = block.NewBaseFetcher(tenantLogger, conf.blockMetaFetchConcurrency, insBkt, tenantBlockLister, conf.dataDir, extprom.WrapRegistererWithPrefix("thanos_", tenantReg))
-			if err != nil {
-				return errors.Wrap(err, "create tenant meta fetcher")
-			}
-		} else {
-			tenantReg = reg
-			tenantLogger = logger
-			insBkt = globalInsBkt
-			baseMetaFetcher = globalBaseMetaFetcher
+		tenantReg, insBkt, tenantLogger, baseMetaFetcher, err := getTenantResources(logger, isMultiTenant, tenantConfYaml, component, conf, bucketConf, reg, tenantPrefix, bkt, globalBkt, globalInsBkt, globalBaseMetaFetcher)
+		if err != nil {
+			return errors.Wrap(err, "failed to get tenant resources")
 		}
 
 		err = runCompactForTenant(g, ctx, tenantLogger, cancel, tenantReg, insBkt, deleteDelay, conf, relabelConfig, flagsMap, compactMetrics, progressRegistry, downsampleMetrics, baseMetaFetcher, tenantPrefix)
@@ -926,6 +836,127 @@ func runCleanup(
 			})
 		}
 	}
+}
+
+func getTenantsForCompactor(ctx context.Context, logger log.Logger, conf compactConfig, confContentYaml []byte, component component.Component) ([]string, bool, error) {
+	var tenantPrefixes []string
+	var isMultiTenant bool
+
+	if conf.enableTenantPathPrefix {
+		isMultiTenant = true
+
+		hostname := os.Getenv("HOSTNAME")
+		ordinal, err := extractOrdinalFromHostname(hostname)
+		if err != nil {
+			return nil, true, errors.Wrapf(err, "failed to extract ordinal from hostname %s", hostname)
+		}
+
+		totalShards := conf.replicas / conf.replicationFactor
+		if conf.replicas%conf.replicationFactor != 0 || conf.replicationFactor <= 0 {
+			return nil, true, errors.Errorf("replicas %d must be divisible by replication factor %d and total shards must be greater than 0", conf.replicas, conf.replicationFactor)
+		}
+
+		if ordinal >= totalShards {
+			return nil, true, errors.Errorf("ordinal %d is greater than total shards %d", ordinal, totalShards)
+		}
+
+		tenantWeightsPath := conf.tenantWeights.Path()
+		if tenantWeightsPath == "" {
+			return nil, true, errors.New("tenant weights file is not set")
+		}
+
+		discoveryBkt, err := client.NewBucket(logger, confContentYaml, component.String(), nil)
+		if err != nil {
+			return nil, true, errors.Wrapf(err, "failed to create discovery bucket")
+		}
+
+		level.Info(logger).Log("msg", "setting up tenant partitioning", "ordinal", ordinal, "total_shards", totalShards)
+
+		tenantAssignments, err := compact.SetupTenantPartitioning(ctx, discoveryBkt, logger, tenantWeightsPath, conf.commonPathPrefix, totalShards)
+		runutil.CloseWithLogOnErr(logger, discoveryBkt, "discovery bucket")
+		if err != nil {
+			return nil, true, errors.Wrap(err, "failed to setup tenant partitioning")
+		}
+
+		assignedTenants := tenantAssignments[ordinal]
+		if len(assignedTenants) == 0 {
+			level.Warn(logger).Log("msg", "no tenants assigned to this shard", "ordinal", ordinal)
+		}
+
+		// Deduplicate tenants to avoid duplicate metric registration
+		seenTenants := make(map[string]bool)
+		for _, tenant := range assignedTenants {
+			tenantPrefix := path.Join(conf.commonPathPrefix, tenant)
+			if !seenTenants[tenantPrefix] {
+				seenTenants[tenantPrefix] = true
+				tenantPrefixes = append(tenantPrefixes, tenantPrefix)
+			}
+		}
+
+		level.Info(logger).Log("msg", "tenant partitioning setup complete", "tenant_prefixes", strings.Join(tenantPrefixes, ","))
+	} else {
+		isMultiTenant = false
+		tenantPrefixes = []string{""}
+		level.Info(logger).Log("msg", "single tenant mode")
+	}
+	return tenantPrefixes, isMultiTenant, nil
+}
+
+func getBucketForTenant(logger log.Logger, isMultiTenant bool, tenantConfYaml []byte, component component.Component, conf compactConfig, bucketConf *client.BucketConfig, globalBkt objstore.Bucket) (objstore.Bucket, error) {
+	if isMultiTenant {
+		bkt, err := client.NewBucket(logger, tenantConfYaml, component.String(), nil)
+		if conf.enableFolderDeletion {
+			bkt, err = block.WrapWithAzDataLakeSdk(logger, tenantConfYaml, bkt)
+			level.Info(logger).Log("msg", "azdatalake sdk wrapper enabled", "prefix", bucketConf.Prefix, "name", bkt.Name())
+		}
+		return bkt, err
+	}
+	return globalBkt, nil
+}
+
+func getTenantResources(
+	logger log.Logger,
+	isMultiTenant bool,
+	tenantConfYaml []byte,
+	component component.Component,
+	conf compactConfig,
+	bucketConf *client.BucketConfig,
+	reg prometheus.Registerer,
+	tenantPrefix string,
+	bkt objstore.Bucket,
+	globalBkt objstore.Bucket,
+	globalInsBkt objstore.InstrumentedBucket,
+	globalBaseMetaFetcher *block.BaseFetcher,
+) (prometheus.Registerer, objstore.InstrumentedBucket, log.Logger, *block.BaseFetcher, error) {
+	var tenantReg prometheus.Registerer
+	var insBkt objstore.InstrumentedBucket
+	var tenantLogger log.Logger
+	var baseMetaFetcher *block.BaseFetcher
+
+	if isMultiTenant {
+		// Use idempotent registerer to ignore duplicate metric registrations across tenants.
+		// Components extract tenant from block metadata and use it as a variable label.
+		tenantReg = &idempotentRegisterer{Registerer: reg}
+		tenantLogger = log.With(logger, "tenant", tenantPrefix)
+		// Only wrap with tracing, not metrics (to avoid duplicate bucket metric registration)
+		insBkt = objstoretracing.WrapWithTraces(bkt)
+
+		// Create tenant-scoped block lister and fetcher so each tenant only sees their own blocks
+		tenantBlockLister, err := getBlockLister(tenantLogger, &conf, insBkt)
+		if err != nil {
+			return nil, nil, nil, nil, errors.Wrap(err, "create tenant block lister")
+		}
+		baseMetaFetcher, err = block.NewBaseFetcher(tenantLogger, conf.blockMetaFetchConcurrency, insBkt, tenantBlockLister, conf.dataDir, extprom.WrapRegistererWithPrefix("thanos_", tenantReg))
+		if err != nil {
+			return nil, nil, nil, nil, errors.Wrap(err, "create tenant meta fetcher")
+		}
+	} else {
+		tenantReg = reg
+		tenantLogger = logger
+		insBkt = globalInsBkt
+		baseMetaFetcher = globalBaseMetaFetcher
+	}
+	return tenantReg, insBkt, tenantLogger, baseMetaFetcher, nil
 }
 
 func getBlockLister(logger log.Logger, conf *compactConfig, insBkt objstore.InstrumentedBucketReader) (block.Lister, error) {
