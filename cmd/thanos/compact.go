@@ -311,7 +311,7 @@ func runCompact(
 			return errors.Wrap(err, "failed to get bucket for tenant")
 		}
 
-		tenantReg, insBkt, tenantLogger, baseMetaFetcher, err := getTenantResources(logger, isMultiTenant, tenantConfYaml, component, conf, bucketConf, reg, tenantPrefix, bkt, globalBkt, globalInsBkt, globalBaseMetaFetcher)
+		tenantReg, insBkt, tenantLogger, baseMetaFetcher, err := getTenantResources(logger, isMultiTenant, conf, reg, tenantPrefix, bkt, globalInsBkt, globalBaseMetaFetcher)
 		if err != nil {
 			return errors.Wrap(err, "failed to get tenant resources")
 		}
@@ -917,14 +917,10 @@ func getBucketForTenant(logger log.Logger, isMultiTenant bool, tenantConfYaml []
 func getTenantResources(
 	logger log.Logger,
 	isMultiTenant bool,
-	tenantConfYaml []byte,
-	component component.Component,
 	conf compactConfig,
-	bucketConf *client.BucketConfig,
 	reg prometheus.Registerer,
 	tenantPrefix string,
 	bkt objstore.Bucket,
-	globalBkt objstore.Bucket,
 	globalInsBkt objstore.InstrumentedBucket,
 	globalBaseMetaFetcher *block.BaseFetcher,
 ) (prometheus.Registerer, objstore.InstrumentedBucket, log.Logger, *block.BaseFetcher, error) {
