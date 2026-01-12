@@ -316,7 +316,7 @@ func runCompact(
 			return errors.Wrap(err, "failed to get tenant resources")
 		}
 
-		err = runCompactForTenant(g, ctx, tenantLogger, cancel, tenantReg, insBkt, deleteDelay, conf, relabelConfig, flagsMap, compactMetrics, progressRegistry, downsampleMetrics, baseMetaFetcher, tenantPrefix)
+		err = runCompactForTenant(g, ctx, tenantLogger, cancel, tenantReg, insBkt, deleteDelay, conf, relabelConfig, flagsMap, compactMetrics, progressRegistry, downsampleMetrics, baseMetaFetcher, tenantPrefix, api)
 
 		if err != nil {
 			return err
@@ -345,6 +345,7 @@ func runCompactForTenant(
 	downsampleMetrics *DownsampleMetrics,
 	baseMetaFetcher *block.BaseFetcher,
 	tenant string,
+	api *blocksAPI.BlocksAPI,
 ) error {
 	// While fetching blocks, we filter out blocks that were marked for deletion by using IgnoreDeletionMarkFilter.
 	// The delay of deleteDelay/2 is added to ensure we fetch blocks that are meant to be deleted but do not have a replacement yet.
@@ -359,10 +360,7 @@ func runCompactForTenant(
 
 	enableVerticalCompaction, dedupReplicaLabels := checkVerticalCompaction(logger, &conf)
 
-	var (
-		api = blocksAPI.NewBlocksAPI(logger, conf.webConf.disableCORS, conf.label, flagsMap, insBkt)
-		sy  *compact.Syncer
-	)
+	var sy *compact.Syncer
 	{
 		filters := []block.MetadataFilter{
 			timePartitionMetaFilter,
