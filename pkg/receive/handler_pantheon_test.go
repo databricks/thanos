@@ -102,7 +102,7 @@ func TestDistributeTimeseriesToReplicas_WithPantheon(t *testing.T) {
 				},
 			},
 			wantErr:         true,
-			errContains:     "metric name (__name__) not found",
+			errContains:     "invalid pantheon request",
 			pantheonCluster: pantheonCluster,
 		},
 		{
@@ -116,7 +116,7 @@ func TestDistributeTimeseriesToReplicas_WithPantheon(t *testing.T) {
 				},
 			},
 			wantErr:         true,
-			errContains:     "scope not found in pantheon configuration",
+			errContains:     "invalid pantheon request",
 			pantheonCluster: pantheonCluster,
 		},
 		{
@@ -133,7 +133,7 @@ func TestDistributeTimeseriesToReplicas_WithPantheon(t *testing.T) {
 			pantheonCluster: nil,
 		},
 		{
-			name:  "no scope provided - should error",
+			name:  "no scope provided - fallback to tenant header",
 			scope: "",
 			timeseries: []prompb.TimeSeries{
 				{
@@ -142,8 +142,7 @@ func TestDistributeTimeseriesToReplicas_WithPantheon(t *testing.T) {
 					)),
 				},
 			},
-			wantErr:         true,
-			errContains:     "scope header is required",
+			wantTenants:     []string{"default-tenant"}, // Falls back to tenantHTTP
 			pantheonCluster: pantheonCluster,
 		},
 	}

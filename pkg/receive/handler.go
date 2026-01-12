@@ -90,9 +90,8 @@ var (
 	errNotReady          = errors.New("target not ready")
 	errUnavailable       = errors.New("target not available")
 	errInternal          = errors.New("internal error")
+	errInvalidPantheon   = errors.New("invalid pantheon request")
 	errMissingMetricName = errors.New("metric name (__name__) not found in time series labels")
-	errMissingScope      = errors.New("scope header is required when pantheon cluster is configured")
-	errUnknownScope      = errors.New("scope not found in pantheon configuration")
 )
 
 type WriteableStoreAsyncClient interface {
@@ -690,11 +689,9 @@ func (h *Handler) receiveHTTP(w http.ResponseWriter, r *http.Request) {
 			responseStatusCode = http.StatusConflict
 		case errBadReplica:
 			responseStatusCode = http.StatusBadRequest
+		case errInvalidPantheon:
+			responseStatusCode = http.StatusBadRequest
 		case errMissingMetricName:
-			responseStatusCode = http.StatusBadRequest
-		case errMissingScope:
-			responseStatusCode = http.StatusBadRequest
-		case errUnknownScope:
 			responseStatusCode = http.StatusBadRequest
 		default:
 			level.Error(tLogger).Log("err", err, "msg", "internal server error")
@@ -968,23 +965,19 @@ func (h *Handler) distributeTimeseriesToReplicas(
 		var tenant = tenantHTTP
 
 		// Priority 1: Pantheon-based tenant override (if config is set and scope is provided).
-		if pc := h.pantheonCluster.Load(); pc != nil {
-			if scopeHTTP == "" {
-				return nil, nil, errMissingScope
-			}
-
+		if pc := h.pantheonCluster.Load(); pc != nil && scopeHTTP != "" {
 			lbls := labelpb.ZLabelsToPromLabels(ts.Labels)
 			metricName := lbls.Get(labels.MetricName)
 			if metricName == "" {
-				return nil, nil, errMissingMetricName
+				return nil, nil, errors.Wrap(errMissingMetricName, errInvalidPantheon.Error())
 			}
 
-			metricScope := pantheon.GetMetricScope(scopeHTTP, pc)
-			if metricScope == nil {
-				return nil, nil, errUnknownScope
+			pantheonTenant, err := pantheon.GetTenantFromScope(scopeHTTP, metricName, pc)
+			if err != nil {
+				level.Error(h.logger).Log("msg", "failed to get tenant from pantheon scope", "scope", scopeHTTP, "metric", metricName, "err", err)
+				return nil, nil, errors.Wrap(errInvalidPantheon, err.Error())
 			}
 
-			pantheonTenant := pantheon.GetTenantFromScope(metricName, metricScope)
 			level.Debug(h.logger).Log("msg", "tenant overridden by pantheon scope", "original_tenant", tenantHTTP, "scope", scopeHTTP, "metric", metricName, "new_tenant", pantheonTenant)
 			tenant = pantheonTenant
 		} else if h.splitTenantLabelName != "" {
