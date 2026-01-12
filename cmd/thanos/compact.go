@@ -316,7 +316,7 @@ func runCompact(
 			return errors.Wrap(err, "failed to get tenant resources")
 		}
 
-		err = runCompactForTenant(g, ctx, tenantLogger, cancel, tenantReg, insBkt, deleteDelay, conf, relabelConfig, flagsMap, compactMetrics, progressRegistry, downsampleMetrics, baseMetaFetcher, tenantPrefix, api)
+		err = runCompactForTenant(g, ctx, tenantLogger, cancel, tenantReg, insBkt, deleteDelay, conf, relabelConfig, compactMetrics, progressRegistry, downsampleMetrics, baseMetaFetcher, tenantPrefix, api)
 
 		if err != nil {
 			return err
@@ -339,7 +339,6 @@ func runCompactForTenant(
 	deleteDelay time.Duration,
 	conf compactConfig,
 	relabelConfig []*relabel.Config,
-	flagsMap map[string]string,
 	compactMetrics *compactMetrics,
 	progressRegistry *compact.ProgressRegistry,
 	downsampleMetrics *DownsampleMetrics,
