@@ -100,8 +100,6 @@ func registerReceive(app *extkingpin.App) {
 			MaxExemplars:                   conf.tsdbMaxExemplars,
 			EnableExemplarStorage:          conf.tsdbMaxExemplars > 0,
 			HeadChunksWriteQueueSize:       int(conf.tsdbWriteQueueSize),
-			HeadChunksWriteBufferSize:      conf.tsdbHeadChunksWriteBufferSize,
-			StripeSize:                     conf.tsdbStripeSize,
 			EnableMemorySnapshotOnShutdown: conf.tsdbMemorySnapshotOnShutdown,
 			EnableNativeHistograms:         conf.tsdbEnableNativeHistograms,
 		}
@@ -246,9 +244,10 @@ func runReceive(
 		}
 	}
 
-	// Create TSDB for the default tenant.
-	if err := createDefautTenantTSDB(logger, conf.dataDir, conf.defaultTenantID); err != nil {
-		return errors.Wrapf(err, "create default tenant tsdb in %v", conf.dataDir)
+	// TODO(brancz): remove after a couple of versions
+	// Migrate non-multi-tsdb capable storage to multi-tsdb disk layout.
+	if err := migrateLegacyStorage(logger, conf.dataDir, conf.defaultTenantID); err != nil {
+		return errors.Wrapf(err, "migrate legacy storage in %v to default tenant %v", conf.dataDir, conf.defaultTenantID)
 	}
 
 	relabeller, err := receive.NewRelabeller(conf.relabelConfigPath, reg, logger, conf.relabelConfigReloadTimer)
@@ -372,22 +371,11 @@ func runReceive(
 		}
 	}
 
-	// Choose between PantheonV2 unified config or legacy separate configs.
-	if conf.pantheonV2WriterFilePath != "" {
-		level.Debug(logger).Log("msg", "setting up PantheonV2 writer config (unified hashring + pantheon)")
-		{
-			if err := setupPantheonV2WriterConfig(g, logger, reg, conf, hashringChangedChan, webHandler, statusProber, enableIngestion, dbs); err != nil {
-				return err
-			}
+	level.Debug(logger).Log("msg", "setting up hashring")
+	{
+		if err := setupHashring(g, logger, reg, conf, hashringChangedChan, webHandler, statusProber, enableIngestion, dbs); err != nil {
+			return err
 		}
-	} else {
-		level.Debug(logger).Log("msg", "setting up hashring")
-		{
-			if err := setupHashring(g, logger, reg, conf, hashringChangedChan, webHandler, statusProber, enableIngestion, dbs); err != nil {
-				return err
-			}
-		}
-
 	}
 
 	level.Debug(logger).Log("msg", "setting up HTTP server")
@@ -753,97 +741,6 @@ func setupHashring(g *run.Group,
 	return nil
 }
 
-// setupPantheonV2WriterConfig sets up the PantheonV2 writer configuration watcher if provided.
-// This replaces both setupHashring and setupPantheonConfig when using the unified config file.
-func setupPantheonV2WriterConfig(g *run.Group,
-	logger log.Logger,
-	reg *prometheus.Registry,
-	conf *receiveConfig,
-	hashringChangedChan chan struct{},
-	webHandler *receive.Handler,
-	statusProber prober.Probe,
-	enableIngestion bool,
-	dbs *receive.MultiTSDB,
-) error {
-	if conf.pantheonV2WriterFilePath == "" {
-		return nil
-	}
-
-	cw, err := receive.NewPantheonV2WriterConfigWatcher(log.With(logger, "component", "pantheonv2-writer-config-watcher"), reg, conf.pantheonV2WriterFilePath, *conf.pantheonV2WriterRefreshInterval)
-	if err != nil {
-		return errors.Wrap(err, "failed to initialize PantheonV2 writer config watcher")
-	}
-
-	// Check the PantheonV2 writer configuration before running the watcher.
-	if err := cw.ValidateConfig(); err != nil {
-		cw.Stop()
-		return errors.Wrap(err, "failed to validate PantheonV2 writer configuration file")
-	}
-
-	updates := make(chan *receive.PantheonV2WriterConfig, 1)
-	ctx, cancel := context.WithCancel(context.Background())
-	g.Add(func() error {
-		return receive.PantheonV2WriterConfigFromWatcher(ctx, updates, cw)
-	}, func(error) {
-		cancel()
-	})
-
-	cancelConsumer := make(chan struct{})
-	algorithm := receive.HashringAlgorithm(conf.hashringsAlgorithm)
-	g.Add(func() error {
-		if enableIngestion {
-			defer close(hashringChangedChan)
-		}
-
-		for {
-			select {
-			case c, ok := <-updates:
-				if !ok {
-					return nil
-				}
-
-				// Update hashring from the config.
-				if len(c.Hashrings) == 0 {
-					webHandler.Hashring(receive.SingleNodeHashring(conf.endpoint))
-					level.Info(logger).Log("msg", "Empty hashring config in PantheonV2 writer config. Set up single node hashring.")
-				} else {
-					h, err := receive.NewMultiHashring(algorithm, conf.replicationFactor, c.Hashrings)
-					if err != nil {
-						return errors.Wrap(err, "unable to create new hashring from PantheonV2 writer config")
-					}
-					webHandler.Hashring(h)
-					level.Info(logger).Log("msg", "Set up hashring from PantheonV2 writer config.")
-				}
-
-				if err := dbs.SetHashringConfig(c.Hashrings); err != nil {
-					return errors.Wrap(err, "failed to set hashring config in MultiTSDB from PantheonV2 writer config")
-				}
-
-				// Update PantheonCluster from the config.
-				if c.PantheonCluster != nil {
-					webHandler.SetPantheonCluster(c.PantheonCluster)
-					level.Info(logger).Log("msg", "Updated Pantheon cluster configuration from PantheonV2 writer config.")
-				}
-
-				// If ingestion is enabled, send a signal to TSDB to flush.
-				if enableIngestion {
-					hashringChangedChan <- struct{}{}
-				} else {
-					// If not, just signal we are ready (this is important during first hashring load)
-					statusProber.Ready()
-				}
-
-			case <-cancelConsumer:
-				return nil
-			}
-		}
-	}, func(err error) {
-		close(cancelConsumer)
-	})
-
-	return nil
-}
-
 // startTSDBAndUpload starts the multi-TSDB and sets up the rungroup to flush the TSDB and reload on hashring change.
 // It also upload blocks to object store, if upload is enabled.
 func startTSDBAndUpload(g *run.Group,
@@ -1019,23 +916,36 @@ func startTSDBAndUpload(g *run.Group,
 	return nil
 }
 
-func createDefautTenantTSDB(logger log.Logger, dataDir, defaultTenantID string) error {
+func migrateLegacyStorage(logger log.Logger, dataDir, defaultTenantID string) error {
 	defaultTenantDataDir := path.Join(dataDir, defaultTenantID)
 
 	if _, err := os.Stat(defaultTenantDataDir); !os.IsNotExist(err) {
-		level.Info(logger).Log("msg", "default tenant data dir already present, will not create")
+		level.Info(logger).Log("msg", "default tenant data dir already present, not attempting to migrate storage")
 		return nil
 	}
 
 	if _, err := os.Stat(dataDir); os.IsNotExist(err) {
-		level.Info(logger).Log("msg", "no existing storage found, not creating default tenant data dir")
+		level.Info(logger).Log("msg", "no existing storage found, no data migration attempted")
 		return nil
 	}
 
-	level.Info(logger).Log("msg", "default tenant data dir not found, creating", "defaultTenantID", defaultTenantID)
+	level.Info(logger).Log("msg", "found legacy storage, migrating to multi-tsdb layout with default tenant", "defaultTenantID", defaultTenantID)
+
+	files, err := os.ReadDir(dataDir)
+	if err != nil {
+		return errors.Wrapf(err, "read legacy data dir: %v", dataDir)
+	}
 
 	if err := os.MkdirAll(defaultTenantDataDir, 0750); err != nil {
 		return errors.Wrapf(err, "create default tenant data dir: %v", defaultTenantDataDir)
+	}
+
+	for _, f := range files {
+		from := path.Join(dataDir, f.Name())
+		to := path.Join(defaultTenantDataDir, f.Name())
+		if err := os.Rename(from, to); err != nil {
+			return errors.Wrapf(err, "migrate file from %v to %v", from, to)
+		}
 	}
 
 	return nil
@@ -1071,9 +981,6 @@ type receiveConfig struct {
 	hashringsFileContent string
 	hashringsAlgorithm   string
 
-	pantheonV2WriterFilePath        string
-	pantheonV2WriterRefreshInterval *model.Duration
-
 	refreshInterval     *model.Duration
 	endpoint            string
 	tenantHeader        string
@@ -1087,22 +994,20 @@ type receiveConfig struct {
 	compression         string
 	replicationProtocol string
 
-	tsdbMinBlockDuration          *model.Duration
-	tsdbMaxBlockDuration          *model.Duration
-	tsdbTooFarInFutureTimeWindow  *model.Duration
-	tsdbOutOfOrderTimeWindow      *model.Duration
-	tsdbOutOfOrderCapMax          int64
-	tsdbAllowOverlappingBlocks    bool
-	tsdbMaxExemplars              int64
-	tsdbMaxBytes                  units.Base2Bytes
-	tsdbWriteQueueSize            int64
-	tsdbMemorySnapshotOnShutdown  bool
-	tsdbDisableFlushOnShutdown    bool
-	tsdbEnableNativeHistograms    bool
-	tsdbEnableTenantPathPrefix    bool
-	tsdbPathSegmentsBeforeTenant  []string
-	tsdbHeadChunksWriteBufferSize int
-	tsdbStripeSize                int
+	tsdbMinBlockDuration         *model.Duration
+	tsdbMaxBlockDuration         *model.Duration
+	tsdbTooFarInFutureTimeWindow *model.Duration
+	tsdbOutOfOrderTimeWindow     *model.Duration
+	tsdbOutOfOrderCapMax         int64
+	tsdbAllowOverlappingBlocks   bool
+	tsdbMaxExemplars             int64
+	tsdbMaxBytes                 units.Base2Bytes
+	tsdbWriteQueueSize           int64
+	tsdbMemorySnapshotOnShutdown bool
+	tsdbDisableFlushOnShutdown   bool
+	tsdbEnableNativeHistograms   bool
+	tsdbEnableTenantPathPrefix   bool
+	tsdbPathSegmentsBeforeTenant []string
 
 	walCompression       bool
 	noLockFile           bool
@@ -1182,11 +1087,6 @@ func (rc *receiveConfig) registerFlag(cmd extkingpin.FlagClause) {
 		EnumVar(&rc.hashringsAlgorithm, string(receive.AlgorithmHashmod), string(receive.AlgorithmKetama), string(receive.AlgorithmAlignedKetama))
 
 	rc.refreshInterval = extkingpin.ModelDuration(cmd.Flag("receive.hashrings-file-refresh-interval", "Refresh interval to re-read the hashring configuration file. (used as a fallback)").
-		Default("5m"))
-
-	cmd.Flag("receive.pantheonv2-writer-file", "Path to file that contains the PantheonV2 writer configuration (hashrings + pantheon cluster). A watcher is initialized to watch changes and update the configuration dynamically. Takes precedence over receive.hashrings-file.").PlaceHolder("<path>").StringVar(&rc.pantheonV2WriterFilePath)
-
-	rc.pantheonV2WriterRefreshInterval = extkingpin.ModelDuration(cmd.Flag("receive.pantheonv2-writer-file-refresh-interval", "Refresh interval to re-read the PantheonV2 writer configuration file. (used as a fallback)").
 		Default("5m"))
 
 	cmd.Flag("receive.local-endpoint", "Endpoint of local receive node. Used to identify the local node in the hashring configuration. If it's empty AND hashring configuration was provided, it means that receive will run in RoutingOnly mode.").StringVar(&rc.endpoint)
@@ -1281,17 +1181,6 @@ func (rc *receiveConfig) registerFlag(cmd extkingpin.FlagClause) {
 		"[EXPERIMENTAL] Specifies the path segments before the tenant for object storage."+
 			"Must only be used in combination with tsdb.enable-tenant-path-prefix.").
 		Default("raw").Hidden().StringsVar(&rc.tsdbPathSegmentsBeforeTenant)
-
-	cmd.Flag("tsdb.head-chunks-write-buffer-size-bytes",
-		"Configures the write buffer size used by the head chunks mapper. "+
-			"Lower values reduce memory usage but may impact write performance. "+
-			"Min: 65536 (64KB), Max: 8388608 (8MB).").
-		Default("4194304").Hidden().IntVar(&rc.tsdbHeadChunksWriteBufferSize)
-
-	cmd.Flag("tsdb.stripe-size",
-		"The number of shards of series hash map (must be a power of 2). "+
-			"Reducing this will decrease memory footprint, but can negatively impact performance.").
-		Default("16384").Hidden().IntVar(&rc.tsdbStripeSize)
 
 	cmd.Flag("writer.intern",
 		"[EXPERIMENTAL] Enables string interning in receive writer, for more optimized memory usage.").
