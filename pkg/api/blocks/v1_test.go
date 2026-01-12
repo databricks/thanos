@@ -20,6 +20,7 @@ import (
 	"github.com/oklog/ulid"
 	"github.com/prometheus/common/route"
 	"github.com/prometheus/prometheus/model/labels"
+	"github.com/prometheus/prometheus/tsdb"
 	"github.com/thanos-io/objstore"
 
 	"github.com/efficientgo/core/testutil"
@@ -126,8 +127,10 @@ func TestMarkBlockEndpoint(t *testing.T) {
 			Blocks: []metadata.Meta{},
 			Label:  "foo",
 		},
-		disableCORS: true,
-		bkt:         bkt,
+		loadedBlocksByTenant: make(map[string][]metadata.Meta),
+		disableCORS:          true,
+		bkt:                  bkt,
+		label:                "foo",
 	}
 
 	var tests = []endpointTestCase{
@@ -185,4 +188,236 @@ func TestMarkBlockEndpoint(t *testing.T) {
 	file := path.Join(tmpDir, b1.String())
 	_, err = os.Stat(file)
 	testutil.Ok(t, err)
+}
+
+func TestSetLoadedForTenant(t *testing.T) {
+	logger := log.NewNopLogger()
+	bkt := objstore.WithNoopInstr(objstore.NewInMemBucket())
+
+	api := NewBlocksAPI(logger, true, "test-label", map[string]string{}, bkt)
+
+	// Create some test block metadata
+	block1 := metadata.Meta{
+		BlockMeta: tsdb.BlockMeta{
+			ULID:    ulid.MustNew(1, nil),
+			MinTime: 0,
+			MaxTime: 1000,
+		},
+	}
+	block2 := metadata.Meta{
+		BlockMeta: tsdb.BlockMeta{
+			ULID:    ulid.MustNew(2, nil),
+			MinTime: 1000,
+			MaxTime: 2000,
+		},
+	}
+	block3 := metadata.Meta{
+		BlockMeta: tsdb.BlockMeta{
+			ULID:    ulid.MustNew(3, nil),
+			MinTime: 2000,
+			MaxTime: 3000,
+		},
+	}
+
+	// Test setting blocks for multiple tenants
+	api.SetLoadedForTenant("tenant-a", []metadata.Meta{block1, block2}, nil)
+	api.SetLoadedForTenant("tenant-b", []metadata.Meta{block3}, nil)
+
+	// Verify blocks are stored per tenant
+	testutil.Equals(t, 2, len(api.loadedBlocksByTenant["tenant-a"]))
+	testutil.Equals(t, 1, len(api.loadedBlocksByTenant["tenant-b"]))
+
+	// Test single-tenant mode (empty string tenant)
+	api2 := NewBlocksAPI(logger, true, "test-label", map[string]string{}, bkt)
+	api2.SetLoadedForTenant("", []metadata.Meta{block1, block2, block3}, nil)
+	testutil.Equals(t, 3, len(api2.loadedBlocksByTenant[""]))
+}
+
+func TestBlocksEndpointMultiTenantAggregation(t *testing.T) {
+	logger := log.NewNopLogger()
+	bkt := objstore.WithNoopInstr(objstore.NewInMemBucket())
+
+	api := NewBlocksAPI(logger, true, "test-label", map[string]string{}, bkt)
+
+	// Create test block metadata for different tenants
+	block1 := metadata.Meta{
+		BlockMeta: tsdb.BlockMeta{
+			ULID:    ulid.MustNew(1, nil),
+			MinTime: 0,
+			MaxTime: 1000,
+		},
+	}
+	block2 := metadata.Meta{
+		BlockMeta: tsdb.BlockMeta{
+			ULID:    ulid.MustNew(2, nil),
+			MinTime: 1000,
+			MaxTime: 2000,
+		},
+	}
+	block3 := metadata.Meta{
+		BlockMeta: tsdb.BlockMeta{
+			ULID:    ulid.MustNew(3, nil),
+			MinTime: 2000,
+			MaxTime: 3000,
+		},
+	}
+
+	// Set blocks for multiple tenants
+	api.SetLoadedForTenant("tenant-a", []metadata.Meta{block1}, nil)
+	api.SetLoadedForTenant("tenant-b", []metadata.Meta{block2, block3}, nil)
+
+	// Create a request for the loaded view
+	req, err := http.NewRequest("GET", "http://example.com?view=loaded", nil)
+	testutil.Ok(t, err)
+
+	resp, _, apiErr, releaseResources := api.blocks(req)
+	defer releaseResources()
+
+	testutil.Equals(t, (*baseAPI.ApiError)(nil), apiErr)
+
+	blocksInfo, ok := resp.(*BlocksInfo)
+	testutil.Assert(t, ok, "response should be *BlocksInfo")
+	testutil.Equals(t, "test-label", blocksInfo.Label)
+	testutil.Equals(t, 3, len(blocksInfo.Blocks)) // Should aggregate all blocks from all tenants
+}
+
+func TestBlocksEndpointSingleTenantFallback(t *testing.T) {
+	logger := log.NewNopLogger()
+	bkt := objstore.WithNoopInstr(objstore.NewInMemBucket())
+
+	api := NewBlocksAPI(logger, true, "test-label", map[string]string{}, bkt)
+
+	// Create test block metadata
+	block1 := metadata.Meta{
+		BlockMeta: tsdb.BlockMeta{
+			ULID:    ulid.MustNew(1, nil),
+			MinTime: 0,
+			MaxTime: 1000,
+		},
+	}
+
+	// Use SetLoaded (single-tenant backward compatibility)
+	api.SetLoaded([]metadata.Meta{block1}, nil)
+
+	// Create a request for the loaded view
+	req, err := http.NewRequest("GET", "http://example.com?view=loaded", nil)
+	testutil.Ok(t, err)
+
+	resp, _, apiErr, releaseResources := api.blocks(req)
+	defer releaseResources()
+
+	testutil.Equals(t, (*baseAPI.ApiError)(nil), apiErr)
+
+	blocksInfo, ok := resp.(*BlocksInfo)
+	testutil.Assert(t, ok, "response should be *BlocksInfo")
+	testutil.Equals(t, 1, len(blocksInfo.Blocks)) // Should return blocks from loadedBlocksInfo
+}
+
+func TestBlocksEndpointGlobalView(t *testing.T) {
+	logger := log.NewNopLogger()
+	bkt := objstore.WithNoopInstr(objstore.NewInMemBucket())
+
+	api := NewBlocksAPI(logger, true, "test-label", map[string]string{}, bkt)
+
+	// Create test block metadata
+	block1 := metadata.Meta{
+		BlockMeta: tsdb.BlockMeta{
+			ULID:    ulid.MustNew(1, nil),
+			MinTime: 0,
+			MaxTime: 1000,
+		},
+	}
+	block2 := metadata.Meta{
+		BlockMeta: tsdb.BlockMeta{
+			ULID:    ulid.MustNew(2, nil),
+			MinTime: 1000,
+			MaxTime: 2000,
+		},
+	}
+
+	// Set global blocks
+	api.SetGlobal([]metadata.Meta{block1, block2}, nil)
+
+	// Create a request for the global view (no view param)
+	req, err := http.NewRequest("GET", "http://example.com", nil)
+	testutil.Ok(t, err)
+
+	resp, _, apiErr, releaseResources := api.blocks(req)
+	defer releaseResources()
+
+	testutil.Equals(t, (*baseAPI.ApiError)(nil), apiErr)
+
+	blocksInfo, ok := resp.(*BlocksInfo)
+	testutil.Assert(t, ok, "response should be *BlocksInfo")
+	testutil.Equals(t, 2, len(blocksInfo.Blocks))
+}
+
+func TestBlocksEndpointTenantFilter(t *testing.T) {
+	logger := log.NewNopLogger()
+	bkt := objstore.WithNoopInstr(objstore.NewInMemBucket())
+
+	api := NewBlocksAPI(logger, true, "test-label", map[string]string{}, bkt)
+
+	// Create test block metadata for different tenants
+	block1 := metadata.Meta{
+		BlockMeta: tsdb.BlockMeta{
+			ULID:    ulid.MustNew(1, nil),
+			MinTime: 0,
+			MaxTime: 1000,
+		},
+	}
+	block2 := metadata.Meta{
+		BlockMeta: tsdb.BlockMeta{
+			ULID:    ulid.MustNew(2, nil),
+			MinTime: 1000,
+			MaxTime: 2000,
+		},
+	}
+	block3 := metadata.Meta{
+		BlockMeta: tsdb.BlockMeta{
+			ULID:    ulid.MustNew(3, nil),
+			MinTime: 2000,
+			MaxTime: 3000,
+		},
+	}
+
+	// Set blocks for multiple tenants
+	api.SetLoadedForTenant("tenant-a", []metadata.Meta{block1}, nil)
+	api.SetLoadedForTenant("tenant-b", []metadata.Meta{block2, block3}, nil)
+
+	// Test filtering by tenant-a
+	req, err := http.NewRequest("GET", "http://example.com?view=loaded&tenant=tenant-a", nil)
+	testutil.Ok(t, err)
+
+	resp, _, apiErr, releaseResources := api.blocks(req)
+	testutil.Equals(t, (*baseAPI.ApiError)(nil), apiErr)
+
+	blocksInfo, ok := resp.(*BlocksInfo)
+	testutil.Assert(t, ok, "response should be *BlocksInfo")
+	testutil.Equals(t, 1, len(blocksInfo.Blocks)) // Only tenant-a blocks
+	releaseResources()
+
+	// Test filtering by tenant-b
+	req, err = http.NewRequest("GET", "http://example.com?view=loaded&tenant=tenant-b", nil)
+	testutil.Ok(t, err)
+
+	resp, _, apiErr, releaseResources = api.blocks(req)
+	testutil.Equals(t, (*baseAPI.ApiError)(nil), apiErr)
+
+	blocksInfo, ok = resp.(*BlocksInfo)
+	testutil.Assert(t, ok, "response should be *BlocksInfo")
+	testutil.Equals(t, 2, len(blocksInfo.Blocks)) // Only tenant-b blocks
+	releaseResources()
+
+	// Test filtering by non-existent tenant
+	req, err = http.NewRequest("GET", "http://example.com?view=loaded&tenant=tenant-c", nil)
+	testutil.Ok(t, err)
+
+	resp, _, apiErr, releaseResources = api.blocks(req)
+	testutil.Equals(t, (*baseAPI.ApiError)(nil), apiErr)
+
+	blocksInfo, ok = resp.(*BlocksInfo)
+	testutil.Assert(t, ok, "response should be *BlocksInfo")
+	testutil.Equals(t, 0, len(blocksInfo.Blocks)) // No blocks for non-existent tenant
+	releaseResources()
 }
