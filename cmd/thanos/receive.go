@@ -174,6 +174,11 @@ func runReceive(
 		level.Info(logger).Log("msg", "tenant path segments before tenant feature enabled", "segments", path.Join(conf.tsdbPathSegmentsBeforeTenant...))
 	}
 
+	// Validate shadow hashring flag combination
+	if conf.shadowHashringsFile != "" && conf.tenantSourceLabelName == "" {
+		return errors.New("--receive.shadow-hashrings-file requires --receive.tenant-source-label to be set")
+	}
+
 	// Create a matcher converter if specified by command line to cache expensive regex matcher conversions.
 	// Proxy store and TSDB stores of all tenants share a single cache.
 	var matcherConverter *storepb.MatcherConverter
@@ -318,6 +323,7 @@ func runReceive(
 		TLSConfig:               rwTLSConfig,
 		SplitTenantLabelName:    conf.splitTenantLabelName,
 		TenantSourceLabelName:   conf.tenantSourceLabelName,
+		ShadowHashringEnabled:   conf.shadowHashringsFile != "" && conf.tenantSourceLabelName != "",
 		DialOpts:                dialOpts,
 		ForwardTimeout:          time.Duration(*conf.forwardTimeout),
 		MaxBackoff:              time.Duration(*conf.maxBackoff),
@@ -376,6 +382,14 @@ func runReceive(
 	level.Debug(logger).Log("msg", "setting up hashring")
 	{
 		if err := setupHashring(g, logger, reg, conf, hashringChangedChan, webHandler, statusProber, enableIngestion, dbs); err != nil {
+			return err
+		}
+	}
+
+	// Set up shadow hashring for dual-write mode
+	level.Debug(logger).Log("msg", "setting up shadow hashring")
+	{
+		if err := setupShadowHashring(g, logger, reg, conf, webHandler); err != nil {
 			return err
 		}
 	}
@@ -743,6 +757,84 @@ func setupHashring(g *run.Group,
 	return nil
 }
 
+// setupShadowHashring sets up the shadow hashring configuration for dual-write mode.
+// This is only active when both tenant-source-label and shadow-hashrings-file are set.
+func setupShadowHashring(g *run.Group,
+	logger log.Logger,
+	reg *prometheus.Registry,
+	conf *receiveConfig,
+	webHandler *receive.Handler,
+) error {
+	// Shadow hashring is only enabled if both flags are set
+	if conf.shadowHashringsFile == "" || conf.tenantSourceLabelName == "" {
+		return nil
+	}
+
+	logger = log.With(logger, "component", "shadow-hashring")
+	level.Info(logger).Log("msg", "setting up shadow hashring for dual-write mode",
+		"shadow_hashrings_file", conf.shadowHashringsFile,
+		"tenant_source_label", conf.tenantSourceLabelName)
+
+	updates := make(chan []receive.HashringConfig, 1)
+	algorithm := receive.HashringAlgorithm(conf.hashringsAlgorithm)
+
+	// Create a separate registry for shadow hashring metrics to avoid conflicts
+	shadowReg := prometheus.WrapRegistererWithPrefix("shadow_", reg)
+
+	cw, err := receive.NewConfigWatcher(
+		log.With(logger, "component", "shadow-config-watcher"),
+		shadowReg,
+		conf.shadowHashringsFile,
+		*conf.refreshInterval)
+	if err != nil {
+		return errors.Wrap(err, "failed to initialize shadow config watcher")
+	}
+
+	if err := cw.ValidateConfig(); err != nil {
+		cw.Stop()
+		close(updates)
+		return errors.Wrap(err, "failed to validate shadow hashring configuration file")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	g.Add(func() error {
+		return receive.ConfigFromWatcher(ctx, updates, cw)
+	}, func(error) {
+		cancel()
+	})
+
+	// Process shadow hashring updates
+	cancelUpdates := make(chan struct{})
+	g.Add(func() error {
+		for {
+			select {
+			case c, ok := <-updates:
+				if !ok {
+					return nil
+				}
+				if c == nil {
+					level.Warn(logger).Log("msg", "empty shadow hashring config, disabling dual-write")
+					webHandler.ShadowHashring(nil)
+				} else {
+					h, err := receive.NewMultiHashring(algorithm, conf.replicationFactor, c)
+					if err != nil {
+						level.Error(logger).Log("msg", "failed to create shadow hashring", "err", err)
+						continue
+					}
+					webHandler.ShadowHashring(h)
+					level.Info(logger).Log("msg", "shadow hashring updated for dual-write mode")
+				}
+			case <-cancelUpdates:
+				return nil
+			}
+		}
+	}, func(err error) {
+		close(cancelUpdates)
+	})
+
+	return nil
+}
+
 // startTSDBAndUpload starts the multi-TSDB and sets up the rungroup to flush the TSDB and reload on hashring change.
 // It also upload blocks to object store, if upload is enabled.
 func startTSDBAndUpload(g *run.Group,
@@ -1005,6 +1097,7 @@ type receiveConfig struct {
 	writerInterning       bool
 	splitTenantLabelName  string
 	tenantSourceLabelName string
+	shadowHashringsFile   string
 
 	hashFunc string
 
@@ -1092,6 +1185,12 @@ func (rc *receiveConfig) registerFlag(cmd extkingpin.FlagClause) {
 	cmd.Flag("receive.split-tenant-label-name", "Label name through which the request will be split into multiple tenants. This takes precedence over the HTTP header.").Default("").StringVar(&rc.splitTenantLabelName)
 
 	cmd.Flag("receive.tenant-source-label", "Label name to use as tenant source. When set, the value of this label determines the tenant for each series, overriding the HTTP tenant header. If a series does not have this label, the default tenant ID is used. The label is preserved in the series (not removed).").Default("").StringVar(&rc.tenantSourceLabelName)
+
+	cmd.Flag("receive.shadow-hashrings-file", "Path to file that contains the shadow hashring configuration for dual-write mode. "+
+		"When set along with receive.tenant-source-label, enables dual-write: main hashring uses HTTP header tenant, "+
+		"shadow hashring uses label-based tenant. Shadow writes are fire-and-forget (best effort). "+
+		"Requires receive.tenant-source-label to be set.").
+		PlaceHolder("<path>").StringVar(&rc.shadowHashringsFile)
 
 	cmd.Flag("receive.tenant-label-name", "Label name through which the tenant will be announced.").Default(tenancy.DefaultTenantLabel).StringVar(&rc.tenantLabelName)
 

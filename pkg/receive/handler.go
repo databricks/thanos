@@ -108,6 +108,7 @@ type Options struct {
 	ReplicationFactor       uint64
 	SplitTenantLabelName    string
 	TenantSourceLabelName   string
+	ShadowHashringEnabled   bool
 	ReceiverMode            ReceiverMode
 	Tracer                  opentracing.Tracer
 	TLSConfig               *tls.Config
@@ -136,10 +137,19 @@ type Handler struct {
 	peers        peersContainer
 	receiverMode ReceiverMode
 
+	// Shadow hashring fields for dual-write mode
+	shadowHashring     Hashring
+	shadowPeers        peersContainer
+	shadowWriteEnabled bool
+
 	forwardRequests   *prometheus.CounterVec
 	endpointFailures  *prometheus.CounterVec
 	replications      *prometheus.CounterVec
 	replicationFactor prometheus.Gauge
+
+	// Shadow write metrics
+	shadowForwardRequests  *prometheus.CounterVec
+	shadowEndpointFailures *prometheus.CounterVec
 
 	writeSamplesTotal    *prometheus.HistogramVec
 	writeTimeseriesTotal *prometheus.HistogramVec
@@ -259,6 +269,46 @@ func NewHandler(logger log.Logger, o *Options) *Handler {
 	h.replications.WithLabelValues(labelSuccess)
 	h.replications.WithLabelValues(labelError)
 
+	// Initialize shadow peers and metrics if dual-write is enabled
+	if o.ShadowHashringEnabled {
+		h.shadowWriteEnabled = true
+		h.shadowPeers = newPeerGroup(
+			log.With(logger, "component", "shadow-peers"),
+			backoff.Backoff{
+				Factor: 2,
+				Min:    100 * time.Millisecond,
+				Max:    o.MaxBackoff,
+				Jitter: true,
+			},
+			promauto.With(registerer).NewHistogram(
+				prometheus.HistogramOpts{
+					Name:    "thanos_receive_shadow_forward_delay_seconds",
+					Help:    "The delay between the time the shadow write request was received and the time it was forwarded to a worker.",
+					Buckets: prometheus.ExponentialBuckets(0.001, 2, 16),
+				},
+			),
+			workers,
+			o.ReplicationProtocol,
+			o.DialOpts...)
+
+		h.shadowForwardRequests = promauto.With(registerer).NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "thanos_receive_shadow_forward_requests_total",
+				Help: "The number of shadow forward requests.",
+			}, []string{"result"},
+		)
+		h.shadowEndpointFailures = promauto.With(registerer).NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "thanos_receive_shadow_endpoint_failures_total",
+				Help: "The number of shadow write failures by endpoint.",
+			}, []string{"endpoint", "error"},
+		)
+		h.shadowForwardRequests.WithLabelValues(labelSuccess)
+		h.shadowForwardRequests.WithLabelValues(labelError)
+
+		level.Info(logger).Log("msg", "Shadow write mode enabled for dual-write")
+	}
+
 	if o.ReplicationFactor > 1 {
 		h.replicationFactor.Set(float64(o.ReplicationFactor))
 	} else {
@@ -348,6 +398,30 @@ func (h *Handler) Hashring(hashring Hashring) {
 
 	h.hashring = hashring
 	h.peers.reset()
+}
+
+// ShadowHashring sets the shadow hashring for dual-write mode.
+// When set (non-nil), shadow writes will be sent to these endpoints.
+func (h *Handler) ShadowHashring(hashring Hashring) {
+	h.mtx.Lock()
+	defer h.mtx.Unlock()
+
+	if h.shadowHashring != nil && hashring != nil {
+		previousNodes := h.shadowHashring.Nodes()
+		newNodes := hashring.Nodes()
+
+		disappearedNodes := getSortedStringSliceDiff(previousNodes, newNodes)
+		for _, node := range disappearedNodes {
+			if err := h.shadowPeers.close(node); err != nil {
+				level.Error(h.logger).Log("msg", "closing shadow gRPC connection failed", "addr", node, "err", err.Error())
+			}
+		}
+	}
+
+	h.shadowHashring = hashring
+	if h.shadowPeers != nil {
+		h.shadowPeers.reset()
+	}
 }
 
 // getSortedStringSliceDiff returns items which are in slice1 but not in slice2.
@@ -449,6 +523,9 @@ func (h *Handler) getStats(r *http.Request, statsByLabelName string) ([]statusap
 // Close stops the Handler.
 func (h *Handler) Close() {
 	_ = h.peers.Close()
+	if h.shadowPeers != nil {
+		_ = h.shadowPeers.Close()
+	}
 	runutil.CloseWithLogOnErr(h.logger, h.httpSrv, "receive HTTP server")
 }
 
@@ -841,6 +918,11 @@ func (h *Handler) fanoutForward(ctx context.Context, params remoteWriteParams) (
 		return stats, err
 	}
 
+	// Trigger shadow writes if dual-write mode is enabled (fire-and-forget)
+	if h.shadowWriteEnabled && h.shadowHashring != nil {
+		go h.fanoutShadowForward(ctx, params)
+	}
+
 	stats = h.gatherWriteStats(len(params.replicas), localWrites, remoteWrites)
 
 	// Prepare a buffered channel to receive the responses from the local and remote writes. Remote writes will all go
@@ -928,7 +1010,10 @@ func (h *Handler) distributeTimeseriesToReplicas(
 	for tsIndex, ts := range timeseries {
 		var tenant = tenantHTTP
 
-		if h.tenantSourceLabelName != "" {
+		// In dual-write mode (shadowWriteEnabled), main path uses HTTP tenant.
+		// Shadow path handles label-based tenant separately.
+		// When only tenantSourceLabelName is set (no shadow), use label-based tenant.
+		if h.tenantSourceLabelName != "" && !h.shadowWriteEnabled {
 			// tenant-source-label: extract tenant from label, fall back to default tenant
 			lbls := labelpb.ZLabelsToPromLabels(ts.Labels)
 			if tenantFromLabel := lbls.Get(h.tenantSourceLabelName); tenantFromLabel != "" {
@@ -988,6 +1073,211 @@ func (h *Handler) distributeTimeseriesToReplicas(
 		panic("ingestor only mode should not have any remote writes")
 	}
 	return localWrites, remoteWrites, nil
+}
+
+// fanoutShadowForward handles shadow writes to the shadow hashring.
+// This is fire-and-forget: errors are logged but do not affect the main request.
+func (h *Handler) fanoutShadowForward(ctx context.Context, params remoteWriteParams) {
+	// Create a new context with timeout, not tied to the main request context
+	shadowCtx, cancel := context.WithTimeout(context.Background(), h.options.ForwardTimeout)
+	defer cancel()
+
+	// Copy trace context for observability
+	shadowCtx = tracing.CopyTraceContext(shadowCtx, ctx)
+
+	logTags := []interface{}{"tenant", params.tenant, "shadow", true}
+	if id, ok := middleware.RequestIDFromContext(ctx); ok {
+		logTags = append(logTags, "request-id", id)
+	}
+	shadowLogger := log.With(h.logger, logTags...)
+
+	// Distribute using shadow hashring with label-based tenant attribution
+	shadowLocalWrites, shadowRemoteWrites, err := h.distributeShadowTimeseries(
+		params.replicas, params.writeRequest.Timeseries)
+	if err != nil {
+		level.Warn(shadowLogger).Log("msg", "failed to distribute shadow timeseries", "err", err)
+		h.shadowForwardRequests.WithLabelValues(labelError).Inc()
+		return
+	}
+
+	// Send shadow writes - fire and forget
+	h.sendShadowWrites(shadowCtx, shadowLogger, shadowLocalWrites, shadowRemoteWrites)
+}
+
+// distributeShadowTimeseries distributes timeseries to the shadow hashring using label-based tenant.
+// Unlike distributeTimeseriesToReplicas, this always extracts tenant from the source label.
+func (h *Handler) distributeShadowTimeseries(
+	replicas []uint64,
+	timeseries []prompb.TimeSeries,
+) (map[endpointReplica]map[string]trackedSeries, map[endpointReplica]map[string]trackedSeries, error) {
+	h.mtx.RLock()
+	defer h.mtx.RUnlock()
+
+	if h.shadowHashring == nil {
+		return nil, nil, errors.New("shadow hashring not initialized")
+	}
+
+	remoteWrites := make(map[endpointReplica]map[string]trackedSeries)
+	localWrites := make(map[endpointReplica]map[string]trackedSeries)
+
+	for tsIndex, ts := range timeseries {
+		// Shadow path: Extract tenant from label (this is the key difference from main path)
+		var tenant string
+		lbls := labelpb.ZLabelsToPromLabels(ts.Labels)
+		if tenantFromLabel := lbls.Get(h.tenantSourceLabelName); tenantFromLabel != "" {
+			tenant = tenantFromLabel
+		} else {
+			// Label missing: use default tenant
+			tenant = h.options.DefaultTenantID
+		}
+
+		for _, rn := range replicas {
+			endpoint, err := h.shadowHashring.GetN(tenant, &ts, rn)
+			if err != nil {
+				return nil, nil, err
+			}
+			er := endpointReplica{endpoint: endpoint, replica: rn}
+
+			var writeDestination = remoteWrites
+			if endpoint.HasAddress(h.options.Endpoint) {
+				writeDestination = localWrites
+			}
+
+			if _, ok := writeDestination[er]; !ok {
+				writeDestination[er] = map[string]trackedSeries{
+					tenant: {
+						seriesIDs:  make([]int, 0),
+						timeSeries: make([]prompb.TimeSeries, 0),
+					},
+				}
+			}
+			tenantSeries := writeDestination[er][tenant]
+			tenantSeries.timeSeries = append(tenantSeries.timeSeries, ts)
+			tenantSeries.seriesIDs = append(tenantSeries.seriesIDs, tsIndex)
+			writeDestination[er][tenant] = tenantSeries
+		}
+	}
+
+	return localWrites, remoteWrites, nil
+}
+
+// sendShadowWrites sends shadow writes without blocking or affecting main request.
+// All errors are logged but not returned - this is fire-and-forget.
+func (h *Handler) sendShadowWrites(
+	ctx context.Context,
+	logger log.Logger,
+	localWrites map[endpointReplica]map[string]trackedSeries,
+	remoteWrites map[endpointReplica]map[string]trackedSeries,
+) {
+	// Calculate buffer size for response channel
+	maxBufferedResponses := len(localWrites)
+	for er := range remoteWrites {
+		maxBufferedResponses += len(remoteWrites[er])
+	}
+
+	responses := make(chan writeResponse, maxBufferedResponses)
+	wg := sync.WaitGroup{}
+
+	// Shadow local writes
+	for writeDestination := range localWrites {
+		for tenant, series := range localWrites[writeDestination] {
+			wg.Add(1)
+			go func(wd endpointReplica, t string, ts trackedSeries) {
+				defer wg.Done()
+				h.sendShadowLocalWrite(ctx, wd, t, ts, responses)
+			}(writeDestination, tenant, series)
+		}
+	}
+
+	// Shadow remote writes
+	for writeDestination := range remoteWrites {
+		for tenant, series := range remoteWrites[writeDestination] {
+			wg.Add(1)
+			h.sendShadowRemoteWrite(ctx, tenant, writeDestination, series, responses, &wg)
+		}
+	}
+
+	// Drain responses in background (fire-and-forget)
+	go func() {
+		wg.Wait()
+		close(responses)
+
+		successCount := 0
+		errorCount := 0
+		for resp := range responses {
+			if resp.err != nil {
+				level.Debug(logger).Log("msg", "shadow write failed", "err", resp.err,
+					"endpoint", resp.er.endpoint)
+				errorCount++
+			} else {
+				successCount++
+			}
+		}
+
+		if errorCount > 0 {
+			h.shadowForwardRequests.WithLabelValues(labelError).Add(float64(errorCount))
+		}
+		if successCount > 0 {
+			h.shadowForwardRequests.WithLabelValues(labelSuccess).Add(float64(successCount))
+		}
+
+		level.Debug(logger).Log("msg", "shadow writes completed",
+			"success", successCount, "errors", errorCount)
+	}()
+}
+
+// sendShadowLocalWrite handles shadow writes to the local node.
+func (h *Handler) sendShadowLocalWrite(
+	ctx context.Context,
+	writeDestination endpointReplica,
+	tenant string,
+	trackedSeries trackedSeries,
+	responses chan<- writeResponse,
+) {
+	err := h.writer.Write(ctx, tenant, trackedSeries.timeSeries)
+	responses <- newWriteResponse(trackedSeries.seriesIDs, err, writeDestination, tenant)
+}
+
+// sendShadowRemoteWrite handles shadow writes to remote nodes using the shadow peer group.
+func (h *Handler) sendShadowRemoteWrite(
+	ctx context.Context,
+	tenant string,
+	er endpointReplica,
+	trackedSeries trackedSeries,
+	responses chan writeResponse,
+	wg *sync.WaitGroup,
+) {
+	endpoint := er.endpoint
+	cl, err := h.shadowPeers.getConnection(ctx, endpoint)
+	if err != nil {
+		if errors.Is(err, errUnavailable) {
+			err = errors.Wrapf(errUnavailable, "shadow endpoint %v unavailable", er)
+		}
+		responses <- newWriteResponse(trackedSeries.seriesIDs, err, er, tenant)
+		h.shadowEndpointFailures.WithLabelValues(endpoint.Address, "connection_error").Inc()
+		wg.Done()
+		return
+	}
+
+	realReplicationIndex := int64(er.replica + 1)
+	cl.RemoteWriteAsync(ctx, &storepb.WriteRequest{
+		Timeseries: trackedSeries.timeSeries,
+		Tenant:     tenant,
+		Replica:    realReplicationIndex,
+	}, er, trackedSeries.seriesIDs, responses, func(err error) {
+		defer wg.Done()
+		if err == nil {
+			h.shadowForwardRequests.WithLabelValues(labelSuccess).Inc()
+			h.shadowPeers.markPeerAvailable(endpoint)
+		} else {
+			h.shadowEndpointFailures.WithLabelValues(endpoint.Address, "grpc_write_error").Inc()
+			if st, ok := status.FromError(err); ok {
+				if st.Code() == codes.Unavailable {
+					h.shadowPeers.markPeerUnavailable(endpoint)
+				}
+			}
+		}
+	})
 }
 
 // sendWrites sends the local and remote writes to execute concurrently, controlling them through the provided sync.WaitGroup.
