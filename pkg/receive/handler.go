@@ -31,7 +31,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/common/route"
-	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/model/relabel"
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/tsdb"
@@ -107,7 +106,6 @@ type Options struct {
 	Endpoint                string
 	ReplicationFactor       uint64
 	SplitTenantLabelName    string
-	TenantSourceLabelName   string
 	ReceiverMode            ReceiverMode
 	Tracer                  opentracing.Tracer
 	TLSConfig               *tls.Config
@@ -123,13 +121,12 @@ type Options struct {
 
 // Handler serves a Prometheus remote write receiving HTTP endpoint.
 type Handler struct {
-	logger                log.Logger
-	writer                *Writer
-	router                *route.Router
-	options               *Options
-	splitTenantLabelName  string
-	tenantSourceLabelName string
-	httpSrv               *http.Server
+	logger               log.Logger
+	writer               *Writer
+	router               *route.Router
+	options              *Options
+	splitTenantLabelName string
+	httpSrv              *http.Server
 
 	mtx          sync.RWMutex
 	hashring     Hashring
@@ -166,12 +163,11 @@ func NewHandler(logger log.Logger, o *Options) *Handler {
 	level.Info(logger).Log("msg", "Starting receive handler with async forward workers", "workers", workers)
 
 	h := &Handler{
-		logger:                logger,
-		writer:                o.Writer,
-		router:                route.New(),
-		options:               o,
-		splitTenantLabelName:  o.SplitTenantLabelName,
-		tenantSourceLabelName: o.TenantSourceLabelName,
+		logger:               logger,
+		writer:               o.Writer,
+		router:               route.New(),
+		options:              o,
+		splitTenantLabelName: o.SplitTenantLabelName,
 		peers: newPeerGroup(
 			logger,
 			backoff.Backoff{
@@ -928,29 +924,14 @@ func (h *Handler) distributeTimeseriesToReplicas(
 	for tsIndex, ts := range timeseries {
 		var tenant = tenantHTTP
 
-		if h.tenantSourceLabelName != "" {
-			// tenant-source-label: extract tenant from label, fall back to default tenant
-			lbls := labelpb.ZLabelsToPromLabels(ts.Labels)
-			if tenantFromLabel := lbls.Get(h.tenantSourceLabelName); tenantFromLabel != "" {
-				tenant = h.tenantSourceLabelName + ":" + tenantFromLabel
-			} else {
-				// Label missing: use default tenant, NOT HTTP header
-				tenant = h.options.DefaultTenantID
-			}
-			// NOTE: label is NOT removed from ts.Labels
-		} else if h.splitTenantLabelName != "" {
+		if h.splitTenantLabelName != "" {
 			lbls := labelpb.ZLabelsToPromLabels(ts.Labels)
 
 			tenantLabel := lbls.Get(h.splitTenantLabelName)
 			if tenantLabel != "" {
-				tenant = tenantLabel
-
-				newLabels := labels.NewBuilder(lbls)
-				newLabels.Del(h.splitTenantLabelName)
-
-				ts.Labels = labelpb.ZLabelsFromPromLabels(
-					newLabels.Labels(),
-				)
+				tenant = h.splitTenantLabelName + ":" + tenantLabel
+			} else {
+				tenant = h.options.DefaultTenantID
 			}
 		}
 

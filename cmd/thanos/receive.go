@@ -317,7 +317,6 @@ func runReceive(
 		Tracer:                  tracer,
 		TLSConfig:               rwTLSConfig,
 		SplitTenantLabelName:    conf.splitTenantLabelName,
-		TenantSourceLabelName:   conf.tenantSourceLabelName,
 		DialOpts:                dialOpts,
 		ForwardTimeout:          time.Duration(*conf.forwardTimeout),
 		MaxBackoff:              time.Duration(*conf.maxBackoff),
@@ -1000,11 +999,10 @@ type receiveConfig struct {
 	tsdbHeadChunksWriteBufferSize int
 	tsdbStripeSize                int
 
-	walCompression        bool
-	noLockFile            bool
-	writerInterning       bool
-	splitTenantLabelName  string
-	tenantSourceLabelName string
+	walCompression       bool
+	noLockFile           bool
+	writerInterning      bool
+	splitTenantLabelName string
 
 	hashFunc string
 
@@ -1090,8 +1088,6 @@ func (rc *receiveConfig) registerFlag(cmd extkingpin.FlagClause) {
 	cmd.Flag("receive.default-tenant-id", "Default tenant ID to use when none is provided via a header.").Default(tenancy.DefaultTenant).StringVar(&rc.defaultTenantID)
 
 	cmd.Flag("receive.split-tenant-label-name", "Label name through which the request will be split into multiple tenants. This takes precedence over the HTTP header.").Default("").StringVar(&rc.splitTenantLabelName)
-
-	cmd.Flag("receive.tenant-source-label", "Label name to use as tenant source. When set, the value of this label determines the tenant for each series, overriding the HTTP tenant header. If a series does not have this label, the default tenant ID is used. The label is preserved in the series (not removed).").Default("").StringVar(&rc.tenantSourceLabelName)
 
 	cmd.Flag("receive.tenant-label-name", "Label name through which the tenant will be announced.").Default(tenancy.DefaultTenantLabel).StringVar(&rc.tenantLabelName)
 

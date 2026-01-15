@@ -1874,67 +1874,13 @@ func TestDistributeSeries(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Len(t, remote, 1)
-	require.Len(t, remote[endpointReplica{endpoint: endpoint, replica: 0}]["bar"].timeSeries, 1)
-	require.Len(t, remote[endpointReplica{endpoint: endpoint, replica: 0}]["boo"].timeSeries, 1)
+	require.Len(t, remote[endpointReplica{endpoint: endpoint, replica: 0}][tenantIDLabelName+":bar"].timeSeries, 1)
+	require.Len(t, remote[endpointReplica{endpoint: endpoint, replica: 0}][tenantIDLabelName+":boo"].timeSeries, 1)
 
-	require.Equal(t, 1, labelpb.ZLabelsToPromLabels(remote[endpointReplica{endpoint: endpoint, replica: 0}]["bar"].timeSeries[0].Labels).Len())
-	require.Equal(t, 1, labelpb.ZLabelsToPromLabels(remote[endpointReplica{endpoint: endpoint, replica: 0}]["boo"].timeSeries[0].Labels).Len())
+	require.Equal(t, 2, labelpb.ZLabelsToPromLabels(remote[endpointReplica{endpoint: endpoint, replica: 0}][tenantIDLabelName+":bar"].timeSeries[0].Labels).Len())
+	require.Equal(t, 2, labelpb.ZLabelsToPromLabels(remote[endpointReplica{endpoint: endpoint, replica: 0}][tenantIDLabelName+":boo"].timeSeries[0].Labels).Len())
 
-	require.Equal(t, map[string]struct{}{"bar": {}, "boo": {}}, hr.seenTenants)
-}
-
-func TestDistributeSeriesWithTenantSourceLabel(t *testing.T) {
-	t.Parallel()
-
-	const tenantSourceLabelName = "cluster"
-	const defaultTenantID = "default-tenant"
-	h := NewHandler(nil, &Options{
-		TenantSourceLabelName: tenantSourceLabelName,
-		DefaultTenantID:       defaultTenantID,
-	})
-
-	endpoint := Endpoint{Address: "http://localhost:9090", CapNProtoAddress: "http://localhost:19391"}
-	hashring, err := newSimpleHashring([]Endpoint{endpoint})
-	require.NoError(t, err)
-	hr := &hashringSeenTenants{Hashring: hashring}
-	h.Hashring(hr)
-
-	_, remote, err := h.distributeTimeseriesToReplicas(
-		"http-tenant",
-		[]uint64{0},
-		[]prompb.TimeSeries{
-			{
-				// Has cluster label -> tenant should be "cluster:prod"
-				Labels: labelpb.ZLabelsFromPromLabels(labels.FromStrings("__name__", "metric1", "cluster", "prod")),
-			},
-			{
-				// Has cluster label -> tenant should be "cluster:staging"
-				Labels: labelpb.ZLabelsFromPromLabels(labels.FromStrings("__name__", "metric2", "cluster", "staging")),
-			},
-			{
-				// No cluster label -> tenant should be default tenant
-				Labels: labelpb.ZLabelsFromPromLabels(labels.FromStrings("__name__", "metric3", "other", "value")),
-			},
-		},
-	)
-	require.NoError(t, err)
-	require.Len(t, remote, 1)
-
-	// Verify tenant names are in format "label_name:label_value"
-	require.Len(t, remote[endpointReplica{endpoint: endpoint, replica: 0}]["cluster:prod"].timeSeries, 1)
-	require.Len(t, remote[endpointReplica{endpoint: endpoint, replica: 0}]["cluster:staging"].timeSeries, 1)
-	require.Len(t, remote[endpointReplica{endpoint: endpoint, replica: 0}][defaultTenantID].timeSeries, 1)
-
-	// Verify labels are preserved (not removed like splitTenantLabelName)
-	require.Equal(t, 2, labelpb.ZLabelsToPromLabels(remote[endpointReplica{endpoint: endpoint, replica: 0}]["cluster:prod"].timeSeries[0].Labels).Len())
-	require.Equal(t, 2, labelpb.ZLabelsToPromLabels(remote[endpointReplica{endpoint: endpoint, replica: 0}]["cluster:staging"].timeSeries[0].Labels).Len())
-
-	// Verify seen tenants
-	require.Equal(t, map[string]struct{}{
-		"cluster:prod":    {},
-		"cluster:staging": {},
-		defaultTenantID:   {},
-	}, hr.seenTenants)
+	require.Equal(t, map[string]struct{}{tenantIDLabelName + ":bar": {}, tenantIDLabelName + ":boo": {}}, hr.seenTenants)
 }
 
 func TestHandlerFlippingHashrings(t *testing.T) {
