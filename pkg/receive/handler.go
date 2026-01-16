@@ -117,6 +117,7 @@ type Options struct {
 	Limiter                 *Limiter
 	AsyncForwardWorkerCount uint
 	ReplicationProtocol     ReplicationProtocol
+	TenantAttributor        *TenantAttributor
 }
 
 // Handler serves a Prometheus remote write receiving HTTP endpoint.
@@ -529,6 +530,9 @@ func (h *Handler) receiveHTTP(w http.ResponseWriter, r *http.Request) {
 	span.SetTag("receiver.mode", string(h.receiverMode))
 	defer span.Finish()
 
+	// Check if tenant header is present before calling GetTenantFromHTTP
+	httpHeaderPresent := r.Header.Get(h.options.TenantHeader) != "" || r.Header.Get(tenancy.DefaultTenantHeader) != ""
+
 	tenantHTTP, err := tenancy.GetTenantFromHTTP(r, h.options.TenantHeader, h.options.DefaultTenantID, h.options.TenantField)
 	if err != nil {
 		level.Error(h.logger).Log("msg", "error getting tenant from HTTP", "err", err)
@@ -644,7 +648,7 @@ func (h *Handler) receiveHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	responseStatusCode := http.StatusOK
-	tenantStats, err := h.handleRequest(ctx, rep, tenantHTTP, &wreq)
+	tenantStats, err := h.handleRequest(ctx, rep, tenantHTTP, httpHeaderPresent, &wreq)
 	if err != nil {
 		level.Debug(tLogger).Log("msg", "failed to handle request", "err", err.Error())
 		switch errors.Cause(err) {
@@ -703,7 +707,7 @@ type requestStats struct {
 
 type tenantRequestStats map[string]requestStats
 
-func (h *Handler) handleRequest(ctx context.Context, rep uint64, tenantHTTP string, wreq *prompb.WriteRequest) (tenantRequestStats, error) {
+func (h *Handler) handleRequest(ctx context.Context, rep uint64, tenantHTTP string, httpHeaderPresent bool, wreq *prompb.WriteRequest) (tenantRequestStats, error) {
 	tLogger := log.With(h.logger, "tenantHTTP", tenantHTTP)
 
 	// This replica value is used to detect cycles in cyclic topologies.
@@ -732,7 +736,7 @@ func (h *Handler) handleRequest(ctx context.Context, rep uint64, tenantHTTP stri
 	// Forward any time series as necessary. All time series
 	// destined for the local node will be written to the receiver.
 	// Time series will be replicated as necessary.
-	return h.forward(ctx, tenantHTTP, r, wreq)
+	return h.forward(ctx, tenantHTTP, httpHeaderPresent, r, wreq)
 }
 
 // forward accepts a write request, batches its time series by
@@ -743,7 +747,7 @@ func (h *Handler) handleRequest(ctx context.Context, rep uint64, tenantHTTP stri
 // unless the request needs to be replicated.
 // The function only returns when all requests have finished
 // or the context is canceled.
-func (h *Handler) forward(ctx context.Context, tenantHTTP string, r replica, wreq *prompb.WriteRequest) (tenantRequestStats, error) {
+func (h *Handler) forward(ctx context.Context, tenantHTTP string, httpHeaderPresent bool, r replica, wreq *prompb.WriteRequest) (tenantRequestStats, error) {
 	span, ctx := tracing.StartSpan(ctx, "receive_fanout_forward")
 	defer span.Finish()
 
@@ -761,6 +765,7 @@ func (h *Handler) forward(ctx context.Context, tenantHTTP string, r replica, wre
 		writeRequest:      wreq,
 		replicas:          replicas,
 		alreadyReplicated: r.replicated,
+		httpHeaderPresent: httpHeaderPresent,
 	}
 
 	return h.fanoutForward(ctx, params)
@@ -771,6 +776,7 @@ type remoteWriteParams struct {
 	writeRequest      *prompb.WriteRequest
 	replicas          []uint64
 	alreadyReplicated bool
+	httpHeaderPresent bool // true if tenant came from HTTP header (not default)
 }
 
 func (h *Handler) gatherWriteStats(rf int, writes ...map[endpointReplica]map[string]trackedSeries) tenantRequestStats {
@@ -831,7 +837,7 @@ func (h *Handler) fanoutForward(ctx context.Context, params remoteWriteParams) (
 	}
 	requestLogger := log.With(h.logger, logTags...)
 
-	localWrites, remoteWrites, err := h.distributeTimeseriesToReplicas(params.tenant, params.replicas, params.writeRequest.Timeseries)
+	localWrites, remoteWrites, err := h.distributeTimeseriesToReplicas(params.tenant, params.httpHeaderPresent, params.replicas, params.writeRequest.Timeseries)
 	if err != nil {
 		level.Error(requestLogger).Log("msg", "failed to distribute timeseries to replicas", "err", err)
 		return stats, err
@@ -914,6 +920,7 @@ func (h *Handler) fanoutForward(ctx context.Context, params remoteWriteParams) (
 // series that should be written to remote nodes.
 func (h *Handler) distributeTimeseriesToReplicas(
 	tenantHTTP string,
+	httpHeaderPresent bool,
 	replicas []uint64,
 	timeseries []prompb.TimeSeries,
 ) (map[endpointReplica]map[string]trackedSeries, map[endpointReplica]map[string]trackedSeries, error) {
@@ -932,6 +939,25 @@ func (h *Handler) distributeTimeseriesToReplicas(
 				tenant = h.splitTenantLabelName + ":" + tenantLabel
 			} else {
 				tenant = h.options.DefaultTenantID
+			}
+		}
+
+		// Tenant attribution logic
+		if h.options.TenantAttributor != nil {
+			lbls := labelpb.ZLabelsToPromLabels(ts.Labels)
+			attributedTenant := h.options.TenantAttributor.GetTenantFromLabels(lbls)
+
+			if h.options.TenantAttributor.IsVerifyMode() {
+				// VERIFICATION MODE: compute attribution for metrics only
+				// Compare attributed tenant with HTTP tenant
+				h.options.TenantAttributor.RecordVerification(attributedTenant, tenantHTTP)
+				// DO NOT modify tenant - keep using HTTP tenant for routing
+			} else {
+				// ATTRIBUTION MODE: only attribute if no HTTP header was present
+				if !httpHeaderPresent {
+					tenant = attributedTenant
+				}
+				// If HTTP header present, use that (tenant already set correctly)
 			}
 		}
 
@@ -1125,7 +1151,8 @@ func (h *Handler) RemoteWrite(ctx context.Context, r *storepb.WriteRequest) (*st
 	span, ctx := tracing.StartSpan(ctx, "receive_grpc")
 	defer span.Finish()
 
-	_, err := h.handleRequest(ctx, uint64(r.Replica), r.Tenant, &prompb.WriteRequest{Timeseries: r.Timeseries})
+	// For gRPC requests, tenant is explicitly provided, treat as if HTTP header was present
+	_, err := h.handleRequest(ctx, uint64(r.Replica), r.Tenant, true, &prompb.WriteRequest{Timeseries: r.Timeseries})
 	if err != nil {
 		level.Debug(h.logger).Log("msg", "failed to handle request", "err", err)
 	}
