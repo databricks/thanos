@@ -98,17 +98,24 @@ func TestCapNProtoServer_MultipleSerialClientsWithReconnect(t *testing.T) {
 	const numRuns = 100
 	const numRequests = 10
 	for range numRuns {
+		handler.mu.Lock()
 		handler.numFailures = 2
+		handler.mu.Unlock()
 		var wg sync.WaitGroup
+		errs := make(chan error, numRequests)
 		for range numRequests {
-			wg.Go(func() {
-				_, err := client.RemoteWrite(context.Background(), &storepb.WriteRequest{
-					Tenant: "default",
-				})
-				require.NoError(t, err)
-			})
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_, err := client.RemoteWrite(context.Background(), &storepb.WriteRequest{Tenant: "default"})
+				errs <- err
+			}()
 		}
 		wg.Wait()
+		close(errs)
+		for err := range errs {
+			require.NoError(t, err)
+		}
 	}
 	require.NoError(t, client.Close())
 	require.NoError(t, listener.Close())
