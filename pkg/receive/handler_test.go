@@ -1861,6 +1861,7 @@ func TestDistributeSeries(t *testing.T) {
 
 	_, remote, err := h.distributeTimeseriesToReplicas(
 		"foo",
+		true,
 		[]uint64{0},
 		[]prompb.TimeSeries{
 			{
@@ -1919,7 +1920,7 @@ func TestHandlerFlippingHashrings(t *testing.T) {
 				return
 			}
 
-			_, err := h.handleRequest(ctx, 0, "test", &prompb.WriteRequest{
+			_, err := h.handleRequest(ctx, 0, "test", true, &prompb.WriteRequest{
 				Timeseries: []prompb.TimeSeries{
 					{
 						Labels: labelpb.ZLabelsFromPromLabels(labels.FromStrings("foo", "bar")),
@@ -2003,7 +2004,7 @@ func TestIngestorRestart(t *testing.T) {
 		},
 	}
 
-	stats, err := client.handleRequest(ctx, 0, "test", data)
+	stats, err := client.handleRequest(ctx, 0, "test", true, data)
 	require.NoError(t, err)
 	require.Equal(t, tenantRequestStats{
 		"test": requestStats{timeseries: 1, totalSamples: 1},
@@ -2018,7 +2019,7 @@ func TestIngestorRestart(t *testing.T) {
 
 	iter, errs := 10, 0
 	for i := 0; i < iter; i++ {
-		_, err = client.handleRequest(ctx, 0, "test", data)
+		_, err = client.handleRequest(ctx, 0, "test", true, data)
 		if err != nil {
 			require.Error(t, errUnavailable, err)
 			errs++

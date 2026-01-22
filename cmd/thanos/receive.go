@@ -295,6 +295,23 @@ func runReceive(
 		return errors.Wrap(err, "creating limiter")
 	}
 
+	// Initialize tenant attributor if configured.
+	var tenantAttributor *receive.TenantAttributor
+	if conf.tenantRulesPath != "" {
+		tenantAttributor, err = receive.NewTenantAttributor(
+			conf.tenantRulesPath,
+			conf.defaultTenantID,
+			conf.verifyTenantAttribution,
+			reg,
+			log.With(logger, "component", "tenant-attributor"),
+		)
+		if err != nil {
+			return errors.Wrap(err, "creating tenant attributor")
+		}
+	} else if conf.verifyTenantAttribution {
+		level.Warn(logger).Log("msg", "receive.verify-tenant-attribution is set but receive.tenant-rules is not configured, ignoring")
+	}
+
 	webHandler := receive.NewHandler(log.With(logger, "component", "receive-handler"), &receive.Options{
 		Writer:                  writer,
 		ListenAddress:           conf.rwAddress,
@@ -317,6 +334,7 @@ func runReceive(
 		Limiter:                 limiter,
 		AsyncForwardWorkerCount: conf.asyncForwardWorkerCount,
 		ReplicationProtocol:     receive.ReplicationProtocol(conf.replicationProtocol),
+		TenantAttributor:        tenantAttributor,
 	})
 
 	{
@@ -976,6 +994,9 @@ type receiveConfig struct {
 	writerInterning      bool
 	splitTenantLabelName string
 
+	tenantRulesPath         string
+	verifyTenantAttribution bool
+
 	hashFunc string
 
 	ignoreBlockSize       bool
@@ -1060,6 +1081,18 @@ func (rc *receiveConfig) registerFlag(cmd extkingpin.FlagClause) {
 	cmd.Flag("receive.default-tenant-id", "Default tenant ID to use when none is provided via a header.").Default(tenancy.DefaultTenant).StringVar(&rc.defaultTenantID)
 
 	cmd.Flag("receive.split-tenant-label-name", "Label name through which the request will be split into multiple tenants. This takes precedence over the HTTP header.").Default("").StringVar(&rc.splitTenantLabelName)
+
+	cmd.Flag("receive.tenant-rules",
+		"Path to YAML file containing tenant attribution rules. "+
+			"Rules use M3-style filter syntax (e.g., 'job:prometheus namespace:prod*'). "+
+			"First matching rule wins. Falls back to --receive.default-tenant-id if no rule matches.").
+		PlaceHolder("<path>").StringVar(&rc.tenantRulesPath)
+
+	cmd.Flag("receive.verify-tenant-attribution",
+		"When set with --receive.tenant-rules, compares attributed tenant with HTTP header tenant "+
+			"and exposes metrics (thanos_receive_tenant_attribution_matches_total and "+
+			"thanos_receive_tenant_attribution_mismatches_total). Does not change routing behavior.").
+		Default("false").BoolVar(&rc.verifyTenantAttribution)
 
 	cmd.Flag("receive.tenant-label-name", "Label name through which the tenant will be announced.").Default(tenancy.DefaultTenantLabel).StringVar(&rc.tenantLabelName)
 
