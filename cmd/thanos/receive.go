@@ -236,9 +236,13 @@ func runReceive(
 	}
 
 	relabeller, err := receive.NewRelabeller(conf.relabelConfigPath, reg, logger, conf.relabelConfigReloadTimer)
-
 	if err != nil {
 		return errors.Wrap(err, "get content of relabel configuration")
+	}
+
+	blocklist, err := receive.NewMetricBlocklist(conf.blocklistConfigPath, reg, logger, conf.blocklistConfigReloadTimer)
+	if err != nil {
+		return errors.Wrap(err, "get content of blocklist configuration")
 	}
 
 	var cache = storecache.NoopMatchersCache
@@ -266,6 +270,7 @@ func runReceive(
 		Intern:                   conf.writerInterning,
 		TooFarInFutureTimeWindow: int64(time.Duration(*conf.tsdbTooFarInFutureTimeWindow)),
 	})
+	writer.SetBlocklist(blocklist)
 
 	var limitsConfig *receive.RootLimitsConfig
 	if conf.writeLimitsConfig != nil {
@@ -306,6 +311,7 @@ func runReceive(
 		ReplicaHeader:           conf.replicaHeader,
 		ReplicationFactor:       conf.replicationFactor,
 		Relabeller:              relabeller,
+		MetricBlocklist:         blocklist,
 		ReceiverMode:            receiveMode,
 		Tracer:                  tracer,
 		TLSConfig:               rwTLSConfig,
@@ -329,6 +335,24 @@ func runReceive(
 					return err
 				}
 				level.Info(logger).Log("msg", "relabel config reloading initialized.")
+				<-ctx.Done()
+				return nil
+			}, func(error) {
+				cancel()
+			})
+		}
+	}
+
+	{
+		if blocklist.CanReload() {
+			ctx, cancel := context.WithCancel(context.Background())
+			g.Add(func() error {
+				level.Debug(logger).Log("msg", "blocklist config initialized with file watcher.")
+				if err := blocklist.StartConfigReloader(ctx); err != nil {
+					level.Error(logger).Log("msg", "initializing blocklist config reloading.", "err", err)
+					return err
+				}
+				level.Info(logger).Log("msg", "blocklist config reloading initialized.")
 				<-ctx.Done()
 				return nil
 			}, func(error) {
@@ -985,6 +1009,9 @@ type receiveConfig struct {
 	relabelConfigPath        *extflag.PathOrContent
 	relabelConfigReloadTimer time.Duration
 
+	blocklistConfigPath        *extflag.PathOrContent
+	blocklistConfigReloadTimer time.Duration
+
 	writeLimitsConfig       *extflag.PathOrContent
 	storeRateLimits         store.SeriesSelectLimits
 	limitsConfigReloadTimer time.Duration
@@ -1085,6 +1112,10 @@ func (rc *receiveConfig) registerFlag(cmd extkingpin.FlagClause) {
 	rc.relabelConfigPath = extflag.RegisterPathOrContent(cmd, "receive.relabel-config", "YAML file that contains relabeling configuration.", extflag.WithEnvSubstitution())
 	cmd.Flag("receive.relabel-config-reload-timer", "Minimum amount of time to pass for the relabel configuration to be reloaded. Helps to avoid excessive reloads.").
 		Default("0s").Hidden().DurationVar(&rc.relabelConfigReloadTimer)
+
+	rc.blocklistConfigPath = extflag.RegisterPathOrContent(cmd, "receive.blocklist-config", "YAML file that contains metric blocklist configuration. Metrics matching blocklist rules will be dropped during ingestion.", extflag.WithEnvSubstitution())
+	cmd.Flag("receive.blocklist-config-reload-timer", "Minimum amount of time to pass for the blocklist configuration to be reloaded. Helps to avoid excessive reloads.").
+		Default("0s").Hidden().DurationVar(&rc.blocklistConfigReloadTimer)
 
 	rc.tsdbMinBlockDuration = extkingpin.ModelDuration(cmd.Flag("tsdb.min-block-duration", "Min duration for local TSDB blocks").Default("2h").Hidden())
 
