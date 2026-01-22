@@ -59,6 +59,7 @@ type QueryableCreator func(
 
 type Options struct {
 	GroupReplicaPartialResponseStrategy bool
+	QuorumPartialResponseStrategy       bool
 	DeduplicationFunc                   string
 	RewriteAggregationLabelStrategy     string
 	RewriteAggregationLabelTo           string
@@ -226,7 +227,9 @@ func newQuerierWithOpts(
 	}
 
 	partialResponseStrategy := storepb.PartialResponseStrategy_ABORT
-	if opts.GroupReplicaPartialResponseStrategy {
+	if opts.QuorumPartialResponseStrategy {
+		partialResponseStrategy = storepb.PartialResponseStrategy_QUORUM
+	} else if opts.GroupReplicaPartialResponseStrategy {
 		partialResponseStrategy = storepb.PartialResponseStrategy_GROUP_REPLICA
 	} else if partialResponse {
 		partialResponseStrategy = storepb.PartialResponseStrategy_WARN
@@ -255,6 +258,15 @@ func newQuerierWithOpts(
 
 func (q *querier) isDedupEnabled() bool {
 	return q.deduplicate && len(q.replicaLabels) > 0
+}
+
+// getWithoutReplicaLabels returns labels to exclude from series/label APIs.
+// This is used for deduplication (replica labels) only.
+func (q *querier) getWithoutReplicaLabels() []string {
+	if q.isDedupEnabled() {
+		return q.replicaLabels
+	}
+	return nil
 }
 
 type seriesServer struct {
@@ -411,9 +423,10 @@ func (q *querier) selectFn(ctx context.Context, hints *storage.SelectHints, ms .
 		PartialResponseStrategy: q.partialResponseStrategy,
 		SkipChunks:              q.skipChunks,
 	}
-	if q.isDedupEnabled() {
-		// Soft ask to sort without replica labels and push them at the end of labelset.
-		req.WithoutReplicaLabels = q.replicaLabels
+	// Soft ask to sort without replica labels and push them at the end of labelset.
+	// This is used for deduplication (replica labels) only.
+	if labels := q.getWithoutReplicaLabels(); len(labels) > 0 {
+		req.WithoutReplicaLabels = labels
 	}
 
 	if err := q.proxy.Series(&req, resp); err != nil {
@@ -471,8 +484,8 @@ func (q *querier) LabelValues(ctx context.Context, name string, hints *storage.L
 		Limit:                   int64(hints.Limit),
 	}
 
-	if q.isDedupEnabled() {
-		req.WithoutReplicaLabels = q.replicaLabels
+	if labels := q.getWithoutReplicaLabels(); len(labels) > 0 {
+		req.WithoutReplicaLabels = labels
 	}
 
 	resp, err := q.proxy.LabelValues(ctx, req)
@@ -514,8 +527,8 @@ func (q *querier) LabelNames(ctx context.Context, hints *storage.LabelHints, mat
 		Limit:                   int64(hints.Limit),
 	}
 
-	if q.isDedupEnabled() {
-		req.WithoutReplicaLabels = q.replicaLabels
+	if labels := q.getWithoutReplicaLabels(); len(labels) > 0 {
+		req.WithoutReplicaLabels = labels
 	}
 
 	resp, err := q.proxy.LabelNames(ctx, req)

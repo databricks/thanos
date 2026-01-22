@@ -68,6 +68,9 @@ func registerReceive(app *extkingpin.App) {
 	conf.registerFlag(cmd)
 
 	cmd.Setup(func(g *run.Group, logger log.Logger, reg *prometheus.Registry, tracer opentracing.Tracer, _ <-chan struct{}, debugLogging bool) error {
+		if err := conf.validate(); err != nil {
+			return err
+		}
 		lset, err := parseFlagLabels(conf.labelStrs)
 		if err != nil {
 			return errors.Wrap(err, "parse labels")
@@ -253,6 +256,9 @@ func runReceive(
 			return errors.Wrap(err, "failed to create matchers cache")
 		}
 		multiTSDBOptions = append(multiTSDBOptions, receive.WithMatchersCache(cache))
+	}
+	if conf.replicaGroup != "" {
+		multiTSDBOptions = append(multiTSDBOptions, receive.WithReplicaGroup(conf.replicaGroup, conf.quorum))
 	}
 
 	dbs := receive.NewMultiTSDB(
@@ -454,6 +460,8 @@ func runReceive(
 						SupportsSharding:             true,
 						SupportsWithoutReplicaLabels: true,
 						TsdbInfos:                    proxy.TSDBInfos(),
+						ReplicaGroup:                 conf.replicaGroup,
+						Quorum:                       int32(conf.quorum),
 					}, nil
 				}
 				return nil, errors.New("Not ready")
@@ -936,8 +944,10 @@ type receiveConfig struct {
 	rwClientSkipVerify    bool
 	rwServerTlsMinVersion string
 
-	dataDir   string
-	labelStrs []string
+	dataDir      string
+	labelStrs    []string
+	replicaGroup string
+	quorum       int
 
 	objStoreConfig *extflag.PathOrContent
 	retention      *model.Duration
@@ -1009,6 +1019,19 @@ type receiveConfig struct {
 	compactionDelayInterval *model.Duration
 }
 
+func (rc *receiveConfig) validate() error {
+	if rc.replicaGroup == "" {
+		if rc.quorum != 0 {
+			return errors.New("invalid receive config: --receive.quorum requires --receive.replica-group")
+		}
+		return nil
+	}
+	if rc.quorum <= 0 {
+		return errors.New("invalid receive config: --receive.quorum must be > 0 when --receive.replica-group is set")
+	}
+	return nil
+}
+
 func (rc *receiveConfig) registerFlag(cmd extkingpin.FlagClause) {
 	rc.httpBindAddr, rc.httpGracePeriod, rc.httpTLSConfig = extkingpin.RegisterHTTPFlags(cmd)
 	rc.grpcConfig.registerFlag(cmd)
@@ -1041,6 +1064,10 @@ func (rc *receiveConfig) registerFlag(cmd extkingpin.FlagClause) {
 		Default("./data").StringVar(&rc.dataDir)
 
 	cmd.Flag("label", "External labels to announce. This flag will be removed in the future when handling multiple tsdb instances is added.").PlaceHolder("key=\"value\"").StringsVar(&rc.labelStrs)
+
+	cmd.Flag("receive.replica-group", "Replica group identifier used by the QUORUM partial response strategy (--query.quorum-strategy). Stores with the same replica_group value hold replicated data.").Default("").StringVar(&rc.replicaGroup)
+
+	cmd.Flag("receive.quorum", "Minimum number of healthy stores required per replica group for the QUORUM partial response strategy. Must be > 0 when receive.replica-group is set.").Default("0").IntVar(&rc.quorum)
 
 	rc.objStoreConfig = extkingpin.RegisterCommonObjStoreFlags(cmd, "", false)
 

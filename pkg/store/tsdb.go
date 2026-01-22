@@ -72,6 +72,8 @@ type TSDBStore struct {
 	matcherCache     storecache.MatchersCache
 
 	extLset                labels.Labels
+	replicaGroup           string // Replica group identifier for GROUP_REPLICA strategy
+	quorum                 int32  // Minimum healthy stores required per group
 	startStoreFilterUpdate bool
 	storeFilter            filter.StoreFilter
 	mtx                    sync.RWMutex
@@ -167,6 +169,29 @@ func (s *TSDBStore) SetExtLset(extLset labels.Labels) {
 	defer s.mtx.Unlock()
 
 	s.extLset = extLset
+}
+
+// SetReplicaInfo sets the replica group and quorum used by the QUORUM partial response strategy.
+func (s *TSDBStore) SetReplicaInfo(replicaGroup string, quorum int32) {
+	s.mtx.Lock()
+	defer s.mtx.Unlock()
+
+	s.replicaGroup = replicaGroup
+	s.quorum = quorum
+}
+
+// ReplicaInfo returns replica topology hints used by the QUORUM partial response strategy.
+// Since TSDBStore is used internally by receivers, it returns first-class fields directly.
+// Quorum=0 means singleton store semantics.
+func (s *TSDBStore) ReplicaInfo() ReplicaInfo {
+	s.mtx.RLock()
+	defer s.mtx.RUnlock()
+
+	return ReplicaInfo{
+		Group:   s.replicaGroup,
+		Replica: "", // TSDBStore doesn't have a replica identifier
+		Quorum:  int(s.quorum),
+	}
 }
 
 func (s *TSDBStore) getExtLset() labels.Labels {

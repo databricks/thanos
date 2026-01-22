@@ -200,6 +200,9 @@ func registerQuery(app *extkingpin.App) {
 	enableGroupReplicaPartialStrategy := cmd.Flag("query.group-replica-strategy", "Enable group-replica partial response strategy.").
 		Default("false").Bool()
 
+	enableQuorumPartialStrategy := cmd.Flag("query.quorum-strategy", "Enable quorum partial response strategy based on InfoAPI store replica_group/quorum hints. Cannot be combined with query.group-replica-strategy.").
+		Default("false").Bool()
+
 	enableRulePartialResponse := cmd.Flag("rule.partial-response", "Enable partial response for rules endpoint. --no-rule.partial-response for disabling.").
 		Hidden().Default("true").Bool()
 
@@ -320,6 +323,10 @@ func registerQuery(app *extkingpin.App) {
 			return err
 		}
 
+		if *enableGroupReplicaPartialStrategy && *enableQuorumPartialStrategy {
+			return errors.New("only one of --query.group-replica-strategy and --query.quorum-strategy can be enabled")
+		}
+
 		// Parse blocked metric patterns
 		var blockedMetricPatterns []string
 		if *blockQueryMetricsWithoutFilter != "" {
@@ -408,6 +415,7 @@ func registerQuery(app *extkingpin.App) {
 			*enforceTenancy,
 			*tenantLabel,
 			*enableGroupReplicaPartialStrategy,
+			*enableQuorumPartialStrategy,
 			*rewriteAggregationLabelStrategy,
 			*rewriteAggregationLabelTo,
 			*lazyRetrievalMaxBufferedResponses,
@@ -499,6 +507,7 @@ func runQuery(
 	enforceTenancy bool,
 	tenantLabel string,
 	groupReplicaPartialResponseStrategy bool,
+	quorumPartialResponseStrategy bool,
 	rewriteAggregationLabelStrategy string,
 	rewriteAggregationLabelTo string,
 	lazyRetrievalMaxBufferedResponses int,
@@ -638,7 +647,7 @@ func runQuery(
 			unhealthyStoreTimeout,
 			endpointInfoTimeout,
 			// ignoreErrors when group_replica partial response strategy is enabled.
-			groupReplicaPartialResponseStrategy,
+			groupReplicaPartialResponseStrategy || quorumPartialResponseStrategy,
 			queryConnMetricLabels...,
 		)
 
@@ -652,6 +661,7 @@ func runQuery(
 	)
 	opts := query.Options{
 		GroupReplicaPartialResponseStrategy: groupReplicaPartialResponseStrategy,
+		QuorumPartialResponseStrategy:       quorumPartialResponseStrategy,
 		DeduplicationFunc:                   queryDeduplicationFunc,
 		RewriteAggregationLabelStrategy:     rewriteAggregationLabelStrategy,
 		RewriteAggregationLabelTo:           rewriteAggregationLabelTo,

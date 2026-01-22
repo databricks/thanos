@@ -79,4 +79,8 @@ enum PartialResponseStrategy {
   /// If a group has more than one replicas, the group can tolerate any number of endpoint failures within one replica. It doesn't
   ///   tolerate endpoint failures across replicas.
   GROUP_REPLICA = 2;
+
+  /// QUORUM strategy uses first-class store topology hints (replica_group, quorum) exposed via InfoAPI.
+  /// Stores with quorum=0 are treated as singleton stores (any failure aborts the query).
+  QUORUM = 3;
 }

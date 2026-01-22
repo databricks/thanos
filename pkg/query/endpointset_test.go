@@ -243,17 +243,13 @@ func TestTruncateExtLabels(t *testing.T) {
 func TestEndpointSetUpdate(t *testing.T) {
 	t.Parallel()
 
+	const metricsMetaEndpointGroups = `
+	# HELP thanos_query_endpoint_groups Number of discovered store API endpoints by quorum label value. Endpoints without quorum label have quorum=0.
+	# TYPE thanos_query_endpoint_groups gauge
+	`
 	const metricsMeta = `
 	# HELP thanos_store_nodes_grpc_connections Number of gRPC connection to Store APIs. Opened connection means healthy store APIs available for Querier.
 	# TYPE thanos_store_nodes_grpc_connections gauge
-	`
-	const metricsMetaAddr = `
-	# HELP thanos_store_nodes_grpc_connections_addr Number of gRPC connection to Store APIs. Opened connection means healthy store APIs available for Querier.
-	# TYPE thanos_store_nodes_grpc_connections_addr gauge
-	`
-	const metricsMetaKeys = `
-	# HELP thanos_store_nodes_grpc_connections_keys Number of gRPC connection to Store APIs. Opened connection means healthy store APIs available for Querier.
-	# TYPE thanos_store_nodes_grpc_connections_keys gauge
 	`
 	testCases := []struct {
 		name       string
@@ -279,15 +275,12 @@ func TestEndpointSetUpdate(t *testing.T) {
 			connLabels: []string{"store_type"},
 
 			expectedEndpoints: 1,
-			expectedConnMetrics: metricsMeta +
+			expectedConnMetrics: metricsMetaEndpointGroups +
+				`
+			thanos_query_endpoint_groups{quorum="0"} 1
+			` + metricsMeta +
 				`
 			thanos_store_nodes_grpc_connections{store_type="sidecar"} 1
-			` + metricsMetaAddr +
-				`
-			thanos_store_nodes_grpc_connections_addr{addr="127.0.0.1",replica_key=""} 1
-			` + metricsMetaKeys +
-				`
-			thanos_store_nodes_grpc_connections_keys{group_key="",replica_key=""} 1
 			`,
 		},
 		{
@@ -339,15 +332,12 @@ func TestEndpointSetUpdate(t *testing.T) {
 			strict:            true,
 			connLabels:        []string{"store_type"},
 			expectedEndpoints: 1,
-			expectedConnMetrics: metricsMeta +
+			expectedConnMetrics: metricsMetaEndpointGroups +
+				`
+			thanos_query_endpoint_groups{quorum="0"} 1
+			` + metricsMeta +
 				`
 			thanos_store_nodes_grpc_connections{store_type="sidecar"} 1
-			` + metricsMetaAddr +
-				`
-			thanos_store_nodes_grpc_connections_addr{addr="127.0.0.1",replica_key=""} 1
-			` + metricsMetaKeys +
-				`
-			thanos_store_nodes_grpc_connections_keys{group_key="",replica_key=""} 1
 			`,
 		},
 		{
@@ -369,14 +359,10 @@ func TestEndpointSetUpdate(t *testing.T) {
 				},
 			},
 			expectedEndpoints: 1,
-			expectedConnMetrics: metricsMeta + `
+			expectedConnMetrics: metricsMetaEndpointGroups + `
+			thanos_query_endpoint_groups{quorum="0"} 1
+			` + metricsMeta + `
 			thanos_store_nodes_grpc_connections{external_labels="{lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val\", lbl=\"val}",store_type="sidecar"} 1
-			` + metricsMetaAddr +
-				`
-			thanos_store_nodes_grpc_connections_addr{addr="127.0.0.1",replica_key=""} 1
-			` + metricsMetaKeys +
-				`
-			thanos_store_nodes_grpc_connections_keys{group_key="",replica_key=""} 1
 			`,
 		},
 	}
@@ -399,6 +385,31 @@ func TestEndpointSetUpdate(t *testing.T) {
 			testutil.Ok(t, promtestutil.CollectAndCompare(endpointSet.endpointsMetric, strings.NewReader(tc.expectedConnMetrics)))
 		})
 	}
+}
+
+func TestEndpointSet_IgnoreErrorMakesEndpointQueryable(t *testing.T) {
+	t.Parallel()
+
+	endpoints, err := startTestEndpoints([]testEndpointMeta{
+		{
+			err:          fmt.Errorf("endpoint unavailable"),
+			InfoResponse: sidecarInfo,
+			extlsetFn: func(addr string) []labelpb.ZLabelSet {
+				return labelpb.ZLabelSetsFromPromLabels(labels.FromStrings("addr", addr, "a", "b"))
+			},
+		},
+	})
+	testutil.Ok(t, err)
+	t.Cleanup(endpoints.Close)
+
+	spec := NewGRPCEndpointSpecWithReplicaKey("rep0", endpoints.orderAddrs[0], false, true, testGRPCOpts...)
+	endpointSet := NewEndpointSet(time.Now, nil, nil, func() (specs []*GRPCEndpointSpec) {
+		return []*GRPCEndpointSpec{spec}
+	}, testGRPCOpts, time.Minute, time.Second)
+	t.Cleanup(endpointSet.Close)
+	endpointSet.Update(context.Background())
+
+	testutil.Equals(t, 1, len(endpointSet.GetStoreClients()))
 }
 
 func TestEndpointSetUpdate_DuplicateSpecs(t *testing.T) {

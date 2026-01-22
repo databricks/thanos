@@ -10,7 +10,6 @@ import (
 	"math"
 	"regexp"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -155,15 +154,13 @@ type endpointSetNodeCollector struct {
 	mtx             sync.Mutex
 	storeNodes      map[string]map[string]int
 	storePerExtLset map[string]int
-	storeNodesAddr  map[string]map[string]int
-	storeNodesKeys  map[string]map[string]int
+	storesByQuorum  map[string]int
 
 	logger          log.Logger
 	connectionsDesc *prometheus.Desc
 	labels          []string
 
-	connectionsWithAddr *prometheus.Desc
-	connectionsWithKeys *prometheus.Desc
+	endpointGroupsDesc *prometheus.Desc
 }
 
 func newEndpointSetNodeCollector(logger log.Logger, labels ...string) *endpointSetNodeCollector {
@@ -172,23 +169,19 @@ func newEndpointSetNodeCollector(logger log.Logger, labels ...string) *endpointS
 	}
 	desc := "Number of gRPC connection to Store APIs. Opened connection means healthy store APIs available for Querier."
 	return &endpointSetNodeCollector{
-		logger:     logger,
-		storeNodes: map[string]map[string]int{},
+		logger:         logger,
+		storeNodes:     map[string]map[string]int{},
+		storesByQuorum: map[string]int{},
 		connectionsDesc: prometheus.NewDesc(
 			"thanos_store_nodes_grpc_connections",
 			desc,
 			labels, nil,
 		),
 		labels: labels,
-		connectionsWithAddr: prometheus.NewDesc(
-			"thanos_store_nodes_grpc_connections_addr",
-			desc,
-			[]string{string(ReplicaKey), "addr"}, nil,
-		),
-		connectionsWithKeys: prometheus.NewDesc(
-			"thanos_store_nodes_grpc_connections_keys",
-			desc,
-			[]string{string(GroupKey), string(ReplicaKey)}, nil,
+		endpointGroupsDesc: prometheus.NewDesc(
+			"thanos_query_endpoint_groups",
+			"Number of discovered store API endpoints by quorum label value. Endpoints without quorum label have quorum=0.",
+			[]string{"quorum"}, nil,
 		),
 	}
 }
@@ -208,8 +201,7 @@ func truncateExtLabels(s string, threshold int) string {
 }
 func (c *endpointSetNodeCollector) Update(
 	nodes map[string]map[string]int,
-	nodesAddr map[string]map[string]int,
-	nodesKeys map[string]map[string]int,
+	storesByQuorum map[string]int,
 ) {
 	storeNodes := make(map[string]map[string]int, len(nodes))
 	storePerExtLset := map[string]int{}
@@ -227,14 +219,12 @@ func (c *endpointSetNodeCollector) Update(
 	defer c.mtx.Unlock()
 	c.storeNodes = storeNodes
 	c.storePerExtLset = storePerExtLset
-	c.storeNodesAddr = nodesAddr
-	c.storeNodesKeys = nodesKeys
+	c.storesByQuorum = storesByQuorum
 }
 
 func (c *endpointSetNodeCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.connectionsDesc
-	ch <- c.connectionsWithAddr
-	ch <- c.connectionsWithKeys
+	ch <- c.endpointGroupsDesc
 }
 
 func (c *endpointSetNodeCollector) Collect(ch chan<- prometheus.Metric) {
@@ -261,21 +251,11 @@ func (c *endpointSetNodeCollector) Collect(ch chan<- prometheus.Metric) {
 			}
 		}
 	}
-	for replicaKey, occurrencesPerAddr := range c.storeNodesAddr {
-		for addr, occurrences := range occurrencesPerAddr {
-			ch <- prometheus.MustNewConstMetric(
-				c.connectionsWithAddr, prometheus.GaugeValue,
-				float64(occurrences),
-				replicaKey, addr)
-		}
-	}
-	for groupKey, occurrencesPerReplicaKey := range c.storeNodesKeys {
-		for replicaKeys, occurrences := range occurrencesPerReplicaKey {
-			ch <- prometheus.MustNewConstMetric(
-				c.connectionsWithKeys, prometheus.GaugeValue,
-				float64(occurrences),
-				groupKey, replicaKeys)
-		}
+	for quorum, count := range c.storesByQuorum {
+		ch <- prometheus.MustNewConstMetric(
+			c.endpointGroupsDesc, prometheus.GaugeValue,
+			float64(count),
+			quorum)
 	}
 }
 
@@ -443,14 +423,7 @@ func (e *EndpointSet) Update(ctx context.Context) {
 
 	// Update stats.
 	stats := newEndpointAPIStats()
-	statsAddr := make(map[string]map[string]int)
-	statsKeys := make(map[string]map[string]int)
-	bumpCounter := func(key1, key2 string, mp map[string]map[string]int) {
-		if _, ok := mp[key1]; !ok {
-			mp[key1] = make(map[string]int)
-		}
-		mp[key1][key2]++
-	}
+	storesByQuorum := make(map[string]int)
 	for addr, er := range e.endpoints {
 		if !er.isQueryable() {
 			continue
@@ -466,11 +439,15 @@ func (e *EndpointSet) Update(ctx context.Context) {
 				"address", addr, "extLset", extLset, "duplicates", fmt.Sprintf("%v", stats[component.Sidecar.String()][extLset]+stats[component.Rule.String()][extLset]+1))
 		}
 		stats[er.ComponentType().String()][extLset]++
-		bumpCounter(er.replicaKey, strings.Split(addr, ":")[0], statsAddr)
-		bumpCounter(er.groupKey, er.replicaKey, statsKeys)
+
+		// Track endpoints by quorum value for thanos_query_endpoint_groups metric.
+		// Quorum is now a first-class field from StoreInfo.
+		ri := er.ReplicaInfo()
+		quorumValue := fmt.Sprintf("%d", ri.Quorum)
+		storesByQuorum[quorumValue]++
 	}
 
-	e.endpointsMetric.Update(stats, statsAddr, statsKeys)
+	e.endpointsMetric.Update(stats, storesByQuorum)
 }
 
 func (e *EndpointSet) updateEndpoint(ctx context.Context, spec *GRPCEndpointSpec, er *endpointRef) {
@@ -545,8 +522,8 @@ func (e *EndpointSet) GetStoreClients() []store.Client {
 				StoreClient: storepb.NewStoreClient(er.cc),
 				addr:        er.addr,
 				metadata:    er.metadata,
-				groupKey:    er.GroupKey(),
-				replicaKey:  er.ReplicaKey(),
+				groupKey:    er.groupKey,
+				replicaKey:  er.replicaKey,
 				status:      er.status,
 			})
 			er.mtx.RUnlock()
@@ -675,11 +652,42 @@ type endpointRef struct {
 }
 
 func (er *endpointRef) GroupKey() string {
+	er.mtx.RLock()
+	defer er.mtx.RUnlock()
 	return er.groupKey
 }
 
 func (er *endpointRef) ReplicaKey() string {
+	er.mtx.RLock()
+	defer er.mtx.RUnlock()
 	return er.replicaKey
+}
+
+// ReplicaInfo returns replica topology hints used by the QUORUM partial response strategy.
+// It unifies DNS-based grouping (legacy) with first-class StoreInfo fields,
+// preferring StoreInfo fields when available.
+func (er *endpointRef) ReplicaInfo() store.ReplicaInfo {
+	er.mtx.RLock()
+	defer er.mtx.RUnlock()
+
+	// Prefer first-class fields from StoreInfo if available
+	if er.metadata != nil && er.metadata.Store != nil {
+		if rg := er.metadata.Store.ReplicaGroup; rg != "" {
+			return store.ReplicaInfo{
+				Group:   rg,
+				Replica: er.replicaKey, // Use DNS-based replica key for identification
+				Quorum:  int(er.metadata.Store.Quorum),
+			}
+		}
+	}
+
+	// Fall back to DNS-based grouping (legacy)
+	// Quorum=0 means singleton store semantics.
+	return store.ReplicaInfo{
+		Group:   er.groupKey,
+		Replica: er.replicaKey,
+		Quorum:  0,
+	}
 }
 
 // newEndpointRef creates a new endpointRef with a gRPC channel to the given the IP address.
@@ -757,7 +765,7 @@ func (er *endpointRef) isQueryable() bool {
 	er.mtx.RLock()
 	defer er.mtx.RUnlock()
 
-	return er.isStrict || er.status.LastError == nil
+	return er.isStrict || er.ignoreError || er.status.LastError == nil
 }
 
 func (er *endpointRef) ComponentType() component.Component {

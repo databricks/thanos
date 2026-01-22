@@ -916,7 +916,7 @@ func queryFuncCreator(
 		var spanID string
 
 		switch partialResponseStrategy {
-		case storepb.PartialResponseStrategy_WARN, storepb.PartialResponseStrategy_GROUP_REPLICA:
+		case storepb.PartialResponseStrategy_WARN, storepb.PartialResponseStrategy_GROUP_REPLICA, storepb.PartialResponseStrategy_QUORUM:
 			spanID = "/rule_instant_query HTTP[client]"
 		case storepb.PartialResponseStrategy_ABORT:
 			spanID = "/rule_instant_query_part_resp_abort HTTP[client]"
