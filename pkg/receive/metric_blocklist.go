@@ -130,18 +130,6 @@ func NewMetricBlocklist(
 	return blocklist, nil
 }
 
-// newMetricBlocklistWithConstantConfig creates a MetricBlocklist with a constant config.
-// This is useful for testing.
-func newMetricBlocklistWithConstantConfig(config BlocklistConfig, logger log.Logger) *MetricBlocklist {
-	var configPtr atomic.Pointer[BlocklistConfig]
-	configPtr.Store(&config)
-	return &MetricBlocklist{
-		configPathOrContent: nil,
-		config:              &configPtr,
-		logger:              logger,
-	}
-}
-
 // Config returns the current blocklist configuration.
 // This is concurrent safe.
 func (b *MetricBlocklist) Config() BlocklistConfig {
@@ -259,7 +247,7 @@ func (b *MetricBlocklist) RecordBlocked(ruleName, tenant string) {
 
 // matchesFilter checks if a label set matches the given filter expression.
 // NOTE: This is a placeholder. The actual implementation is in a separate PR.
-// Filter format: "__name__:metric_pattern label1:value1 label2:*"
+// Filter format: "__name__:metric_pattern label1:value1 label2:*".
 func matchesFilter(lset labels.Labels, filter string) bool {
 	// TODO: Implement filter matching logic in Yuchen's PR.
 	// The filter matching will parse the filter string and check if the label set matches.
