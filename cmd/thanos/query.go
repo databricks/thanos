@@ -200,6 +200,12 @@ func registerQuery(app *extkingpin.App) {
 	enableGroupReplicaPartialStrategy := cmd.Flag("query.group-replica-strategy", "Enable group-replica partial response strategy.").
 		Default("false").Bool()
 
+	groupReplicaGroupLabel := cmd.Flag("query.group-replica.group-label", "External label name that identifies the group for group-replica partial response strategy. Stores with the same group label value hold replicated data. Must be set together with --query.group-replica.quorum-label.").
+		Default("").String()
+
+	groupReplicaQuorumLabel := cmd.Flag("query.group-replica.quorum-label", "External label name whose value specifies the minimum number of healthy stores required per group. Must be set together with --query.group-replica.group-label. Stores without these labels or with invalid quorum values (<1) are treated as must-success stores.").
+		Default("").String()
+
 	enableRulePartialResponse := cmd.Flag("rule.partial-response", "Enable partial response for rules endpoint. --no-rule.partial-response for disabling.").
 		Hidden().Default("true").Bool()
 
@@ -266,6 +272,11 @@ func registerQuery(app *extkingpin.App) {
 		selectorLset, err := parseFlagLabels(*selectorLabels)
 		if err != nil {
 			return errors.Wrap(err, "parse federation labels")
+		}
+
+		// Validate group-replica label flags: both must be set together or neither.
+		if (*groupReplicaGroupLabel == "") != (*groupReplicaQuorumLabel == "") {
+			return errors.New("--query.group-replica.group-label and --query.group-replica.quorum-label must be set together or neither")
 		}
 
 		for _, feature := range *featureList {
@@ -408,6 +419,8 @@ func registerQuery(app *extkingpin.App) {
 			*enforceTenancy,
 			*tenantLabel,
 			*enableGroupReplicaPartialStrategy,
+			*groupReplicaGroupLabel,
+			*groupReplicaQuorumLabel,
 			*rewriteAggregationLabelStrategy,
 			*rewriteAggregationLabelTo,
 			*lazyRetrievalMaxBufferedResponses,
@@ -499,6 +512,8 @@ func runQuery(
 	enforceTenancy bool,
 	tenantLabel string,
 	groupReplicaPartialResponseStrategy bool,
+	groupReplicaGroupLabel string,
+	groupReplicaQuorumLabel string,
 	rewriteAggregationLabelStrategy string,
 	rewriteAggregationLabelTo string,
 	lazyRetrievalMaxBufferedResponses int,
@@ -612,6 +627,9 @@ func runQuery(
 	if len(exclusiveExternalLabels) > 0 {
 		options = append(options, store.WithExclusiveExternalLabels(exclusiveExternalLabels))
 	}
+	if groupReplicaGroupLabel != "" && groupReplicaQuorumLabel != "" {
+		options = append(options, store.WithGroupReplicaLabels(groupReplicaGroupLabel, groupReplicaQuorumLabel))
+	}
 
 	// Parse and sanitize the provided replica labels flags.
 	queryReplicaLabels = strutil.ParseFlagLabels(queryReplicaLabels)
@@ -639,6 +657,7 @@ func runQuery(
 			endpointInfoTimeout,
 			// ignoreErrors when group_replica partial response strategy is enabled.
 			groupReplicaPartialResponseStrategy,
+			groupReplicaQuorumLabel,
 			queryConnMetricLabels...,
 		)
 
@@ -652,6 +671,8 @@ func runQuery(
 	)
 	opts := query.Options{
 		GroupReplicaPartialResponseStrategy: groupReplicaPartialResponseStrategy,
+		GroupReplicaGroupLabel:              groupReplicaGroupLabel,
+		GroupReplicaQuorumLabel:             groupReplicaQuorumLabel,
 		DeduplicationFunc:                   queryDeduplicationFunc,
 		RewriteAggregationLabelStrategy:     rewriteAggregationLabelStrategy,
 		RewriteAggregationLabelTo:           rewriteAggregationLabelTo,
@@ -966,6 +987,7 @@ func prepareEndpointSet(
 	unhealthyStoreTimeout time.Duration,
 	endpointInfoTimeout time.Duration,
 	ignoreStoreErrors bool,
+	quorumLabelName string,
 	queryConnMetricLabels ...string,
 ) *query.EndpointSet {
 	endpointSet := query.NewEndpointSet(
@@ -1011,6 +1033,7 @@ func prepareEndpointSet(
 		dialOpts,
 		unhealthyStoreTimeout,
 		endpointInfoTimeout,
+		quorumLabelName,
 		queryConnMetricLabels...,
 	)
 

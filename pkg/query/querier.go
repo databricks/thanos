@@ -59,6 +59,8 @@ type QueryableCreator func(
 
 type Options struct {
 	GroupReplicaPartialResponseStrategy bool
+	GroupReplicaGroupLabel              string
+	GroupReplicaQuorumLabel             string
 	DeduplicationFunc                   string
 	RewriteAggregationLabelStrategy     string
 	RewriteAggregationLabelTo           string
@@ -170,6 +172,12 @@ type querier struct {
 	shardInfo               *storepb.ShardInfo
 	seriesStatsReporter     seriesStatsReporter
 
+	// groupReplicaGroupLabel and groupReplicaQuorumLabel are the external label names
+	// used for label-based group/quorum identification. These labels are stripped from
+	// query results when set.
+	groupReplicaGroupLabel  string
+	groupReplicaQuorumLabel string
+
 	aggregationLabelRewriter *AggregationLabelRewriter
 }
 
@@ -248,6 +256,8 @@ func newQuerierWithOpts(
 		skipChunks:              skipChunks,
 		shardInfo:               shardInfo,
 		seriesStatsReporter:     seriesStatsReporter,
+		groupReplicaGroupLabel:  opts.GroupReplicaGroupLabel,
+		groupReplicaQuorumLabel: opts.GroupReplicaQuorumLabel,
 
 		aggregationLabelRewriter: aggregationLabelRewriter,
 	}
@@ -255,6 +265,28 @@ func newQuerierWithOpts(
 
 func (q *querier) isDedupEnabled() bool {
 	return q.deduplicate && len(q.replicaLabels) > 0
+}
+
+// getWithoutReplicaLabels returns the list of labels to strip from query results.
+// This includes replica labels for deduplication and group/quorum labels for the
+// GROUP_REPLICA partial response strategy.
+func (q *querier) getWithoutReplicaLabels() []string {
+	var labels []string
+
+	// Add replica labels if deduplication is enabled
+	if q.isDedupEnabled() {
+		labels = append(labels, q.replicaLabels...)
+	}
+
+	// Add group/quorum labels if configured (for GROUP_REPLICA strategy)
+	if q.groupReplicaGroupLabel != "" {
+		labels = append(labels, q.groupReplicaGroupLabel)
+	}
+	if q.groupReplicaQuorumLabel != "" {
+		labels = append(labels, q.groupReplicaQuorumLabel)
+	}
+
+	return labels
 }
 
 type seriesServer struct {
@@ -411,9 +443,10 @@ func (q *querier) selectFn(ctx context.Context, hints *storage.SelectHints, ms .
 		PartialResponseStrategy: q.partialResponseStrategy,
 		SkipChunks:              q.skipChunks,
 	}
-	if q.isDedupEnabled() {
-		// Soft ask to sort without replica labels and push them at the end of labelset.
-		req.WithoutReplicaLabels = q.replicaLabels
+	// Soft ask to sort without replica labels and push them at the end of labelset.
+	// This includes dedup replica labels and group/replica labels for the GROUP_REPLICA strategy.
+	if labels := q.getWithoutReplicaLabels(); len(labels) > 0 {
+		req.WithoutReplicaLabels = labels
 	}
 
 	if err := q.proxy.Series(&req, resp); err != nil {
@@ -471,8 +504,8 @@ func (q *querier) LabelValues(ctx context.Context, name string, hints *storage.L
 		Limit:                   int64(hints.Limit),
 	}
 
-	if q.isDedupEnabled() {
-		req.WithoutReplicaLabels = q.replicaLabels
+	if labels := q.getWithoutReplicaLabels(); len(labels) > 0 {
+		req.WithoutReplicaLabels = labels
 	}
 
 	resp, err := q.proxy.LabelValues(ctx, req)
@@ -514,8 +547,8 @@ func (q *querier) LabelNames(ctx context.Context, hints *storage.LabelHints, mat
 		Limit:                   int64(hints.Limit),
 	}
 
-	if q.isDedupEnabled() {
-		req.WithoutReplicaLabels = q.replicaLabels
+	if labels := q.getWithoutReplicaLabels(); len(labels) > 0 {
+		req.WithoutReplicaLabels = labels
 	}
 
 	resp, err := q.proxy.LabelNames(ctx, req)

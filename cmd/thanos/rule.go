@@ -444,6 +444,7 @@ func runRule(
 			5*time.Minute,
 			5*time.Second,
 			false,
+			"", // quorumLabelName - not used in rule component
 		)
 
 		// Periodically update the GRPC addresses from query config by resolving them using DNS SD if necessary.
