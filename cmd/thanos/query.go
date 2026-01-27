@@ -671,8 +671,6 @@ func runQuery(
 	)
 	opts := query.Options{
 		GroupReplicaPartialResponseStrategy: groupReplicaPartialResponseStrategy,
-		GroupReplicaGroupLabel:              groupReplicaGroupLabel,
-		GroupReplicaQuorumLabel:             groupReplicaQuorumLabel,
 		DeduplicationFunc:                   queryDeduplicationFunc,
 		RewriteAggregationLabelStrategy:     rewriteAggregationLabelStrategy,
 		RewriteAggregationLabelTo:           rewriteAggregationLabelTo,

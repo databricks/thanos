@@ -1283,69 +1283,38 @@ func storeSeriesResponse(t testing.TB, lset labels.Labels, smplChunks ...[]sampl
 func TestQuerier_GetWithoutReplicaLabels(t *testing.T) {
 	t.Parallel()
 
+	// Note: group/quorum labels for GROUP_REPLICA strategy are no longer included in
+	// WithoutReplicaLabels because they are configured as info-only labels on receivers,
+	// meaning they are only exposed via InfoAPI and NOT merged into series responses.
 	for _, tc := range []struct {
-		name                    string
-		deduplicate             bool
-		replicaLabels           []string
-		groupReplicaGroupLabel  string
-		groupReplicaQuorumLabel string
-		expectedLabels          []string
+		name           string
+		deduplicate    bool
+		replicaLabels  []string
+		expectedLabels []string
 	}{
 		{
-			name:                    "no dedup, no group replica labels - empty result",
-			deduplicate:             false,
-			replicaLabels:           []string{"replica"},
-			groupReplicaGroupLabel:  "",
-			groupReplicaQuorumLabel: "",
-			expectedLabels:          nil,
+			name:           "no dedup - empty result",
+			deduplicate:    false,
+			replicaLabels:  []string{"replica"},
+			expectedLabels: nil,
 		},
 		{
-			name:                    "dedup enabled - only replica labels",
-			deduplicate:             true,
-			replicaLabels:           []string{"replica", "prometheus_replica"},
-			groupReplicaGroupLabel:  "",
-			groupReplicaQuorumLabel: "",
-			expectedLabels:          []string{"replica", "prometheus_replica"},
+			name:           "dedup enabled - only replica labels",
+			deduplicate:    true,
+			replicaLabels:  []string{"replica", "prometheus_replica"},
+			expectedLabels: []string{"replica", "prometheus_replica"},
 		},
 		{
-			name:                    "no dedup, group replica labels configured - only group and quorum labels",
-			deduplicate:             false,
-			replicaLabels:           []string{"replica"},
-			groupReplicaGroupLabel:  "receive_group",
-			groupReplicaQuorumLabel: "quorum",
-			expectedLabels:          []string{"receive_group", "quorum"},
-		},
-		{
-			name:                    "dedup enabled and group replica labels - both combined",
-			deduplicate:             true,
-			replicaLabels:           []string{"replica"},
-			groupReplicaGroupLabel:  "receive_group",
-			groupReplicaQuorumLabel: "quorum",
-			expectedLabels:          []string{"replica", "receive_group", "quorum"},
-		},
-		{
-			name:                    "dedup enabled but no replica labels - only group and quorum labels",
-			deduplicate:             true,
-			replicaLabels:           []string{},
-			groupReplicaGroupLabel:  "receive_group",
-			groupReplicaQuorumLabel: "quorum",
-			expectedLabels:          []string{"receive_group", "quorum"},
-		},
-		{
-			name:                    "only group label configured (partial) - only group label",
-			deduplicate:             false,
-			replicaLabels:           []string{},
-			groupReplicaGroupLabel:  "receive_group",
-			groupReplicaQuorumLabel: "",
-			expectedLabels:          []string{"receive_group"},
+			name:           "dedup enabled but no replica labels - empty result",
+			deduplicate:    true,
+			replicaLabels:  []string{},
+			expectedLabels: nil,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			q := &querier{
-				deduplicate:             tc.deduplicate,
-				replicaLabels:           tc.replicaLabels,
-				groupReplicaGroupLabel:  tc.groupReplicaGroupLabel,
-				groupReplicaQuorumLabel: tc.groupReplicaQuorumLabel,
+				deduplicate:   tc.deduplicate,
+				replicaLabels: tc.replicaLabels,
 			}
 
 			got := q.getWithoutReplicaLabels()

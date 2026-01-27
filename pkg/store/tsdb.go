@@ -72,6 +72,7 @@ type TSDBStore struct {
 	matcherCache     storecache.MatchersCache
 
 	extLset                labels.Labels
+	infoOnlyLset           labels.Labels // Labels only exposed via InfoAPI, not merged into series
 	startStoreFilterUpdate bool
 	storeFilter            filter.StoreFilter
 	mtx                    sync.RWMutex
@@ -169,6 +170,22 @@ func (s *TSDBStore) SetExtLset(extLset labels.Labels) {
 	s.extLset = extLset
 }
 
+// SetInfoOnlyLset sets labels that are only exposed via InfoAPI (LabelSet),
+// but NOT merged into series responses. Useful for metadata like replica group/quorum.
+func (s *TSDBStore) SetInfoOnlyLset(infoOnlyLset labels.Labels) {
+	s.mtx.Lock()
+	defer s.mtx.Unlock()
+
+	s.infoOnlyLset = infoOnlyLset
+}
+
+func (s *TSDBStore) getInfoOnlyLset() labels.Labels {
+	s.mtx.RLock()
+	defer s.mtx.RUnlock()
+
+	return s.infoOnlyLset
+}
+
 func (s *TSDBStore) getExtLset() labels.Labels {
 	s.mtx.RLock()
 	defer s.mtx.RUnlock()
@@ -177,10 +194,21 @@ func (s *TSDBStore) getExtLset() labels.Labels {
 }
 
 func (s *TSDBStore) LabelSet() []labelpb.ZLabelSet {
-	labels := labelpb.ZLabelSetsFromPromLabels(s.getExtLset())
+	// Combine extLset and infoOnlyLset for InfoAPI exposure.
+	// infoOnlyLset labels are NOT merged into series responses.
+	combined := s.getExtLset()
+	if infoOnly := s.getInfoOnlyLset(); infoOnly.Len() > 0 {
+		builder := labels.NewBuilder(combined)
+		infoOnly.Range(func(l labels.Label) {
+			builder.Set(l.Name, l.Value)
+		})
+		combined = builder.Labels()
+	}
+
+	zlabels := labelpb.ZLabelSetsFromPromLabels(combined)
 	labelSets := []labelpb.ZLabelSet{}
-	if len(labels) > 0 {
-		labelSets = append(labelSets, labels...)
+	if len(zlabels) > 0 {
+		labelSets = append(labelSets, zlabels...)
 	}
 
 	return labelSets

@@ -73,6 +73,11 @@ func registerReceive(app *extkingpin.App) {
 			return errors.Wrap(err, "parse labels")
 		}
 
+		infoOnlyLset, err := parseFlagLabels(conf.infoOnlyLblStrs)
+		if err != nil {
+			return errors.Wrap(err, "parse info-only labels")
+		}
+
 		if !model.LabelName.IsValid(model.LabelName(conf.tenantLabelName)) {
 			return errors.Errorf("unsupported format for tenant label name, got %s", conf.tenantLabelName)
 		}
@@ -117,6 +122,7 @@ func registerReceive(app *extkingpin.App) {
 			logFilterMethods,
 			tsdbOpts,
 			lset,
+			infoOnlyLset,
 			component.Receive,
 			metadata.HashFunc(conf.hashFunc),
 			receiveMode,
@@ -135,6 +141,7 @@ func runReceive(
 	logFilterMethods []string,
 	tsdbOpts *tsdb.Options,
 	lset labels.Labels,
+	infoOnlyLset labels.Labels,
 	comp component.SourceStoreAPI,
 	hashFunc metadata.HashFunc,
 	receiveMode receive.ReceiverMode,
@@ -248,6 +255,9 @@ func runReceive(
 			return errors.Wrap(err, "failed to create matchers cache")
 		}
 		multiTSDBOptions = append(multiTSDBOptions, receive.WithMatchersCache(cache))
+	}
+	if infoOnlyLset.Len() > 0 {
+		multiTSDBOptions = append(multiTSDBOptions, receive.WithInfoOnlyLabels(infoOnlyLset))
 	}
 
 	dbs := receive.NewMultiTSDB(
@@ -931,8 +941,9 @@ type receiveConfig struct {
 	rwClientSkipVerify    bool
 	rwServerTlsMinVersion string
 
-	dataDir   string
-	labelStrs []string
+	dataDir         string
+	labelStrs       []string
+	infoOnlyLblStrs []string
 
 	objStoreConfig *extflag.PathOrContent
 	retention      *model.Duration
@@ -1034,6 +1045,8 @@ func (rc *receiveConfig) registerFlag(cmd extkingpin.FlagClause) {
 		Default("./data").StringVar(&rc.dataDir)
 
 	cmd.Flag("label", "External labels to announce. This flag will be removed in the future when handling multiple tsdb instances is added.").PlaceHolder("key=\"value\"").StringsVar(&rc.labelStrs)
+
+	cmd.Flag("label-info-only", "Labels to expose only via InfoAPI (for store discovery), but NOT merge into series responses. Useful for metadata like replica group/quorum that query component needs for routing but shouldn't be in query results.").PlaceHolder("key=\"value\"").StringsVar(&rc.infoOnlyLblStrs)
 
 	rc.objStoreConfig = extkingpin.RegisterCommonObjStoreFlags(cmd, "", false)
 

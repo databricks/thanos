@@ -59,8 +59,6 @@ type QueryableCreator func(
 
 type Options struct {
 	GroupReplicaPartialResponseStrategy bool
-	GroupReplicaGroupLabel              string
-	GroupReplicaQuorumLabel             string
 	DeduplicationFunc                   string
 	RewriteAggregationLabelStrategy     string
 	RewriteAggregationLabelTo           string
@@ -172,12 +170,6 @@ type querier struct {
 	shardInfo               *storepb.ShardInfo
 	seriesStatsReporter     seriesStatsReporter
 
-	// groupReplicaGroupLabel and groupReplicaQuorumLabel are the external label names
-	// used for label-based group/quorum identification. These labels are stripped from
-	// query results when set.
-	groupReplicaGroupLabel  string
-	groupReplicaQuorumLabel string
-
 	aggregationLabelRewriter *AggregationLabelRewriter
 }
 
@@ -256,8 +248,6 @@ func newQuerierWithOpts(
 		skipChunks:              skipChunks,
 		shardInfo:               shardInfo,
 		seriesStatsReporter:     seriesStatsReporter,
-		groupReplicaGroupLabel:  opts.GroupReplicaGroupLabel,
-		groupReplicaQuorumLabel: opts.GroupReplicaQuorumLabel,
 
 		aggregationLabelRewriter: aggregationLabelRewriter,
 	}
@@ -268,25 +258,15 @@ func (q *querier) isDedupEnabled() bool {
 }
 
 // getWithoutReplicaLabels returns the list of labels to strip from query results.
-// This includes replica labels for deduplication and group/quorum labels for the
-// GROUP_REPLICA partial response strategy.
+// This includes replica labels for deduplication.
+// Note: group/quorum labels for GROUP_REPLICA strategy are NOT included here because
+// they are configured as info-only labels on receivers, meaning they are only exposed
+// via InfoAPI for store discovery but NOT merged into series responses.
 func (q *querier) getWithoutReplicaLabels() []string {
-	var labels []string
-
-	// Add replica labels if deduplication is enabled
 	if q.isDedupEnabled() {
-		labels = append(labels, q.replicaLabels...)
+		return q.replicaLabels
 	}
-
-	// Add group/quorum labels if configured (for GROUP_REPLICA strategy)
-	if q.groupReplicaGroupLabel != "" {
-		labels = append(labels, q.groupReplicaGroupLabel)
-	}
-	if q.groupReplicaQuorumLabel != "" {
-		labels = append(labels, q.groupReplicaQuorumLabel)
-	}
-
-	return labels
+	return nil
 }
 
 type seriesServer struct {

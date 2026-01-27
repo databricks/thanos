@@ -53,6 +53,7 @@ type MultiTSDB struct {
 	tsdbOpts        *tsdb.Options
 	tenantLabelName string
 	labels          labels.Labels
+	infoOnlyLabels  labels.Labels // Labels only exposed via InfoAPI, not merged into series
 	bucket          objstore.Bucket
 
 	mtx                   *sync.RWMutex
@@ -107,6 +108,14 @@ func WithPathSegmentsBeforeTenant(segments []string) MultiTSDBOption {
 func WithMatchersCache(cache storecache.MatchersCache) MultiTSDBOption {
 	return func(s *MultiTSDB) {
 		s.matcherCache = cache
+	}
+}
+
+// WithInfoOnlyLabels sets labels that are only exposed via InfoAPI (for store discovery),
+// but NOT merged into series responses. Useful for metadata like replica group/quorum.
+func WithInfoOnlyLabels(lset labels.Labels) MultiTSDBOption {
+	return func(s *MultiTSDB) {
+		s.infoOnlyLabels = lset
 	}
 }
 
@@ -846,7 +855,11 @@ func (t *MultiTSDB) startTSDB(logger log.Logger, tenantID string, tenant *tenant
 	if t.matcherCache != nil {
 		options = append(options, store.WithMatcherCacheInstance(t.matcherCache))
 	}
-	tenant.set(store.NewTSDBStore(logger, s, component.Receive, lset, options...), s, ship, exemplars.NewTSDB(s, lset))
+	tsdbStore := store.NewTSDBStore(logger, s, component.Receive, lset, options...)
+	if t.infoOnlyLabels.Len() > 0 {
+		tsdbStore.SetInfoOnlyLset(t.infoOnlyLabels)
+	}
+	tenant.set(tsdbStore, s, ship, exemplars.NewTSDB(s, lset))
 	t.addTenantLocked(tenantID, tenant) // need to update the client list once store is ready & client != nil
 	level.Info(logger).Log("msg", "TSDB is now ready")
 	return nil
