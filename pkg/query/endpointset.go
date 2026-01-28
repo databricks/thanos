@@ -272,10 +272,6 @@ type EndpointSet struct {
 	endpointInfoTimeout      time.Duration
 	unhealthyEndpointTimeout time.Duration
 
-	// quorumLabelName is the external label name whose value specifies the quorum requirement.
-	// Used for the thanos_query_endpoint_groups metric.
-	quorumLabelName string
-
 	updateMtx sync.Mutex
 
 	endpointsMtx    sync.RWMutex
@@ -298,7 +294,6 @@ func NewEndpointSet(
 	dialOpts []grpc.DialOption,
 	unhealthyEndpointTimeout time.Duration,
 	endpointInfoTimeout time.Duration,
-	quorumLabelName string,
 	endpointMetricLabels ...string,
 ) *EndpointSet {
 	endpointsMetric := newEndpointSetNodeCollector(logger, endpointMetricLabels...)
@@ -322,7 +317,6 @@ func NewEndpointSet(
 		dialOpts:                 dialOpts,
 		endpointInfoTimeout:      endpointInfoTimeout,
 		unhealthyEndpointTimeout: unhealthyEndpointTimeout,
-		quorumLabelName:          quorumLabelName,
 		endpointSpec: func() map[string]*GRPCEndpointSpec {
 			specs := make(map[string]*GRPCEndpointSpec)
 			for _, s := range endpointSpecs() {
@@ -446,16 +440,10 @@ func (e *EndpointSet) Update(ctx context.Context) {
 		}
 		stats[er.ComponentType().String()][extLset]++
 
-		// Track endpoints by quorum label value for thanos_query_endpoint_groups metric.
-		quorumValue := "0" // Default for endpoints without quorum label
-		if e.quorumLabelName != "" {
-			for _, lset := range er.LabelSets() {
-				if v := lset.Get(e.quorumLabelName); v != "" {
-					quorumValue = v
-					break
-				}
-			}
-		}
+		// Track endpoints by quorum value for thanos_query_endpoint_groups metric.
+		// Quorum is now a first-class field from StoreInfo.
+		ri := er.ReplicaInfo()
+		quorumValue := fmt.Sprintf("%d", ri.Quorum)
 		storesByQuorum[quorumValue]++
 	}
 
@@ -534,8 +522,8 @@ func (e *EndpointSet) GetStoreClients() []store.Client {
 				StoreClient: storepb.NewStoreClient(er.cc),
 				addr:        er.addr,
 				metadata:    er.metadata,
-				groupKey:    er.GroupKey(),
-				replicaKey:  er.ReplicaKey(),
+				groupKey:    er.groupKey,
+				replicaKey:  er.replicaKey,
 				status:      er.status,
 			})
 			er.mtx.RUnlock()
@@ -663,12 +651,31 @@ type endpointRef struct {
 	logger log.Logger
 }
 
-func (er *endpointRef) GroupKey() string {
-	return er.groupKey
-}
+// ReplicaInfo returns replica topology hints for GROUP_REPLICA partial response strategy.
+// It unifies DNS-based grouping (legacy) with first-class StoreInfo fields,
+// preferring StoreInfo fields when available.
+func (er *endpointRef) ReplicaInfo() store.ReplicaInfo {
+	er.mtx.RLock()
+	defer er.mtx.RUnlock()
 
-func (er *endpointRef) ReplicaKey() string {
-	return er.replicaKey
+	// Prefer first-class fields from StoreInfo if available
+	if er.metadata != nil && er.metadata.Store != nil {
+		if rg := er.metadata.Store.ReplicaGroup; rg != "" {
+			return store.ReplicaInfo{
+				Group:   rg,
+				Replica: er.replicaKey, // Use DNS-based replica key for identification
+				Quorum:  int(er.metadata.Store.Quorum),
+			}
+		}
+	}
+
+	// Fall back to DNS-based grouping (legacy)
+	// Quorum=0 means must-success semantics
+	return store.ReplicaInfo{
+		Group:   er.groupKey,
+		Replica: er.replicaKey,
+		Quorum:  0,
+	}
 }
 
 // newEndpointRef creates a new endpointRef with a gRPC channel to the given the IP address.

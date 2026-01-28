@@ -691,7 +691,7 @@ func TestEndpointSetUpdate_AvailabilityScenarios(t *testing.T) {
 			}
 			return specs
 		},
-		testGRPCOpts, time.Minute, 2*time.Second, "")
+		testGRPCOpts, time.Minute, 2*time.Second)
 	defer endpointSet.Close()
 
 	// Initial update.
@@ -1064,7 +1064,7 @@ func TestEndpointSet_Update_NoneAvailable(t *testing.T) {
 			}
 			return specs
 		},
-		testGRPCOpts, time.Minute, 2*time.Second, "")
+		testGRPCOpts, time.Minute, 2*time.Second)
 	defer endpointSet.Close()
 
 	// Should not matter how many of these we run.
@@ -1175,7 +1175,7 @@ func TestEndpoint_Update_QuerierStrict(t *testing.T) {
 			NewGRPCEndpointSpec(discoveredEndpointAddr[1], false),
 			NewGRPCEndpointSpec(discoveredEndpointAddr[2], true),
 		}
-	}, testGRPCOpts, time.Minute, 1*time.Second, "")
+	}, testGRPCOpts, time.Minute, 1*time.Second)
 	defer endpointSet.Close()
 
 	// Initial update.
@@ -1356,7 +1356,7 @@ func TestEndpointSet_APIs_Discovery(t *testing.T) {
 
 					return tc.states[currentState].endpointSpec()
 				},
-				testGRPCOpts, time.Minute, 2*time.Second, "")
+				testGRPCOpts, time.Minute, 2*time.Second)
 
 			defer endpointSet.Close()
 
@@ -1548,7 +1548,7 @@ func makeEndpointSet(discoveredEndpointAddr []string, strict bool, now nowFunc, 
 			}
 			return specs
 		},
-		testGRPCOpts, time.Minute, time.Second, "", metricLabels...)
+		testGRPCOpts, time.Minute, time.Second, metricLabels...)
 	return endpointSet
 }
 

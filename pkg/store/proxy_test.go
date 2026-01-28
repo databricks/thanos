@@ -3560,143 +3560,95 @@ func TestDedupRespHeap_QuorumChunkDedup(t *testing.T) {
 func TestProxyStore_GetGroupKeyQuorum(t *testing.T) {
 	t.Parallel()
 
+	// Test that getGroupKey and getQuorum use first-class fields from StoreInfo
+	// when available, otherwise fall back to DNS-based grouping.
 	for _, tc := range []struct {
-		name                    string
-		groupReplicaGroupLabel  string
-		groupReplicaQuorumLabel string
-		client                  *storetestutil.TestClient
-		expectedGroupKey        string
-		expectedQuorum          int
+		name              string
+		client            *storetestutil.TestClient
+		expectedGroup     string
+		expectedReplica   string
+		expectedQuorum    int
+		expectMustSuccess bool
 	}{
 		{
-			name:                    "no labels configured - fallback to DNS-based group key",
-			groupReplicaGroupLabel:  "",
-			groupReplicaQuorumLabel: "",
+			name: "no ReplicaGroup set - fallback to DNS-based GroupKey",
 			client: &storetestutil.TestClient{
-				Name:          "receive-rep0-0.receive.svc.cluster.local:10901",
-				GroupKeyStr:   "receive-rep0",
-				ReplicaKeyStr: "receive-rep0-0",
-				ExtLset:       []labels.Labels{labels.FromStrings("receive_group", "receive-0", "quorum", "2")},
+				Name:            "receive-rep0-0.receive.svc.cluster.local:10901",
+				GroupKeyStr:     "receive-rep0",
+				ReplicaKeyStr:   "receive-rep0-0",
+				ReplicaGroupStr: "", // Not set - triggers DNS fallback
+				QuorumValue:     0,  // Ignored when ReplicaGroupStr is empty
 			},
-			expectedGroupKey: "receive-rep0",
-			expectedQuorum:   0, // No quorum label configured, returns 0
+			expectedGroup:     "receive-rep0", // Falls back to GroupKeyStr
+			expectedReplica:   "receive-rep0-0",
+			expectedQuorum:    0, // DNS fallback always has quorum=0
+			expectMustSuccess: true,
 		},
 		{
-			name:                    "labels configured - use label-based group key and quorum",
-			groupReplicaGroupLabel:  "receive_group",
-			groupReplicaQuorumLabel: "quorum",
+			name: "ReplicaGroup and Quorum set - use first-class fields",
 			client: &storetestutil.TestClient{
-				Name:          "receive-rep0-0.receive.svc.cluster.local:10901",
-				GroupKeyStr:   "receive-rep0",
-				ReplicaKeyStr: "receive-rep0-0",
-				ExtLset:       []labels.Labels{labels.FromStrings("receive_group", "receive-0", "quorum", "2")},
+				Name:            "receive-rep0-0.receive.svc.cluster.local:10901",
+				GroupKeyStr:     "receive-rep0", // Ignored when ReplicaGroupStr is set
+				ReplicaKeyStr:   "receive-rep0-0",
+				ReplicaGroupStr: "receive-0",
+				QuorumValue:     2,
 			},
-			expectedGroupKey: "receive-0",
-			expectedQuorum:   2,
+			expectedGroup:     "receive-0", // Uses ReplicaGroupStr
+			expectedReplica:   "receive-rep0-0",
+			expectedQuorum:    2, // Uses QuorumValue
+			expectMustSuccess: false,
 		},
 		{
-			name:                    "labels configured but store missing labels - must-success store",
-			groupReplicaGroupLabel:  "receive_group",
-			groupReplicaQuorumLabel: "quorum",
+			name: "store without ReplicaGroup/Quorum - must-success via DNS fallback",
 			client: &storetestutil.TestClient{
-				Name:          "bucket-store.svc.cluster.local:10901",
-				GroupKeyStr:   "bucket-store",
-				ReplicaKeyStr: "bucket-store",
-				ExtLset:       []labels.Labels{labels.FromStrings("cluster", "us-east")}, // no receive_group/quorum
+				Name:            "bucket-store.svc.cluster.local:10901",
+				GroupKeyStr:     "bucket-store",
+				ReplicaKeyStr:   "bucket-store",
+				ReplicaGroupStr: "",
+				QuorumValue:     0,
 			},
-			expectedGroupKey: "", // Empty string indicates must-success store
-			expectedQuorum:   0,  // No quorum label, must-success store
+			expectedGroup:     "bucket-store", // Falls back to GroupKeyStr
+			expectedReplica:   "bucket-store",
+			expectedQuorum:    0, // Must-success store
+			expectMustSuccess: true,
 		},
 		{
-			name:                    "labels configured - multiple label sets, first match used",
-			groupReplicaGroupLabel:  "receive_group",
-			groupReplicaQuorumLabel: "quorum",
+			name: "ReplicaGroup set but Quorum is 0 - use ReplicaGroup, must-success",
 			client: &storetestutil.TestClient{
-				Name:          "receive-rep1-0.receive.svc.cluster.local:10901",
-				GroupKeyStr:   "receive-rep1",
-				ReplicaKeyStr: "receive-rep1-0",
-				ExtLset: []labels.Labels{
-					labels.FromStrings("receive_group", "receive-0", "quorum", "3"),
-					labels.FromStrings("cluster", "us-east"),
-				},
+				Name:            "partial-store.svc.cluster.local:10901",
+				GroupKeyStr:     "partial-store",
+				ReplicaKeyStr:   "partial-store",
+				ReplicaGroupStr: "receive-0",
+				QuorumValue:     0, // Not set, must-success
 			},
-			expectedGroupKey: "receive-0",
-			expectedQuorum:   3,
+			expectedGroup:     "receive-0", // Uses ReplicaGroupStr
+			expectedReplica:   "partial-store",
+			expectedQuorum:    0, // Must-success store
+			expectMustSuccess: true,
 		},
 		{
-			name:                    "labels configured - store has only group label (no quorum)",
-			groupReplicaGroupLabel:  "receive_group",
-			groupReplicaQuorumLabel: "quorum",
+			name: "high quorum value",
 			client: &storetestutil.TestClient{
-				Name:          "partial-store.svc.cluster.local:10901",
-				GroupKeyStr:   "partial-store",
-				ReplicaKeyStr: "partial-store",
-				ExtLset:       []labels.Labels{labels.FromStrings("receive_group", "receive-0")}, // no quorum label
+				Name:            "receive-0.receive.svc.cluster.local:10901",
+				GroupKeyStr:     "receive-0",
+				ReplicaKeyStr:   "receive-0",
+				ReplicaGroupStr: "group-a",
+				QuorumValue:     5,
 			},
-			expectedGroupKey: "receive-0",
-			expectedQuorum:   0, // No quorum label, must-success store within group
-		},
-		{
-			name:                    "invalid quorum value (non-integer) - must-success store",
-			groupReplicaGroupLabel:  "receive_group",
-			groupReplicaQuorumLabel: "quorum",
-			client: &storetestutil.TestClient{
-				Name:          "receive-0.receive.svc.cluster.local:10901",
-				GroupKeyStr:   "receive-0",
-				ReplicaKeyStr: "receive-0",
-				ExtLset:       []labels.Labels{labels.FromStrings("receive_group", "receive-0", "quorum", "invalid")},
-			},
-			expectedGroupKey: "receive-0",
-			expectedQuorum:   0, // Invalid quorum value, treat as must-success
-		},
-		{
-			name:                    "quorum value less than 1 - must-success store",
-			groupReplicaGroupLabel:  "receive_group",
-			groupReplicaQuorumLabel: "quorum",
-			client: &storetestutil.TestClient{
-				Name:          "receive-0.receive.svc.cluster.local:10901",
-				GroupKeyStr:   "receive-0",
-				ReplicaKeyStr: "receive-0",
-				ExtLset:       []labels.Labels{labels.FromStrings("receive_group", "receive-0", "quorum", "0")},
-			},
-			expectedGroupKey: "receive-0",
-			expectedQuorum:   0, // quorum < 1, treat as must-success
-		},
-		{
-			name:                    "negative quorum value - must-success store",
-			groupReplicaGroupLabel:  "receive_group",
-			groupReplicaQuorumLabel: "quorum",
-			client: &storetestutil.TestClient{
-				Name:          "receive-0.receive.svc.cluster.local:10901",
-				GroupKeyStr:   "receive-0",
-				ReplicaKeyStr: "receive-0",
-				ExtLset:       []labels.Labels{labels.FromStrings("receive_group", "receive-0", "quorum", "-1")},
-			},
-			expectedGroupKey: "receive-0",
-			expectedQuorum:   0, // Negative quorum, treat as must-success
+			expectedGroup:     "group-a",
+			expectedReplica:   "receive-0",
+			expectedQuorum:    5,
+			expectMustSuccess: false,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			logger := log.NewNopLogger()
-			reg := prometheus.NewRegistry()
+			// Test the unified ReplicaInfo() method directly
+			ri := tc.client.ReplicaInfo()
 
-			// Create ProxyStore with the configured labels
-			proxy := NewProxyStore(
-				logger,
-				reg,
-				func() []Client { return []Client{tc.client} },
-				component.Query,
-				labels.EmptyLabels(),
-				0,
-				EagerRetrieval,
-				WithGroupReplicaLabels(tc.groupReplicaGroupLabel, tc.groupReplicaQuorumLabel),
-			)
-
-			gotGroupKey := proxy.getGroupKey(tc.client)
-			gotQuorum := proxy.getQuorum(tc.client)
-
-			testutil.Equals(t, tc.expectedGroupKey, gotGroupKey)
-			testutil.Equals(t, tc.expectedQuorum, gotQuorum)
+			testutil.Equals(t, tc.expectedGroup, ri.Group)
+			testutil.Equals(t, tc.expectedReplica, ri.Replica)
+			testutil.Equals(t, tc.expectedQuorum, ri.Quorum)
+			testutil.Equals(t, tc.expectMustSuccess, ri.IsMustSuccess())
 		})
 	}
 }

@@ -72,7 +72,8 @@ type TSDBStore struct {
 	matcherCache     storecache.MatchersCache
 
 	extLset                labels.Labels
-	infoOnlyLset           labels.Labels // Labels only exposed via InfoAPI, not merged into series
+	replicaGroup           string // Replica group identifier for GROUP_REPLICA strategy
+	quorum                 int32  // Minimum healthy stores required per group
 	startStoreFilterUpdate bool
 	storeFilter            filter.StoreFilter
 	mtx                    sync.RWMutex
@@ -170,20 +171,27 @@ func (s *TSDBStore) SetExtLset(extLset labels.Labels) {
 	s.extLset = extLset
 }
 
-// SetInfoOnlyLset sets labels that are only exposed via InfoAPI (LabelSet),
-// but NOT merged into series responses. Useful for metadata like replica group/quorum.
-func (s *TSDBStore) SetInfoOnlyLset(infoOnlyLset labels.Labels) {
+// SetReplicaInfo sets the replica group and quorum for GROUP_REPLICA partial response strategy.
+func (s *TSDBStore) SetReplicaInfo(replicaGroup string, quorum int32) {
 	s.mtx.Lock()
 	defer s.mtx.Unlock()
 
-	s.infoOnlyLset = infoOnlyLset
+	s.replicaGroup = replicaGroup
+	s.quorum = quorum
 }
 
-func (s *TSDBStore) getInfoOnlyLset() labels.Labels {
+// ReplicaInfo returns replica topology hints for GROUP_REPLICA partial response strategy.
+// Since TSDBStore is used internally by receivers, it returns the first-class fields directly.
+// Quorum=0 means must-success semantics.
+func (s *TSDBStore) ReplicaInfo() ReplicaInfo {
 	s.mtx.RLock()
 	defer s.mtx.RUnlock()
 
-	return s.infoOnlyLset
+	return ReplicaInfo{
+		Group:   s.replicaGroup,
+		Replica: "", // TSDBStore doesn't have a replica identifier
+		Quorum:  int(s.quorum),
+	}
 }
 
 func (s *TSDBStore) getExtLset() labels.Labels {
@@ -194,21 +202,10 @@ func (s *TSDBStore) getExtLset() labels.Labels {
 }
 
 func (s *TSDBStore) LabelSet() []labelpb.ZLabelSet {
-	// Combine extLset and infoOnlyLset for InfoAPI exposure.
-	// infoOnlyLset labels are NOT merged into series responses.
-	combined := s.getExtLset()
-	if infoOnly := s.getInfoOnlyLset(); infoOnly.Len() > 0 {
-		builder := labels.NewBuilder(combined)
-		infoOnly.Range(func(l labels.Label) {
-			builder.Set(l.Name, l.Value)
-		})
-		combined = builder.Labels()
-	}
-
-	zlabels := labelpb.ZLabelSetsFromPromLabels(combined)
+	labels := labelpb.ZLabelSetsFromPromLabels(s.getExtLset())
 	labelSets := []labelpb.ZLabelSet{}
-	if len(zlabels) > 0 {
-		labelSets = append(labelSets, zlabels...)
+	if len(labels) > 0 {
+		labelSets = append(labelSets, labels...)
 	}
 
 	return labelSets

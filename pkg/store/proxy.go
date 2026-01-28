@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -50,6 +49,10 @@ const metricNameLabel = "__name__"
 // This can happen with Query servers trees and external labels.
 var ErrorNoStoresMatched = errors.New("No StoreAPIs matched for this query")
 
+// ReplicaInfo is an alias to storepb.ReplicaInfo for convenience.
+// It contains replica topology hints for GROUP_REPLICA partial response strategy.
+type ReplicaInfo = storepb.ReplicaInfo
+
 // Client holds meta information about a store.
 type Client interface {
 	// StoreClient to access the store.
@@ -78,14 +81,10 @@ type Client interface {
 	// represents a local client (server-as-client) and has no remote address.
 	Addr() (addr string, isLocalClient bool)
 
-	// ReplicaKey returns replica name of the store client. A replica consists of a set of endpoints belong to the
-	// same replica. E.g, "pantheon-db-rep0", "pantheon-db-rep1", "long-range-store".
-	ReplicaKey() string
-
-	// GroupKey returns group name of the store client. A group defines a group of replicas that belong to the
-	// same group. E.g. "pantheon-db" has replicas "pantheon-db-rep0", "pantheon-db-rep1".
-	// "long-range-store" has only one replica, "long-range-store".
-	GroupKey() string
+	// ReplicaInfo returns replica topology hints for GROUP_REPLICA partial response strategy.
+	// Implementations should unify DNS-based grouping (legacy) with first-class StoreInfo fields,
+	// preferring StoreInfo fields when available.
+	ReplicaInfo() ReplicaInfo
 
 	// Matches returns true if provided label matchers are allowed in the store.
 	Matches(matches []*labels.Matcher) bool
@@ -112,12 +111,6 @@ type ProxyStore struct {
 	forwardPartialStrategy            bool
 	exclusiveExternalLabels           []string
 	matcherCache                      storecache.MatchersCache
-
-	// groupReplicaGroupLabel and groupReplicaQuorumLabel are the external label names
-	// used for label-based group/quorum identification in GROUP_REPLICA partial response strategy.
-	// When both are set, the strategy uses these labels from LabelSets() instead of DNS-based parsing.
-	groupReplicaGroupLabel  string
-	groupReplicaQuorumLabel string
 }
 
 type proxyStoreMetrics struct {
@@ -272,15 +265,6 @@ func WithMatcherCache(cache storecache.MatchersCache) ProxyStoreOption {
 	}
 }
 
-// WithGroupReplicaLabels sets the external label names for label-based group/quorum
-// identification in GROUP_REPLICA partial response strategy.
-func WithGroupReplicaLabels(groupLabel, quorumLabel string) ProxyStoreOption {
-	return func(s *ProxyStore) {
-		s.groupReplicaGroupLabel = groupLabel
-		s.groupReplicaQuorumLabel = quorumLabel
-	}
-}
-
 // NewProxyStore returns a new ProxyStore that uses the given clients that implements storeAPI to fan-in all series to the client.
 // Note that there is no deduplication support. Deduplication should be done on the highest level (just before PromQL).
 func NewProxyStore(
@@ -320,43 +304,6 @@ func NewProxyStore(
 	}
 
 	return s
-}
-
-// getGroupKey returns the group key for a store client.
-// If groupReplicaGroupLabel is configured, it looks up the label value from LabelSets().
-// Otherwise, it falls back to the DNS-based GroupKey() method.
-// For stores without the configured label, it returns empty string to indicate a must-success store.
-func (s *ProxyStore) getGroupKey(st Client) string {
-	if s.groupReplicaGroupLabel != "" {
-		for _, lset := range st.LabelSets() {
-			if v := lset.Get(s.groupReplicaGroupLabel); v != "" {
-				return v
-			}
-		}
-		// Store doesn't have the label - return empty to indicate must-success store
-		return ""
-	}
-	return st.GroupKey()
-}
-
-// getQuorum returns the quorum requirement for a store client.
-// If groupReplicaQuorumLabel is configured, it parses the label value as an integer.
-// Returns 0 if the label is missing, empty, or invalid (non-integer or <1).
-// A return value of 0 indicates the store should be treated as a "must-success" store.
-func (s *ProxyStore) getQuorum(st Client) int {
-	if s.groupReplicaQuorumLabel == "" {
-		return 0
-	}
-	for _, lset := range st.LabelSets() {
-		if v := lset.Get(s.groupReplicaQuorumLabel); v != "" {
-			quorum, err := strconv.Atoi(v)
-			if err != nil || quorum < 1 {
-				return 0 // Invalid quorum, treat as must-success
-			}
-			return quorum
-		}
-	}
-	return 0 // Label not found, treat as must-success
 }
 
 func (s *ProxyStore) LabelSet() []labelpb.ZLabelSet {
@@ -514,18 +461,18 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 		stores         []Client
 		storeLabelSets []labels.Labels
 	)
-	// For label-based quorum strategy:
+	// For quorum-based strategy (stores with Quorum() > 0 via StoreInfo):
 	// - groupStores[groupKey] = total stores in group
 	// - groupQuorum[groupKey] = quorum requirement for group
 	// - groupFailed[groupKey] = failed stores in group
-	// - mustSuccessStores = stores without labels or invalid quorum (must all succeed)
+	// - mustSuccessStores = stores without quorum (Quorum=0) must all succeed
 	groupStores := make(map[string]int)
 	groupQuorum := make(map[string]int)
 	groupFailed := make(map[string]int)
 	mustSuccessStores := make(map[Client]bool)
 	totalFailedStores := 0
 
-	// For legacy DNS-based strategy (when label flags not set):
+	// For legacy DNS-based strategy (stores with Quorum=0):
 	// groupReplicaStores[groupKey][replicaKey] = number of stores
 	// failedStores[groupKey][replicaKey] = number of failures
 	groupReplicaStores := make(map[string]map[string]int)
@@ -537,9 +484,6 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 		mp[key1][key2]++
 	}
 
-	// Check if we're using label-based quorum strategy
-	useLabelBasedStrategy := s.groupReplicaGroupLabel != "" && s.groupReplicaQuorumLabel != ""
-
 	stores, storeLabelSets, storeDebugMsgs := s.matchingStores(ctx, originalRequest.MinTime, originalRequest.MaxTime, matchers)
 	s.metrics.storesPerQueryAfterFiltering.Set(float64(len(stores)))
 
@@ -548,21 +492,21 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 	s.metrics.storesPerQueryAfterEELFiltering.Set(float64(len(stores)))
 
 	for _, st := range stores {
-		if useLabelBasedStrategy {
-			groupKey := s.getGroupKey(st)
-			quorum := s.getQuorum(st)
-			if groupKey == "" || quorum == 0 {
-				// No valid group/quorum labels - must-success store
+		ri := st.ReplicaInfo()
+		if ri.IsMustSuccess() {
+			// Must-success store (quorum=0) - use legacy DNS-based strategy
+			bumpCounter(ri.Group, ri.Replica, groupReplicaStores)
+		} else {
+			// Quorum-based strategy
+			if ri.Group == "" {
+				// No group but has quorum - treat as must-success
 				mustSuccessStores[st] = true
 			} else {
-				groupStores[groupKey]++
-				if _, exists := groupQuorum[groupKey]; !exists {
-					groupQuorum[groupKey] = quorum
+				groupStores[ri.Group]++
+				if _, exists := groupQuorum[ri.Group]; !exists {
+					groupQuorum[ri.Group] = ri.Quorum
 				}
 			}
-		} else {
-			// Legacy DNS-based strategy
-			bumpCounter(st.GroupKey(), st.ReplicaKey(), groupReplicaStores)
 		}
 	}
 	if len(stores) == 0 {
@@ -597,81 +541,76 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 	storeResponses := make([]respSet, 0, len(stores))
 
 	checkGroupReplicaErrors := func(st Client, err error) error {
-		if useLabelBasedStrategy {
-			// Label-based quorum strategy
-			if mustSuccessStores[st] {
-				// Must-success store failed - abort immediately
-				addr, _ := st.Addr()
-				msg := "Must-success store failed (no valid group/quorum labels)"
-				level.Error(reqLogger).Log("msg", msg, "store", addr)
-				return fmt.Errorf("%s store=%s: %w", msg, addr, err)
-			}
-
-			groupKey := s.getGroupKey(st)
-			groupFailed[groupKey]++
-			healthy := groupStores[groupKey] - groupFailed[groupKey]
-			quorum := groupQuorum[groupKey]
-
-			if healthy < quorum {
-				msg := "Group does not meet quorum requirement"
+		ri := st.ReplicaInfo()
+		if ri.IsMustSuccess() {
+			// Legacy DNS-based strategy (must-success store)
+			if len(failedStores[ri.Group]) > 1 {
+				msg := "Multiple replicas have failures for the same group"
+				replicas := fmt.Sprintf("%+v", failedStores[ri.Group])
 				level.Error(reqLogger).Log(
 					"msg", msg,
-					"group", groupKey,
-					"healthy", healthy,
-					"quorum", quorum,
-					"total", groupStores[groupKey],
-					"failed", groupFailed[groupKey],
+					"group", ri.Group,
+					"replicas", replicas,
 				)
-				return fmt.Errorf("%s group=%s healthy=%d quorum=%d: %w", msg, groupKey, healthy, quorum, err)
+				return fmt.Errorf("%s group=%s replicas=%s: %w", msg, ri.Group, replicas, err)
+			}
+			if len(groupReplicaStores[ri.Group]) == 1 && failedStores[ri.Group][ri.Replica] > 1 {
+				msg := "A group with single replica has multiple failures"
+				replicas := fmt.Sprintf("%+v", failedStores[ri.Group])
+				level.Error(reqLogger).Log(
+					"msg", msg,
+					"group", ri.Group,
+					"replicas", replicas,
+				)
+				return fmt.Errorf("%s group=%s replicas=%s: %w", msg, ri.Group, replicas, err)
 			}
 			return nil
 		}
 
-		// Legacy DNS-based strategy
-		groupKey := st.GroupKey()
-		replicaKey := st.ReplicaKey()
-		if len(failedStores[groupKey]) > 1 {
-			msg := "Multiple replicas have failures for the same group"
-			replicas := fmt.Sprintf("%+v", failedStores[groupKey])
-			level.Error(reqLogger).Log(
-				"msg", msg,
-				"group", groupKey,
-				"replicas", replicas,
-			)
-			return fmt.Errorf("%s group=%s replicas=%s: %w", msg, groupKey, replicas, err)
+		// Quorum-based strategy
+		if mustSuccessStores[st] {
+			// Must-success store failed - abort immediately
+			addr, _ := st.Addr()
+			msg := "Must-success store failed (no valid replica group)"
+			level.Error(reqLogger).Log("msg", msg, "store", addr)
+			return fmt.Errorf("%s store=%s: %w", msg, addr, err)
 		}
-		if len(groupReplicaStores[groupKey]) == 1 && failedStores[groupKey][replicaKey] > 1 {
-			msg := "A group with single replica has multiple failures"
-			replicas := fmt.Sprintf("%+v", failedStores[groupKey])
+
+		groupFailed[ri.Group]++
+		healthy := groupStores[ri.Group] - groupFailed[ri.Group]
+		requiredQuorum := groupQuorum[ri.Group]
+
+		if healthy < requiredQuorum {
+			msg := "Group does not meet quorum requirement"
 			level.Error(reqLogger).Log(
 				"msg", msg,
-				"group", groupKey,
-				"replicas", replicas,
+				"group", ri.Group,
+				"healthy", healthy,
+				"quorum", requiredQuorum,
+				"total", groupStores[ri.Group],
+				"failed", groupFailed[ri.Group],
 			)
-			return fmt.Errorf("%s group=%s replicas=%s: %w", msg, groupKey, replicas, err)
+			return fmt.Errorf("%s group=%s healthy=%d quorum=%d: %w", msg, ri.Group, healthy, requiredQuorum, err)
 		}
 		return nil
 	}
 
 	logGroupReplicaErrors := func() {
-		if useLabelBasedStrategy {
-			if len(groupFailed) > 0 {
-				level.Warn(s.logger).Log("msg", "Group/quorum errors",
-					"mode", "label-based",
-					"group_failures", fmt.Sprintf("%+v", groupFailed),
-					"total_failed_stores", totalFailedStores,
-				)
-				s.metrics.failedStoresPerQuery.Set(float64(totalFailedStores))
-			}
-		} else {
-			if len(failedStores) > 0 {
-				level.Warn(s.logger).Log("msg", "Group/replica errors",
-					"mode", "dns-based",
-					"errors", fmt.Sprintf("%+v", failedStores),
-					"total_failed_stores", totalFailedStores,
-				)
-				s.metrics.failedStoresPerQuery.Set(float64(totalFailedStores))
-			}
+		if len(groupFailed) > 0 {
+			level.Warn(s.logger).Log("msg", "Group/quorum errors",
+				"mode", "quorum-based",
+				"group_failures", fmt.Sprintf("%+v", groupFailed),
+				"total_failed_stores", totalFailedStores,
+			)
+			s.metrics.failedStoresPerQuery.Set(float64(totalFailedStores))
+		}
+		if len(failedStores) > 0 {
+			level.Warn(s.logger).Log("msg", "Group/replica errors",
+				"mode", "dns-based",
+				"errors", fmt.Sprintf("%+v", failedStores),
+				"total_failed_stores", totalFailedStores,
+			)
+			s.metrics.failedStoresPerQuery.Set(float64(totalFailedStores))
 		}
 	}
 	defer logGroupReplicaErrors()
@@ -735,19 +674,19 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 			}
 
 			totalFailedStores++
-			if useLabelBasedStrategy {
-				groupKey := s.getGroupKey(st)
+			ri := st.ReplicaInfo()
+			if ri.IsMustSuccess() {
+				// Legacy DNS-based strategy (must-success store)
+				level.Warn(s.logger).Log("msg", "Store failure", "group", ri.Group, "replica", ri.Replica, "err", err)
+				s.metrics.storeFailureCount.WithLabelValues(ri.Group, ri.Replica).Inc()
+				bumpCounter(ri.Group, ri.Replica, failedStores)
+			} else {
+				// Quorum-based strategy
 				addr, _ := st.Addr()
-				level.Warn(s.logger).Log("msg", "Store failure", "group", groupKey, "store", addr, "err", err)
-				// Note: We don't record to storeFailureCount metric in label-based mode
+				level.Warn(s.logger).Log("msg", "Store failure", "group", ri.Group, "store", addr, "err", err)
+				// Note: We don't record to storeFailureCount metric in quorum-based mode
 				// because the existing metric uses (group, replica) labels which have
 				// different semantics than (group, addr).
-			} else {
-				groupKey := st.GroupKey()
-				replicaKey := st.ReplicaKey()
-				level.Warn(s.logger).Log("msg", "Store failure", "group", groupKey, "replica", replicaKey, "err", err)
-				s.metrics.storeFailureCount.WithLabelValues(groupKey, replicaKey).Inc()
-				bumpCounter(groupKey, replicaKey, failedStores)
 			}
 			if originalRequest.PartialResponseStrategy == storepb.PartialResponseStrategy_GROUP_REPLICA {
 				if checkGroupReplicaErrors(st, err) != nil {

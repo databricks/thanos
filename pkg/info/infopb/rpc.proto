@@ -64,6 +64,18 @@ message StoreInfo {
 
     // TSDBInfos holds metadata for all TSDBs exposed by the store.
     repeated TSDBInfo tsdb_infos = 6 [(gogoproto.nullable) = false];
+
+    // Replica topology hints for GROUP_REPLICA partial response strategy.
+    // Stores with the same replica_group value hold replicated data.
+    // When set, the query layer can tolerate failures as long as enough
+    // replicas in the group are healthy (determined by quorum).
+    // If empty, the store is treated as a "must-success" store.
+    string replica_group = 7;
+
+    // Minimum number of healthy stores required per replica group.
+    // Only meaningful when replica_group is set.
+    // If 0 or not set, the store is treated as a "must-success" store.
+    int32 quorum = 8;
 }
 
 // RulesInfo holds the metadata related to Rules API exposed by the component.

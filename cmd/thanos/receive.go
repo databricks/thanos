@@ -73,11 +73,6 @@ func registerReceive(app *extkingpin.App) {
 			return errors.Wrap(err, "parse labels")
 		}
 
-		infoOnlyLset, err := parseFlagLabels(conf.infoOnlyLblStrs)
-		if err != nil {
-			return errors.Wrap(err, "parse info-only labels")
-		}
-
 		if !model.LabelName.IsValid(model.LabelName(conf.tenantLabelName)) {
 			return errors.Errorf("unsupported format for tenant label name, got %s", conf.tenantLabelName)
 		}
@@ -122,7 +117,6 @@ func registerReceive(app *extkingpin.App) {
 			logFilterMethods,
 			tsdbOpts,
 			lset,
-			infoOnlyLset,
 			component.Receive,
 			metadata.HashFunc(conf.hashFunc),
 			receiveMode,
@@ -141,7 +135,6 @@ func runReceive(
 	logFilterMethods []string,
 	tsdbOpts *tsdb.Options,
 	lset labels.Labels,
-	infoOnlyLset labels.Labels,
 	comp component.SourceStoreAPI,
 	hashFunc metadata.HashFunc,
 	receiveMode receive.ReceiverMode,
@@ -256,8 +249,8 @@ func runReceive(
 		}
 		multiTSDBOptions = append(multiTSDBOptions, receive.WithMatchersCache(cache))
 	}
-	if infoOnlyLset.Len() > 0 {
-		multiTSDBOptions = append(multiTSDBOptions, receive.WithInfoOnlyLabels(infoOnlyLset))
+	if conf.replicaGroup != "" {
+		multiTSDBOptions = append(multiTSDBOptions, receive.WithReplicaGroup(conf.replicaGroup, conf.quorum))
 	}
 
 	dbs := receive.NewMultiTSDB(
@@ -459,6 +452,8 @@ func runReceive(
 						SupportsSharding:             true,
 						SupportsWithoutReplicaLabels: true,
 						TsdbInfos:                    proxy.TSDBInfos(),
+						ReplicaGroup:                 conf.replicaGroup,
+						Quorum:                       int32(conf.quorum),
 					}, nil
 				}
 				return nil, errors.New("Not ready")
@@ -941,9 +936,10 @@ type receiveConfig struct {
 	rwClientSkipVerify    bool
 	rwServerTlsMinVersion string
 
-	dataDir         string
-	labelStrs       []string
-	infoOnlyLblStrs []string
+	dataDir      string
+	labelStrs    []string
+	replicaGroup string
+	quorum       int
 
 	objStoreConfig *extflag.PathOrContent
 	retention      *model.Duration
@@ -1046,7 +1042,9 @@ func (rc *receiveConfig) registerFlag(cmd extkingpin.FlagClause) {
 
 	cmd.Flag("label", "External labels to announce. This flag will be removed in the future when handling multiple tsdb instances is added.").PlaceHolder("key=\"value\"").StringsVar(&rc.labelStrs)
 
-	cmd.Flag("label-info-only", "Labels to expose only via InfoAPI (for store discovery), but NOT merge into series responses. Useful for metadata like replica group/quorum that query component needs for routing but shouldn't be in query results.").PlaceHolder("key=\"value\"").StringsVar(&rc.infoOnlyLblStrs)
+	cmd.Flag("receive.replica-group", "Replica group identifier for GROUP_REPLICA partial response strategy. Stores with the same replica_group value hold replicated data. When set, the query layer can tolerate failures as long as enough replicas in the group are healthy.").Default("").StringVar(&rc.replicaGroup)
+
+	cmd.Flag("receive.quorum", "Minimum number of healthy stores required per replica group for GROUP_REPLICA partial response strategy. Only meaningful when receive.replica-group is set. If 0, the store is treated as must-success.").Default("0").IntVar(&rc.quorum)
 
 	rc.objStoreConfig = extkingpin.RegisterCommonObjStoreFlags(cmd, "", false)
 
