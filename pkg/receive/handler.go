@@ -681,6 +681,16 @@ func (h *Handler) receiveHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Deep copy all labels to detach them from the pooled buffer.
+	// This is necessary because:
+	// 1. The pooled buffer will be returned and reused when this function returns
+	// 2. Async remote write goroutines may still reference the labels
+	// 3. Even local writes need detached labels for TSDB storage
+	// Use the same intern setting as the writer to ensure consistent behavior.
+	for i := range wreq.Timeseries {
+		labelpb.ReAllocZLabelsStrings(&wreq.Timeseries[i].Labels, h.writer.opts.Intern)
+	}
+
 	responseStatusCode := http.StatusOK
 	tenantStats, err := h.handleRequest(ctx, rep, tenantHTTP, wreq)
 	if err != nil {
