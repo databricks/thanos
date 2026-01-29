@@ -249,6 +249,9 @@ func runReceive(
 		}
 		multiTSDBOptions = append(multiTSDBOptions, receive.WithMatchersCache(cache))
 	}
+	if conf.replicaGroup != "" {
+		multiTSDBOptions = append(multiTSDBOptions, receive.WithReplicaGroup(conf.replicaGroup, conf.quorum))
+	}
 
 	dbs := receive.NewMultiTSDB(
 		conf.dataDir,
@@ -449,6 +452,8 @@ func runReceive(
 						SupportsSharding:             true,
 						SupportsWithoutReplicaLabels: true,
 						TsdbInfos:                    proxy.TSDBInfos(),
+						ReplicaGroup:                 conf.replicaGroup,
+						Quorum:                       int32(conf.quorum),
 					}, nil
 				}
 				return nil, errors.New("Not ready")
@@ -931,8 +936,10 @@ type receiveConfig struct {
 	rwClientSkipVerify    bool
 	rwServerTlsMinVersion string
 
-	dataDir   string
-	labelStrs []string
+	dataDir      string
+	labelStrs    []string
+	replicaGroup string
+	quorum       int
 
 	objStoreConfig *extflag.PathOrContent
 	retention      *model.Duration
@@ -1034,6 +1041,10 @@ func (rc *receiveConfig) registerFlag(cmd extkingpin.FlagClause) {
 		Default("./data").StringVar(&rc.dataDir)
 
 	cmd.Flag("label", "External labels to announce. This flag will be removed in the future when handling multiple tsdb instances is added.").PlaceHolder("key=\"value\"").StringsVar(&rc.labelStrs)
+
+	cmd.Flag("receive.replica-group", "Replica group identifier for GROUP_REPLICA partial response strategy. Stores with the same replica_group value hold replicated data. When set, the query layer can tolerate failures as long as enough replicas in the group are healthy.").Default("").StringVar(&rc.replicaGroup)
+
+	cmd.Flag("receive.quorum", "Minimum number of healthy stores required per replica group for GROUP_REPLICA partial response strategy. Only meaningful when receive.replica-group is set. If 0, the store is treated as must-success.").Default("0").IntVar(&rc.quorum)
 
 	rc.objStoreConfig = extkingpin.RegisterCommonObjStoreFlags(cmd, "", false)
 

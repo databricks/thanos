@@ -53,6 +53,8 @@ type MultiTSDB struct {
 	tsdbOpts        *tsdb.Options
 	tenantLabelName string
 	labels          labels.Labels
+	replicaGroup    string // Replica group identifier for GROUP_REPLICA partial response strategy
+	quorum          int32  // Minimum healthy stores required per group
 	bucket          objstore.Bucket
 
 	mtx                   *sync.RWMutex
@@ -107,6 +109,15 @@ func WithPathSegmentsBeforeTenant(segments []string) MultiTSDBOption {
 func WithMatchersCache(cache storecache.MatchersCache) MultiTSDBOption {
 	return func(s *MultiTSDB) {
 		s.matcherCache = cache
+	}
+}
+
+// WithReplicaGroup sets the replica group identifier and quorum for GROUP_REPLICA
+// partial response strategy. Stores with the same replica_group value hold replicated data.
+func WithReplicaGroup(replicaGroup string, quorum int) MultiTSDBOption {
+	return func(s *MultiTSDB) {
+		s.replicaGroup = replicaGroup
+		s.quorum = int32(quorum)
 	}
 }
 
@@ -275,12 +286,10 @@ func (l *localClient) LabelValues(ctx context.Context, in *storepb.LabelValuesRe
 	return l.store.LabelValues(ctx, in)
 }
 
-func (l *localClient) GroupKey() string {
-	return ""
-}
-
-func (l *localClient) ReplicaKey() string {
-	return ""
+// ReplicaInfo returns replica topology hints for GROUP_REPLICA partial response strategy.
+// It delegates to the underlying TSDBStore which has the first-class replica_group and quorum fields.
+func (l *localClient) ReplicaInfo() store.ReplicaInfo {
+	return l.store.ReplicaInfo()
 }
 
 func (l *localClient) Matches(matchers []*labels.Matcher) bool {
@@ -846,7 +855,11 @@ func (t *MultiTSDB) startTSDB(logger log.Logger, tenantID string, tenant *tenant
 	if t.matcherCache != nil {
 		options = append(options, store.WithMatcherCacheInstance(t.matcherCache))
 	}
-	tenant.set(store.NewTSDBStore(logger, s, component.Receive, lset, options...), s, ship, exemplars.NewTSDB(s, lset))
+	tsdbStore := store.NewTSDBStore(logger, s, component.Receive, lset, options...)
+	if t.replicaGroup != "" {
+		tsdbStore.SetReplicaInfo(t.replicaGroup, t.quorum)
+	}
+	tenant.set(tsdbStore, s, ship, exemplars.NewTSDB(s, lset))
 	t.addTenantLocked(tenantID, tenant) // need to update the client list once store is ready & client != nil
 	level.Info(logger).Log("msg", "TSDB is now ready")
 	return nil

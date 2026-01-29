@@ -257,6 +257,18 @@ func (q *querier) isDedupEnabled() bool {
 	return q.deduplicate && len(q.replicaLabels) > 0
 }
 
+// getWithoutReplicaLabels returns the list of labels to strip from query results.
+// This includes replica labels for deduplication.
+// Note: group/quorum labels for GROUP_REPLICA strategy are NOT included here because
+// they are configured as info-only labels on receivers, meaning they are only exposed
+// via InfoAPI for store discovery but NOT merged into series responses.
+func (q *querier) getWithoutReplicaLabels() []string {
+	if q.isDedupEnabled() {
+		return q.replicaLabels
+	}
+	return nil
+}
+
 type seriesServer struct {
 	// This field just exist to pseudo-implement the unused methods of the interface.
 	storepb.Store_SeriesServer
@@ -411,9 +423,10 @@ func (q *querier) selectFn(ctx context.Context, hints *storage.SelectHints, ms .
 		PartialResponseStrategy: q.partialResponseStrategy,
 		SkipChunks:              q.skipChunks,
 	}
-	if q.isDedupEnabled() {
-		// Soft ask to sort without replica labels and push them at the end of labelset.
-		req.WithoutReplicaLabels = q.replicaLabels
+	// Soft ask to sort without replica labels and push them at the end of labelset.
+	// This includes dedup replica labels and group/replica labels for the GROUP_REPLICA strategy.
+	if labels := q.getWithoutReplicaLabels(); len(labels) > 0 {
+		req.WithoutReplicaLabels = labels
 	}
 
 	if err := q.proxy.Series(&req, resp); err != nil {
@@ -471,8 +484,8 @@ func (q *querier) LabelValues(ctx context.Context, name string, hints *storage.L
 		Limit:                   int64(hints.Limit),
 	}
 
-	if q.isDedupEnabled() {
-		req.WithoutReplicaLabels = q.replicaLabels
+	if labels := q.getWithoutReplicaLabels(); len(labels) > 0 {
+		req.WithoutReplicaLabels = labels
 	}
 
 	resp, err := q.proxy.LabelValues(ctx, req)
@@ -514,8 +527,8 @@ func (q *querier) LabelNames(ctx context.Context, hints *storage.LabelHints, mat
 		Limit:                   int64(hints.Limit),
 	}
 
-	if q.isDedupEnabled() {
-		req.WithoutReplicaLabels = q.replicaLabels
+	if labels := q.getWithoutReplicaLabels(); len(labels) > 0 {
+		req.WithoutReplicaLabels = labels
 	}
 
 	resp, err := q.proxy.LabelNames(ctx, req)
