@@ -14,6 +14,7 @@ import (
 	"github.com/efficientgo/core/testutil"
 	"github.com/go-kit/log"
 	"github.com/prometheus/prometheus/storage"
+	"go.uber.org/atomic"
 
 	"github.com/thanos-io/thanos/pkg/component"
 	"github.com/thanos-io/thanos/pkg/store"
@@ -79,7 +80,7 @@ func TestQuerier_Proxy(t *testing.T) {
 				// TODO(bwplotka): Parse external labels.
 				sc.append(&storetestutil.TestClient{
 					Name:        fmt.Sprintf("store number %v", i),
-					StoreClient: storepb.ServerAsClient(selectedStore(store.NewTSDBStore(logger, st.storage.DB, component.Debug, nil), m, st.mint, st.maxt)),
+					StoreClient: storepb.ServerAsClient(selectedStore(store.NewTSDBStore(logger, st.storage.DB, component.Debug, nil), m, st.mint, st.maxt), atomic.Bool{}),
 					MinTime:     st.mint,
 					MaxTime:     st.maxt,
 				})
