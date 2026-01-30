@@ -279,6 +279,14 @@ func (s *seriesServer) Send(r *storepb.SeriesResponse) error {
 		return nil
 	}
 
+	if batch := r.GetBatch(); batch != nil {
+		for _, series := range batch.Series {
+			s.seriesSet = append(s.seriesSet, *series)
+			s.seriesSetStats.Count(storepb.NewSeriesResponse(series))
+		}
+		return nil
+	}
+
 	// Unsupported field, skip.
 	return nil
 }

@@ -475,7 +475,34 @@ func newLazyRespSet(
 				seriesStats.Count(resp)
 			}
 
+			if batch := resp.GetBatch(); batch != nil {
+				for _, series := range batch.Series {
+					seriesStats.Count(storepb.NewSeriesResponse(series))
+				}
+			}
+
 			l.bufferedResponsesMtx.Lock()
+			// Handle batch responses by expanding them into individual series responses
+			if batch := resp.GetBatch(); batch != nil {
+				for _, series := range batch.Series {
+					if applySharding && !shardMatcher.MatchesZLabels(series.Labels) {
+						continue
+					}
+					for l.isFull() && !l.closed {
+						l.bufferSlotEvent.Wait()
+					}
+					if l.closed {
+						l.bufferedResponsesMtx.Unlock()
+						return true
+					}
+					l.bufferedResponses[l.ringTail] = storepb.NewSeriesResponse(series)
+					l.ringTail = (l.ringTail + 1) % l.fixedBufferSize
+					l.dataOrFinishEvent.Signal()
+				}
+				l.bufferedResponsesMtx.Unlock()
+				return true
+			}
+
 			for l.isFull() && !l.closed {
 				l.bufferSlotEvent.Wait()
 			}
@@ -746,6 +773,18 @@ func newEagerRespSet(
 
 			if resp.GetSeries() != nil {
 				seriesStats.Count(resp)
+			}
+
+			// Handle batch responses by expanding them into individual series responses
+			if batch := resp.GetBatch(); batch != nil {
+				for _, series := range batch.Series {
+					seriesStats.Count(storepb.NewSeriesResponse(series))
+					if applySharding && !shardMatcher.MatchesZLabels(series.Labels) {
+						continue
+					}
+					l.bufferedResponses = append(l.bufferedResponses, storepb.NewSeriesResponse(series))
+				}
+				return true
 			}
 
 			l.bufferedResponses = append(l.bufferedResponses, resp)

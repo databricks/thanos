@@ -5,13 +5,18 @@ package indexheader
 
 import (
 	"context"
+	"path"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/go-kit/log"
+	"github.com/prometheus/client_golang/prometheus"
 	promtestutil "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/prometheus/prometheus/model/labels"
+	"github.com/stretchr/testify/require"
+	"github.com/thanos-io/objstore"
 	"github.com/thanos-io/objstore/providers/filesystem"
 
 	"github.com/efficientgo/core/testutil"
@@ -131,4 +136,115 @@ func TestReaderPool_ShouldCloseIdleLazyReaders(t *testing.T) {
 	testutil.Assert(t, !pool.isTracking(r.(*LazyBinaryReader)))
 	testutil.Equals(t, float64(2), promtestutil.ToFloat64(metrics.lazyReader.loadCount))
 	testutil.Equals(t, float64(2), promtestutil.ToFloat64(metrics.lazyReader.unloadCount))
+}
+
+func TestReaderPool_MultipleReaders(t *testing.T) {
+	ctx := context.Background()
+
+	blkDir := t.TempDir()
+
+	bkt := objstore.NewInMemBucket()
+	b1, err := e2eutil.CreateBlock(ctx, blkDir, []labels.Labels{
+		labels.New(labels.Label{Name: "a", Value: "1"}),
+		labels.New(labels.Label{Name: "a", Value: "2"}),
+		labels.New(labels.Label{Name: "a", Value: "3"}),
+		labels.New(labels.Label{Name: "a", Value: "4"}),
+		labels.New(labels.Label{Name: "b", Value: "1"}),
+	}, 100, 0, 1000, labels.New(labels.Label{Name: "ext1", Value: "val1"}), 124, metadata.NoneFunc)
+	testutil.Ok(t, err)
+
+	require.NoError(t, block.Upload(ctx, log.NewNopLogger(), bkt, filepath.Join(blkDir, b1.String()), metadata.NoneFunc))
+
+	readerPool := NewReaderPool(
+		log.NewNopLogger(),
+		true,
+		time.Minute,
+		NewReaderPoolMetrics(prometheus.NewRegistry()),
+		AlwaysEagerDownloadIndexHeader,
+	)
+
+	dlDir := t.TempDir()
+
+	m, err := metadata.ReadFromDir(filepath.Join(blkDir, b1.String()))
+	testutil.Ok(t, err)
+
+	startWg := &sync.WaitGroup{}
+	startWg.Add(1)
+
+	waitWg := &sync.WaitGroup{}
+
+	const readersCount = 10
+	waitWg.Add(readersCount)
+	for range readersCount {
+		go func() {
+			defer waitWg.Done()
+			t.Logf("waiting")
+			startWg.Wait()
+			t.Logf("starting")
+
+			br, err := readerPool.NewBinaryReader(ctx, log.NewNopLogger(), bkt, dlDir, b1, 32, m)
+			testutil.Ok(t, err)
+
+			t.Cleanup(func() {
+				testutil.Ok(t, br.Close())
+			})
+		}()
+	}
+
+	startWg.Done()
+	waitWg.Wait()
+}
+
+func TestReaderPool_NewBinaryReader_ErrDoesNotInsertNilReader(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	bkt, err := filesystem.NewBucket(filepath.Join(tmpDir, "bkt"))
+	testutil.Ok(t, err)
+	t.Cleanup(func() { testutil.Ok(t, bkt.Close()) })
+
+	// Create and upload a valid block.
+	blockID, err := e2eutil.CreateBlock(
+		ctx, tmpDir,
+		[]labels.Labels{
+			labels.FromStrings("a", "1"),
+			labels.FromStrings("a", "2"),
+		},
+		100, 0, 1000,
+		labels.FromStrings("ext1", "1"),
+		124, metadata.NoneFunc,
+	)
+	testutil.Ok(t, err)
+	testutil.Ok(t, block.Upload(ctx, log.NewNopLogger(), bkt, filepath.Join(tmpDir, blockID.String()), metadata.NoneFunc))
+
+	// Now remove the index object from the bucket to force the "missing index" path.
+	// This simulates partial/invalid upload so NewLazyBinaryReader fails.
+	idxPath := path.Join(blockID.String(), block.IndexFilename)
+	testutil.Ok(t, bkt.Delete(ctx, idxPath))
+
+	meta, err := metadata.ReadFromDir(filepath.Join(tmpDir, blockID.String()))
+	testutil.Ok(t, err)
+
+	// Enable lazy readers and tracking so the pool would normally insert into lazyReaders.
+	metrics := NewReaderPoolMetrics(nil)
+	pool := NewReaderPool(log.NewNopLogger(), true, time.Minute, metrics, AlwaysEagerDownloadIndexHeader)
+	t.Cleanup(pool.Close)
+
+	// Call NewBinaryReader: should return error and NOT insert a nil into pool.
+	r, err := pool.NewBinaryReader(ctx, log.NewNopLogger(), bkt, tmpDir, blockID, 3, meta)
+	if err == nil {
+		t.Fatalf("expected error due to missing index, got nil (reader=%v)", r)
+	}
+	if r != nil {
+		t.Fatalf("expected nil reader on error, got %T", r)
+	}
+
+	// Pool should remain empty
+	pool.lazyReadersMx.Lock()
+	got := len(pool.lazyReaders)
+	pool.lazyReadersMx.Unlock()
+	testutil.Equals(t, 0, got)
+
+	// Exercise sweeper to ensure it doesn't trip over a bad entry.
+	pool.closeIdleReaders()
 }

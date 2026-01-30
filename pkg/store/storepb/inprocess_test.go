@@ -6,9 +6,11 @@ package storepb
 import (
 	"context"
 	"io"
+	"sync"
 	"testing"
 
 	"github.com/thanos-io/thanos/pkg/testutil/custom"
+	"go.uber.org/atomic"
 
 	"github.com/efficientgo/core/testutil"
 	"github.com/pkg/errors"
@@ -73,14 +75,14 @@ func TestServerAsClient(t *testing.T) {
 				}),
 			}}
 		t.Run("ok", func(t *testing.T) {
-			for i := 0; i < 20; i++ {
+			for range 20 {
 				r := &SeriesRequest{
 					MinTime:                 -214,
 					MaxTime:                 213,
 					Matchers:                []LabelMatcher{{Value: "wfsdfs", Name: "__name__", Type: LabelMatcher_EQ}},
 					PartialResponseStrategy: PartialResponseStrategy_ABORT,
 				}
-				client, err := ServerAsClient(s).Series(ctx, r)
+				client, err := ServerAsClient(s, atomic.Bool{}).Series(ctx, r)
 				testutil.Ok(t, err)
 				var resps []*SeriesResponse
 				for {
@@ -98,14 +100,14 @@ func TestServerAsClient(t *testing.T) {
 		})
 		t.Run("ok, close send", func(t *testing.T) {
 			s.err = errors.New("some error")
-			for i := 0; i < 20; i++ {
+			for range 20 {
 				r := &SeriesRequest{
 					MinTime:                 -214,
 					MaxTime:                 213,
 					Matchers:                []LabelMatcher{{Value: "wfsdfs", Name: "__name__", Type: LabelMatcher_EQ}},
 					PartialResponseStrategy: PartialResponseStrategy_ABORT,
 				}
-				client, err := ServerAsClient(s).Series(ctx, r)
+				client, err := ServerAsClient(s, atomic.Bool{}).Series(ctx, r)
 				testutil.Ok(t, err)
 				var resps []*SeriesResponse
 				for {
@@ -126,14 +128,14 @@ func TestServerAsClient(t *testing.T) {
 			}
 		})
 		t.Run("error", func(t *testing.T) {
-			for i := 0; i < 20; i++ {
+			for range 20 {
 				r := &SeriesRequest{
 					MinTime:                 -214,
 					MaxTime:                 213,
 					Matchers:                []LabelMatcher{{Value: "wfsdfs", Name: "__name__", Type: LabelMatcher_EQ}},
 					PartialResponseStrategy: PartialResponseStrategy_ABORT,
 				}
-				client, err := ServerAsClient(s).Series(ctx, r)
+				client, err := ServerAsClient(s, atomic.Bool{}).Series(ctx, r)
 				testutil.Ok(t, err)
 				var resps []*SeriesResponse
 				for {
@@ -152,17 +154,44 @@ func TestServerAsClient(t *testing.T) {
 				s.seriesLastReq = nil
 			}
 		})
+		t.Run("race", func(t *testing.T) {
+			s.err = nil
+			for range 20 {
+				r := &SeriesRequest{
+					MinTime:                 -214,
+					MaxTime:                 213,
+					Matchers:                []LabelMatcher{{Value: "wfsdfs", Name: "__name__", Type: LabelMatcher_EQ}},
+					PartialResponseStrategy: PartialResponseStrategy_ABORT,
+				}
+				client, err := ServerAsClient(s, atomic.Bool{}).Series(ctx, r)
+				testutil.Ok(t, err)
+				var wg sync.WaitGroup
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					for {
+						_, err := client.Recv()
+						if err != nil {
+							break
+						}
+					}
+				}()
+				testutil.Ok(t, client.CloseSend())
+				wg.Wait()
+				s.seriesLastReq = nil
+			}
+		})
 	})
 	t.Run("LabelNames", func(t *testing.T) {
 		s := &testStoreServer{}
 		t.Run("ok", func(t *testing.T) {
-			for i := 0; i < 20; i++ {
+			for range 20 {
 				r := &LabelNamesRequest{
 					Start:                   -1,
 					End:                     234,
 					PartialResponseStrategy: PartialResponseStrategy_ABORT,
 				}
-				resp, err := ServerAsClient(s).LabelNames(ctx, r)
+				resp, err := ServerAsClient(s, atomic.Bool{}).LabelNames(ctx, r)
 				testutil.Ok(t, err)
 				testutil.Equals(t, s.labelNames, resp)
 				testutil.Equals(t, r, s.labelNamesLastReq)
@@ -171,13 +200,13 @@ func TestServerAsClient(t *testing.T) {
 		})
 		t.Run("error", func(t *testing.T) {
 			s.err = errors.New("some error")
-			for i := 0; i < 20; i++ {
+			for range 20 {
 				r := &LabelNamesRequest{
 					Start:                   -1,
 					End:                     234,
 					PartialResponseStrategy: PartialResponseStrategy_ABORT,
 				}
-				_, err := ServerAsClient(s).LabelNames(ctx, r)
+				_, err := ServerAsClient(s, atomic.Bool{}).LabelNames(ctx, r)
 				testutil.NotOk(t, err)
 				testutil.Equals(t, s.err, err)
 			}
@@ -191,14 +220,14 @@ func TestServerAsClient(t *testing.T) {
 			},
 		}
 		t.Run("ok", func(t *testing.T) {
-			for i := 0; i < 20; i++ {
+			for range 20 {
 				r := &LabelValuesRequest{
 					Label:                   "__name__",
 					Start:                   -1,
 					End:                     234,
 					PartialResponseStrategy: PartialResponseStrategy_ABORT,
 				}
-				resp, err := ServerAsClient(s).LabelValues(ctx, r)
+				resp, err := ServerAsClient(s, atomic.Bool{}).LabelValues(ctx, r)
 				testutil.Ok(t, err)
 				testutil.Equals(t, s.labelValues, resp)
 				testutil.Equals(t, r, s.labelValuesLastReq)
@@ -207,14 +236,14 @@ func TestServerAsClient(t *testing.T) {
 		})
 		t.Run("error", func(t *testing.T) {
 			s.err = errors.New("some error")
-			for i := 0; i < 20; i++ {
+			for range 20 {
 				r := &LabelValuesRequest{
 					Label:                   "__name__",
 					Start:                   -1,
 					End:                     234,
 					PartialResponseStrategy: PartialResponseStrategy_ABORT,
 				}
-				_, err := ServerAsClient(s).LabelValues(ctx, r)
+				_, err := ServerAsClient(s, atomic.Bool{}).LabelValues(ctx, r)
 				testutil.NotOk(t, err)
 				testutil.Equals(t, s.err, err)
 			}

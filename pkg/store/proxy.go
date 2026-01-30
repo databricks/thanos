@@ -369,7 +369,9 @@ func (s *ProxyStore) TSDBInfos() []infopb.TSDBInfo {
 	return infos
 }
 
-func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.Store_SeriesServer) error {
+func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, seriesSrv storepb.Store_SeriesServer) error {
+	srv := newBatchableServer(seriesSrv, int(originalRequest.ResponseBatchSize))
+
 	// TODO(bwplotka): This should be part of request logger, otherwise it does not make much sense. Also, could be
 	// triggered by tracing span to reduce cognitive load.
 	reqLogger := log.With(s.logger, "component", "proxy")
@@ -502,6 +504,7 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 		PartialResponseStrategy: originalRequest.PartialResponseStrategy,
 		ShardInfo:               originalRequest.ShardInfo,
 		WithoutReplicaLabels:    originalRequest.WithoutReplicaLabels,
+		ResponseBatchSize:       originalRequest.ResponseBatchSize,
 	}
 	if originalRequest.PartialResponseStrategy == storepb.PartialResponseStrategy_GROUP_REPLICA && !s.forwardPartialStrategy {
 		// Do not forward this field as it might cause data loss.
@@ -698,6 +701,11 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 			level.Error(reqLogger).Log("msg", "failed to stream response", "error", err)
 			return status.Error(codes.Unknown, errors.Wrap(err, "send series response").Error())
 		}
+	}
+
+	// Flush any remaining buffered series from the batchable server.
+	if f, ok := srv.(flushableServer); ok {
+		return f.Flush()
 	}
 
 	return nil
