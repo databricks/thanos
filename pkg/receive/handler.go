@@ -1125,9 +1125,6 @@ func (h *Handler) RemoteWrite(ctx context.Context, r *storepb.WriteRequest) (*st
 	span, ctx := tracing.StartSpan(ctx, "receive_grpc")
 	defer span.Finish()
 
-	h.pendingWriteRequests.Set(float64(h.pendingWriteRequestsCounter.Add(1)))
-	defer h.pendingWriteRequestsCounter.Add(-1)
-
 	// Fast path for IngestorOnly mode: write directly to local TSDB.
 	// This skips distributeTimeseriesToReplicas and sendLocalWrite since
 	// the Router already determined this data belongs to this node.

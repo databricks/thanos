@@ -166,14 +166,16 @@ func TestServerAsClient(t *testing.T) {
 				client, err := ServerAsClient(s, atomic.Bool{}).Series(ctx, r)
 				testutil.Ok(t, err)
 				var wg sync.WaitGroup
-				wg.Go(func() {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
 					for {
 						_, err := client.Recv()
 						if err != nil {
 							break
 						}
 					}
-				})
+				}()
 				testutil.Ok(t, client.CloseSend())
 				wg.Wait()
 				s.seriesLastReq = nil

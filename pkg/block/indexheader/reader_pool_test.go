@@ -55,7 +55,7 @@ func TestReaderPool_NewBinaryReader(t *testing.T) {
 	blockID, err := e2eutil.CreateBlock(ctx, tmpDir, []labels.Labels{
 		labels.FromStrings("a", "1"),
 		labels.FromStrings("a", "2"),
-	}, 100, 0, 1000, labels.FromStrings("ext1", "1"), 124, metadata.NoneFunc, nil)
+	}, 100, 0, 1000, labels.FromStrings("ext1", "1"), 124, metadata.NoneFunc)
 	testutil.Ok(t, err)
 	testutil.Ok(t, block.Upload(ctx, log.NewNopLogger(), bkt, filepath.Join(tmpDir, blockID.String()), metadata.NoneFunc))
 
@@ -94,7 +94,7 @@ func TestReaderPool_ShouldCloseIdleLazyReaders(t *testing.T) {
 	blockID, err := e2eutil.CreateBlock(ctx, tmpDir, []labels.Labels{
 		labels.FromStrings("a", "1"),
 		labels.FromStrings("a", "2"),
-	}, 100, 0, 1000, labels.FromStrings("ext1", "1"), 124, metadata.NoneFunc, nil)
+	}, 100, 0, 1000, labels.FromStrings("ext1", "1"), 124, metadata.NoneFunc)
 	testutil.Ok(t, err)
 	testutil.Ok(t, block.Upload(ctx, log.NewNopLogger(), bkt, filepath.Join(tmpDir, blockID.String()), metadata.NoneFunc))
 	meta, err := metadata.ReadFromDir(filepath.Join(tmpDir, blockID.String()))
@@ -150,7 +150,7 @@ func TestReaderPool_MultipleReaders(t *testing.T) {
 		labels.New(labels.Label{Name: "a", Value: "3"}),
 		labels.New(labels.Label{Name: "a", Value: "4"}),
 		labels.New(labels.Label{Name: "b", Value: "1"}),
-	}, 100, 0, 1000, labels.New(labels.Label{Name: "ext1", Value: "val1"}), 124, metadata.NoneFunc, nil)
+	}, 100, 0, 1000, labels.New(labels.Label{Name: "ext1", Value: "val1"}), 124, metadata.NoneFunc)
 	testutil.Ok(t, err)
 
 	require.NoError(t, block.Upload(ctx, log.NewNopLogger(), bkt, filepath.Join(blkDir, b1.String()), metadata.NoneFunc))
@@ -212,7 +212,7 @@ func TestReaderPool_NewBinaryReader_ErrDoesNotInsertNilReader(t *testing.T) {
 		},
 		100, 0, 1000,
 		labels.FromStrings("ext1", "1"),
-		124, metadata.NoneFunc, nil,
+		124, metadata.NoneFunc,
 	)
 	testutil.Ok(t, err)
 	testutil.Ok(t, block.Upload(ctx, log.NewNopLogger(), bkt, filepath.Join(tmpDir, blockID.String()), metadata.NoneFunc))

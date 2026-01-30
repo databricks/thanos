@@ -862,7 +862,9 @@ func (f *DefaultDeduplicateFilter) Filter(_ context.Context, metas map[ulid.ULID
 
 	var dupsChan = make(chan ulid.ULID)
 
-	dupWg.Go(func() {
+	dupWg.Add(1)
+	go func() {
+		defer dupWg.Done()
 		dups := make([]ulid.ULID, 0)
 		for dup := range dupsChan {
 			if metas[dup] != nil {
@@ -874,15 +876,17 @@ func (f *DefaultDeduplicateFilter) Filter(_ context.Context, metas map[ulid.ULID
 		f.mu.Lock()
 		f.duplicateIDs = dups
 		f.mu.Unlock()
-	})
+	}()
 
 	// Start up workers to deduplicate workgroups when they're ready.
 	for i := 0; i < f.concurrency; i++ {
-		filterWg.Go(func() {
+		filterWg.Add(1)
+		go func() {
+			defer filterWg.Done()
 			for group := range groupChan {
 				f.filterGroup(group, dupsChan)
 			}
-		})
+		}()
 	}
 
 	// We need only look within a compaction group for duplicates, so splitting by group key gives us parallelizable streams.

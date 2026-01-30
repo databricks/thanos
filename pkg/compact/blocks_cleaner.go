@@ -10,7 +10,7 @@ import (
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
-	"github.com/oklog/ulid/v2"
+	"github.com/oklog/ulid"
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/thanos-io/objstore"
@@ -59,7 +59,9 @@ func (s *BlocksCleaner) DeleteMarkedBlocks(ctx context.Context) (map[ulid.ULID]s
 	)
 
 	for range conc {
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			for deletionMark := range dm {
 				if ctx.Err() != nil {
 					return
@@ -79,7 +81,7 @@ func (s *BlocksCleaner) DeleteMarkedBlocks(ctx context.Context) (map[ulid.ULID]s
 					deletedBlocksMtx.Unlock()
 				}
 			}
-		})
+		}()
 	}
 
 	for _, deletionMark := range deletionMarkMap {

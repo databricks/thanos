@@ -503,7 +503,7 @@ func runCompactForTenant(
 
 		progress.Set(compact.CleanBlocks)
 		compact.BestEffortCleanAbortedPartialUploads(ctx, logger, sy.Partial(), insBkt, compactMetrics.partialUploadDeleteAttempts, compactMetrics.blocksCleaned, compactMetrics.blockCleanupFailures)
-		if err := blocksCleaner.DeleteMarkedBlocks(ctx); err != nil {
+		if _, err := blocksCleaner.DeleteMarkedBlocks(ctx); err != nil {
 			return errors.Wrap(err, "cleaning marked blocks")
 		}
 		compactMetrics.cleanups.Inc()

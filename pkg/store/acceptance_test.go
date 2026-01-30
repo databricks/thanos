@@ -18,7 +18,6 @@ import (
 	"github.com/go-kit/log"
 	"github.com/pkg/errors"
 	"go.uber.org/atomic"
-	"golang.org/x/exp/slices"
 
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/model/labels"
