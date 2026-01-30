@@ -626,10 +626,10 @@ func (h *Handler) receiveHTTP(w http.ResponseWriter, r *http.Request) {
 	// store them for longer time.
 	// Use proto message pool to reduce allocations.
 	wreq := writeRequestPool.Get().(*prompb.WriteRequest)
+	wreq.Reset() // Reset immediately after getting from pool
 	defer func() {
 		// Reset before returning to pool to avoid memory leaks.
-		wreq.Timeseries = wreq.Timeseries[:0]
-		wreq.Metadata = wreq.Metadata[:0]
+		wreq.Reset()
 		writeRequestPool.Put(wreq)
 	}()
 
