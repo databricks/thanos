@@ -924,15 +924,16 @@ func (h *Handler) distributeTimeseriesToReplicas(
 	for tsIndex, ts := range timeseries {
 		var tenant = tenantHTTP
 
-		if h.splitTenantLabelName != "" {
+		// Only extract tenant from split label when running as a router.
+		// Ingestors should use the tenant determined by the router.
+		if h.splitTenantLabelName != "" && h.receiverMode != IngestorOnly {
 			lbls := labelpb.ZLabelsToPromLabels(ts.Labels)
 
 			tenantLabel := lbls.Get(h.splitTenantLabelName)
 			if tenantLabel != "" {
 				tenant = h.splitTenantLabelName + ":" + tenantLabel
-			} else {
-				tenant = h.options.DefaultTenantID
 			}
+			// If tenant label doesn't exist, keep the tenant from HTTP header (tenantHTTP)
 		}
 
 		for _, rn := range replicas {
@@ -1017,11 +1018,14 @@ func (h *Handler) sendLocalWrite(
 	tenantSeriesMapping := map[string][]prompb.TimeSeries{}
 	for _, ts := range trackedSeries.timeSeries {
 		var tenant = tenantHTTP
-		if h.splitTenantLabelName != "" {
+		// Only extract tenant from split label when running as a router.
+		// Ingestors should use the tenant determined by the router.
+		if h.splitTenantLabelName != "" && h.receiverMode != IngestorOnly {
 			lbls := labelpb.ZLabelsToPromLabels(ts.Labels)
 			if tnt := lbls.Get(h.splitTenantLabelName); tnt != "" {
-				tenant = tnt
+				tenant = h.splitTenantLabelName + ":" + tnt
 			}
+			// If tenant label doesn't exist, keep the tenant from HTTP header (tenantHTTP)
 		}
 		tenantSeriesMapping[tenant] = append(tenantSeriesMapping[tenant], ts)
 	}
