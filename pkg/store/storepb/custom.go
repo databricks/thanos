@@ -52,6 +52,16 @@ func NewHintsSeriesResponse(hints *types.Any) *SeriesResponse {
 	}
 }
 
+func NewBatchResponse(batch []Series) *SeriesResponse {
+	return &SeriesResponse{
+		Result: &SeriesResponse_Batch{
+			Batch: &SeriesBatch{
+				Series: batch,
+			},
+		},
+	}
+}
+
 func GRPCCodeFromWarn(warn string) codes.Code {
 	if strings.Contains(warn, "rpc error: code = ResourceExhausted") {
 		return codes.ResourceExhausted
@@ -535,13 +545,7 @@ func (c *SeriesStatsCounter) CountSeries(seriesLabels []labelpb.ZLabel) {
 	}
 }
 
-func (c *SeriesStatsCounter) Count(r *SeriesResponse) {
-	//aggregate # of bytes fetched
-	c.Bytes += uint64(r.Size())
-	if r.GetSeries() == nil {
-		return
-	}
-	series := r.GetSeries()
+func (c *SeriesStatsCounter) countSingleSeries(series *Series) {
 	c.CountSeries(series.Labels)
 	for _, chk := range series.Chunks {
 		if chk.Raw != nil {
@@ -574,6 +578,24 @@ func (c *SeriesStatsCounter) Count(r *SeriesResponse) {
 			c.Samples += chk.Sum.XORNumSamples()
 		}
 	}
+}
+
+func (c *SeriesStatsCounter) Count(r *SeriesResponse) {
+	//aggregate # of bytes fetched
+	c.Bytes += uint64(r.Size())
+
+	// Handle batch responses
+	if batch := r.GetBatch(); batch != nil {
+		for i := range batch.Series {
+			c.countSingleSeries(&batch.Series[i])
+		}
+		return
+	}
+
+	if r.GetSeries() == nil {
+		return
+	}
+	c.countSingleSeries(r.GetSeries())
 }
 
 func (m *SeriesRequest) ToPromQL() string {

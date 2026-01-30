@@ -376,6 +376,7 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 	if s.debugLogging {
 		reqLogger = log.With(reqLogger, "request", originalRequest.String())
 	}
+	srv = newBatchableServer(srv, int(originalRequest.ResponseBatchSize))
 
 	match, matchers, err := matchesExternalLabels(originalRequest.Matchers, s.selectorLabels, s.matcherCache)
 	if err != nil {
@@ -502,6 +503,7 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 		PartialResponseStrategy: originalRequest.PartialResponseStrategy,
 		ShardInfo:               originalRequest.ShardInfo,
 		WithoutReplicaLabels:    originalRequest.WithoutReplicaLabels,
+		ResponseBatchSize:       originalRequest.ResponseBatchSize,
 	}
 	if originalRequest.PartialResponseStrategy == storepb.PartialResponseStrategy_GROUP_REPLICA && !s.forwardPartialStrategy {
 		// Do not forward this field as it might cause data loss.
@@ -699,7 +701,11 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 			return status.Error(codes.Unknown, errors.Wrap(err, "send series response").Error())
 		}
 	}
-
+	if f, ok := srv.(flushableServer); ok {
+		if err := f.Flush(); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
