@@ -95,8 +95,8 @@ var (
 	// where a single large request permanently inflates process RSS.
 	defaultCompressedBufCap   = 32 * 1024
 	defaultDecompressedBufCap = 128 * 1024
-	maxPooledCompressedCap    = 1 << 20 // 1MB
-	maxPooledDecompressedCap  = 4 << 20 // 4MB
+	maxPooledCompressedCap    = 1 << 20  // 1MB
+	maxPooledDecompressedCap  = 4 << 20  // 4MB
 	copyBufSize               = 32 * 1024
 
 	// Buffer/message pools to reduce allocations in receive hot path.
