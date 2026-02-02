@@ -37,7 +37,7 @@ message Series {
 }
 
 message SeriesBatch {
-  repeated Series series = 1 [(gogoproto.nullable) = false];
+  repeated Series series = 1;
 }
 
 message AggrChunk {

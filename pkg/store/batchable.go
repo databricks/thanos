@@ -13,7 +13,7 @@ import (
 type batchableServer struct {
 	storepb.Store_SeriesServer
 	batchSize int
-	series    []storepb.Series
+	series    []*storepb.Series
 }
 
 func newBatchableServer(upstream storepb.Store_SeriesServer, batchSize int) storepb.Store_SeriesServer {
@@ -23,7 +23,7 @@ func newBatchableServer(upstream storepb.Store_SeriesServer, batchSize int) stor
 	return &batchableServer{
 		Store_SeriesServer: upstream,
 		batchSize:          batchSize,
-		series:             make([]storepb.Series, 0, batchSize),
+		series:             make([]*storepb.Series, 0, batchSize),
 	}
 }
 
@@ -39,7 +39,7 @@ func (b *batchableServer) Send(response *storepb.SeriesResponse) error {
 		return b.Store_SeriesServer.Send(response)
 	}
 
-	b.series = append(b.series, *series)
+	b.series = append(b.series, series)
 	if len(b.series) >= b.batchSize {
 		return b.Flush()
 	}

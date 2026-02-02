@@ -52,7 +52,7 @@ func NewHintsSeriesResponse(hints *types.Any) *SeriesResponse {
 	}
 }
 
-func NewBatchResponse(batch []Series) *SeriesResponse {
+func NewBatchResponse(batch []*Series) *SeriesResponse {
 	return &SeriesResponse{
 		Result: &SeriesResponse_Batch{
 			Batch: &SeriesBatch{
@@ -586,8 +586,11 @@ func (c *SeriesStatsCounter) Count(r *SeriesResponse) {
 
 	// Handle batch responses
 	if batch := r.GetBatch(); batch != nil {
-		for i := range batch.Series {
-			c.countSingleSeries(&batch.Series[i])
+		for _, series := range batch.Series {
+			if series == nil {
+				continue
+			}
+			c.countSingleSeries(series)
 		}
 		return
 	}

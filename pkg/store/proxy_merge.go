@@ -469,8 +469,10 @@ func newLazyRespSet(
 
 			// Handle batch responses by unpacking them into individual series responses
 			if batch := resp.GetBatch(); batch != nil {
-				for i := range batch.Series {
-					series := &batch.Series[i]
+				for _, series := range batch.Series {
+					if series == nil {
+						continue
+					}
 					if applySharding && !shardMatcher.MatchesZLabels(series.Labels) {
 						continue
 					}
@@ -766,8 +768,10 @@ func newEagerRespSet(
 
 			// Handle batch responses by unpacking them into individual series responses
 			if batch := resp.GetBatch(); batch != nil {
-				for i := range batch.Series {
-					series := &batch.Series[i]
+				for _, series := range batch.Series {
+					if series == nil {
+						continue
+					}
 					if applySharding && !shardMatcher.MatchesZLabels(series.Labels) {
 						continue
 					}

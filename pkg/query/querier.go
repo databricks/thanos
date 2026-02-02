@@ -283,8 +283,11 @@ func (s *seriesServer) Send(r *storepb.SeriesResponse) error {
 	}
 
 	if b := r.GetBatch(); b != nil {
-		if len(b.Series) > 0 {
-			s.seriesSet = append(s.seriesSet, b.Series...)
+		for _, series := range b.Series {
+			if series == nil {
+				continue
+			}
+			s.seriesSet = append(s.seriesSet, *series)
 		}
 		s.seriesSetStats.Count(r)
 		return nil
