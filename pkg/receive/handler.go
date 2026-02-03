@@ -978,9 +978,8 @@ func (h *Handler) distributeTimeseriesToReplicas(
 			tenantLabel := lbls.Get(h.splitTenantLabelName)
 			if tenantLabel != "" {
 				tenant = h.splitTenantLabelName + ":" + tenantLabel
-			} else {
-				tenant = h.options.DefaultTenantID
 			}
+			// If label not found, keep using tenantHTTP (don't override)
 		}
 
 		for _, rn := range replicas {
