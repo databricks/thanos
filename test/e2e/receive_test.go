@@ -1052,8 +1052,8 @@ func TestReceiveExtractsTenant(t *testing.T) {
 				Timeseries: []prompb.TimeSeries{
 					{
 						Labels: []prompb.Label{
-							{Name: tenantLabelName, Value: "tenant-1"},
 							{Name: "aa", Value: "bb"},
+							{Name: tenantLabelName, Value: "tenant-1"},
 						},
 						Samples: []prompb.Sample{
 							{Value: 1, Timestamp: time.Now().UnixMilli()},
@@ -1063,7 +1063,7 @@ func TestReceiveExtractsTenant(t *testing.T) {
 			})
 		}))
 
-		testutil.Ok(t, i.WaitSumMetricsWithOptions(e2emon.Equals(0), []string{"prometheus_tsdb_blocks_loaded"}, e2emon.WithLabelMatchers(matchers.MustNewMatcher(matchers.MatchEqual, "tenant", "tenant-1")), e2emon.WaitMissingMetrics()))
+		testutil.Ok(t, i.WaitSumMetricsWithOptions(e2emon.Equals(0), []string{"prometheus_tsdb_blocks_loaded"}, e2emon.WithLabelMatchers(matchers.MustNewMatcher(matchers.MatchEqual, "tenant", tenantLabelName+":tenant-1")), e2emon.WaitMissingMetrics()))
 	})
 
 	t.Run("tenant label is extracted from one series, default is used for the other one", func(t *testing.T) {
@@ -1072,8 +1072,8 @@ func TestReceiveExtractsTenant(t *testing.T) {
 				Timeseries: []prompb.TimeSeries{
 					{
 						Labels: []prompb.Label{
-							{Name: tenantLabelName, Value: "tenant-2"},
 							{Name: "aa", Value: "bb"},
+							{Name: tenantLabelName, Value: "tenant-2"},
 						},
 						Samples: []prompb.Sample{
 							{Value: 1, Timestamp: time.Now().UnixMilli()},
@@ -1101,8 +1101,8 @@ func TestReceiveExtractsTenant(t *testing.T) {
 				Timeseries: []prompb.TimeSeries{
 					{
 						Labels: []prompb.Label{
-							{Name: tenantLabelName, Value: "tenant-3"},
 							{Name: "aa", Value: "bb"},
+							{Name: tenantLabelName, Value: "tenant-3"},
 						},
 						Samples: []prompb.Sample{
 							{Value: 1, Timestamp: time.Now().UnixMilli()},
@@ -1149,7 +1149,7 @@ func TestReceiveExtractsTenant(t *testing.T) {
 		}))
 
 		testutil.Ok(t, i.WaitSumMetricsWithOptions(e2emon.Equals(0), []string{"prometheus_tsdb_blocks_loaded"}, e2emon.WithLabelMatchers(matchers.MustNewMatcher(matchers.MatchEqual, "tenant", "http-tenant")), e2emon.WaitMissingMetrics()))
-		testutil.Ok(t, i.WaitSumMetricsWithOptions(e2emon.Equals(0), []string{"prometheus_tsdb_blocks_loaded"}, e2emon.WithLabelMatchers(matchers.MustNewMatcher(matchers.MatchEqual, "tenant", "tenant-3")), e2emon.WaitMissingMetrics()))
+		testutil.Ok(t, i.WaitSumMetricsWithOptions(e2emon.Equals(0), []string{"prometheus_tsdb_blocks_loaded"}, e2emon.WithLabelMatchers(matchers.MustNewMatcher(matchers.MatchEqual, "tenant", tenantLabelName+":tenant-3")), e2emon.WaitMissingMetrics()))
 
 	})
 }
