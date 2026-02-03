@@ -118,7 +118,8 @@ var (
 	}
 	copyBufPool = sync.Pool{
 		New: func() interface{} {
-			return make([]byte, copyBufSize)
+			b := make([]byte, copyBufSize)
+			return &b
 		},
 	}
 )
@@ -669,9 +670,9 @@ func (h *Handler) receiveHTTP(w http.ResponseWriter, r *http.Request) {
 		limiter: requestLimiter,
 		tenant:  tenantHTTP,
 	}
-	copyBuf := copyBufPool.Get().([]byte)
+	copyBuf := copyBufPool.Get().(*[]byte)
 	defer copyBufPool.Put(copyBuf)
-	_, err = io.CopyBuffer(lw, r.Body, copyBuf)
+	_, err = io.CopyBuffer(lw, r.Body, *copyBuf)
 	if err != nil {
 		if err == errRequestTooLarge {
 			http.Error(w, errRequestTooLarge.Error(), http.StatusRequestEntityTooLarge)
