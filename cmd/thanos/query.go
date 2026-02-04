@@ -250,6 +250,8 @@ func registerQuery(app *extkingpin.App) {
 	rewriteAggregationLabelStrategy := cmd.Flag("query.aggregation-label-strategy", "The strategy to use when rewriting aggregation labels. Used during aggregator migration only.").Default(string(query.NoopLabelRewriter)).Hidden().Enum(string(query.NoopLabelRewriter), string(query.UpsertLabelRewriter), string(query.InsertOnlyLabelRewriter))
 	rewriteAggregationLabelTo := cmd.Flag("query.aggregation-label-value-override", "The value override for aggregation label. If set to x, all queries on aggregated metrics will have a `__agg_rule_type__=x` matcher. If empty, this behavior is disabled. Default is empty.").Hidden().Default("").String()
 
+	seriesResponseBatchSize := cmd.Flag("query.series-response-batch-size", "How many Series can be batched in one gRPC message. A value of 0 or 1 means no batching (one series per message). Higher values reduce gRPC overhead but increase memory usage.").Hidden().Default("1").Int()
+
 	lazyRetrievalMaxBufferedResponses := cmd.Flag("query.lazy-retrieval-max-buffered-responses", "The lazy retrieval strategy can buffer up to this number of responses. This is to limit the memory usage. This flag takes effect only when the lazy retrieval strategy is enabled.").
 		Default("20").Int()
 
@@ -411,6 +413,7 @@ func registerQuery(app *extkingpin.App) {
 			*rewriteAggregationLabelStrategy,
 			*rewriteAggregationLabelTo,
 			*lazyRetrievalMaxBufferedResponses,
+			*seriesResponseBatchSize,
 			time.Duration(*grpcStoreClientKeepAlivePingInterval),
 			blockedMetricPatterns,
 			*forwardPartialStrategy,
@@ -502,6 +505,7 @@ func runQuery(
 	rewriteAggregationLabelStrategy string,
 	rewriteAggregationLabelTo string,
 	lazyRetrievalMaxBufferedResponses int,
+	seriesResponseBatchSize int,
 	grpcStoreClientKeepAlivePingInterval time.Duration,
 	blockedMetricPatterns []string,
 	forwardPartialStrategy bool,
@@ -655,6 +659,7 @@ func runQuery(
 		DeduplicationFunc:                   queryDeduplicationFunc,
 		RewriteAggregationLabelStrategy:     rewriteAggregationLabelStrategy,
 		RewriteAggregationLabelTo:           rewriteAggregationLabelTo,
+		SeriesResponseBatchSize:             seriesResponseBatchSize,
 	}
 	level.Info(logger).Log("msg", "databricks querier features", "opts", fmt.Sprintf("%+v", opts))
 	queryableCreator = query.NewQueryableCreatorWithOptions(

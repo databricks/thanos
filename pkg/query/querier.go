@@ -62,6 +62,7 @@ type Options struct {
 	DeduplicationFunc                   string
 	RewriteAggregationLabelStrategy     string
 	RewriteAggregationLabelTo           string
+	SeriesResponseBatchSize             int
 }
 
 // NewQueryableCreator creates QueryableCreator.
@@ -169,6 +170,7 @@ type querier struct {
 	selectTimeout           time.Duration
 	shardInfo               *storepb.ShardInfo
 	seriesStatsReporter     seriesStatsReporter
+	seriesResponseBatchSize int
 
 	aggregationLabelRewriter *AggregationLabelRewriter
 }
@@ -248,6 +250,7 @@ func newQuerierWithOpts(
 		skipChunks:              skipChunks,
 		shardInfo:               shardInfo,
 		seriesStatsReporter:     seriesStatsReporter,
+		seriesResponseBatchSize: opts.SeriesResponseBatchSize,
 
 		aggregationLabelRewriter: aggregationLabelRewriter,
 	}
@@ -275,6 +278,17 @@ func (s *seriesServer) Send(r *storepb.SeriesResponse) error {
 
 	if r.GetSeries() != nil {
 		s.seriesSet = append(s.seriesSet, *r.GetSeries())
+		s.seriesSetStats.Count(r)
+		return nil
+	}
+
+	if b := r.GetBatch(); b != nil {
+		for _, series := range b.Series {
+			if series == nil {
+				continue
+			}
+			s.seriesSet = append(s.seriesSet, *series)
+		}
 		s.seriesSetStats.Count(r)
 		return nil
 	}
@@ -410,6 +424,7 @@ func (q *querier) selectFn(ctx context.Context, hints *storage.SelectHints, ms .
 		ShardInfo:               q.shardInfo,
 		PartialResponseStrategy: q.partialResponseStrategy,
 		SkipChunks:              q.skipChunks,
+		ResponseBatchSize:       int64(q.seriesResponseBatchSize),
 	}
 	if q.isDedupEnabled() {
 		// Soft ask to sort without replica labels and push them at the end of labelset.

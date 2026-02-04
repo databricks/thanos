@@ -111,6 +111,10 @@ message SeriesRequest {
 
   // limit is used to limit the number of results returned
   int64 limit = 15;
+
+  // response_batch_size controls how many series should be batched together
+  // in a single gRPC message. A value of 0 or 1 means no batching (one series per message).
+  int64 response_batch_size = 16;
 }
 
 // QueryHints represents hints from PromQL that might help to
@@ -187,6 +191,10 @@ message SeriesResponse {
     /// multiple SeriesResponse frames contain hints for a single Series() request and how should they
     /// be handled in such case (ie. merged vs keep the first/last one).
     google.protobuf.Any hints = 3;
+
+    /// batch contains multiple series in a single response message.
+    /// This allows for more efficient transmission of series data by reducing gRPC overhead.
+    SeriesBatch batch = 4;
   }
 }
 
