@@ -45,18 +45,23 @@ const (
 	/// If a group has more than one replicas, the group can tolerate any number of endpoint failures within one replica. It doesn't
 	///   tolerate endpoint failures across replicas.
 	PartialResponseStrategy_GROUP_REPLICA PartialResponseStrategy = 2
+	/// QUORUM strategy uses first-class store topology hints (replica_group, quorum) exposed via InfoAPI.
+	/// Stores with quorum=0 are treated as singleton stores (any failure aborts the query).
+	PartialResponseStrategy_QUORUM PartialResponseStrategy = 3
 )
 
 var PartialResponseStrategy_name = map[int32]string{
 	0: "WARN",
 	1: "ABORT",
 	2: "GROUP_REPLICA",
+	3: "QUORUM",
 }
 
 var PartialResponseStrategy_value = map[string]int32{
 	"WARN":          0,
 	"ABORT":         1,
 	"GROUP_REPLICA": 2,
+	"QUORUM":        3,
 }
 
 func (x PartialResponseStrategy) String() string {

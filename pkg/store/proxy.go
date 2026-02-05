@@ -49,6 +49,53 @@ const metricNameLabel = "__name__"
 // This can happen with Query servers trees and external labels.
 var ErrorNoStoresMatched = errors.New("No StoreAPIs matched for this query")
 
+// ReplicaInfo is an alias to storepb.ReplicaInfo for convenience.
+// It contains replica topology hints used by the QUORUM partial response strategy.
+type ReplicaInfo = storepb.ReplicaInfo
+
+type trackedRespSet struct {
+	respSet
+	store          Client
+	group          string
+	singleton      bool
+	groupSucceeded map[string]int
+	storeFailed    map[Client]bool
+	closed         bool
+}
+
+func (t *trackedRespSet) Close() {
+	if t.closed {
+		return
+	}
+	t.closed = true
+	if !t.singleton && !t.storeFailed[t.store] {
+		t.groupSucceeded[t.group]++
+	}
+	t.respSet.Close()
+}
+
+type warnAttributingStream struct {
+	h       interface{ Next() bool; At() *storepb.SeriesResponse; Winner() respSet }
+	warnSrc map[*storepb.SeriesResponse]respSet
+}
+
+func newWarnAttributingStream(h interface{ Next() bool; At() *storepb.SeriesResponse; Winner() respSet }) *warnAttributingStream {
+	return &warnAttributingStream{h: h, warnSrc: map[*storepb.SeriesResponse]respSet{}}
+}
+
+func (w *warnAttributingStream) Next() bool {
+	if !w.h.Next() {
+		return false
+	}
+	resp := w.h.At()
+	if resp != nil && resp.GetWarning() != "" {
+		w.warnSrc[resp] = w.h.Winner()
+	}
+	return true
+}
+
+func (w *warnAttributingStream) At() *storepb.SeriesResponse { return w.h.At() }
+
 // Client holds meta information about a store.
 type Client interface {
 	// StoreClient to access the store.
@@ -77,7 +124,7 @@ type Client interface {
 	// represents a local client (server-as-client) and has no remote address.
 	Addr() (addr string, isLocalClient bool)
 
-	// ReplicaKey returns replica name of the store client. A replica consists of a set of endpoints belong to the
+	// ReplicaKey returns replica name of the store client. A replica consists of a set of endpoints belonging to the
 	// same replica. E.g, "pantheon-db-rep0", "pantheon-db-rep1", "long-range-store".
 	ReplicaKey() string
 
@@ -85,6 +132,11 @@ type Client interface {
 	// same group. E.g. "pantheon-db" has replicas "pantheon-db-rep0", "pantheon-db-rep1".
 	// "long-range-store" has only one replica, "long-range-store".
 	GroupKey() string
+
+	// ReplicaInfo returns replica topology hints used by the QUORUM partial response strategy.
+	// Implementations should unify DNS-based grouping (legacy) with first-class StoreInfo fields,
+	// preferring StoreInfo fields when available.
+	ReplicaInfo() ReplicaInfo
 
 	// Matches returns true if provided label matchers are allowed in the store.
 	Matches(matches []*labels.Matcher) bool
@@ -461,11 +513,30 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 		stores         []Client
 		storeLabelSets []labels.Labels
 	)
-	// groupReplicaStores[groupKey][replicaKey] = number of stores with the groupKey and replicaKey
-	groupReplicaStores := make(map[string]map[string]int)
-	// failedStores[groupKey][replicaKey] = number of store failures
-	failedStores := make(map[string]map[string]int)
+	strategy := originalRequest.PartialResponseStrategy
+
+	// QUORUM strategy (first-class StoreInfo replica_group/quorum):
+	// - groupStores[group] = total stores in group (quorum>0 only)
+	// - groupQuorum[group] = quorum requirement for group
+	// - groupFailed[group] = failed stores in group
+	// - groupSucceeded[group] = stores that completed without errors
+	// - singletonStores = stores with quorum=0 (or empty group) must succeed
+	// Note: quorum is evaluated over the stores returned by matching/discovery (i.e. only "attempted" stores).
+	// A missing store is only problematic for correctness if it is expected to be a singleton store.
+	groupStores := make(map[string]int)
+	groupQuorum := make(map[string]int)
+	groupFailed := make(map[string]int)
+	groupSucceeded := make(map[string]int)
+	singletonStores := make(map[Client]bool)
+	storeGroup := make(map[Client]string)
+	storeFailed := make(map[Client]bool)
 	totalFailedStores := 0
+
+	// GROUP_REPLICA strategy (legacy DNS-based grouping):
+	// groupReplicaStores[groupKey][replicaKey] = number of stores
+	// failedStores[groupKey][replicaKey] = number of failures
+	groupReplicaStores := make(map[string]map[string]int)
+	failedStores := make(map[string]map[string]int)
 	bumpCounter := func(key1, key2 string, mp map[string]map[string]int) {
 		if _, ok := mp[key1]; !ok {
 			mp[key1] = make(map[string]int)
@@ -481,7 +552,27 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 	s.metrics.storesPerQueryAfterEELFiltering.Set(float64(len(stores)))
 
 	for _, st := range stores {
-		bumpCounter(st.GroupKey(), st.ReplicaKey(), groupReplicaStores)
+		switch strategy {
+		case storepb.PartialResponseStrategy_GROUP_REPLICA:
+			bumpCounter(st.GroupKey(), st.ReplicaKey(), groupReplicaStores)
+		case storepb.PartialResponseStrategy_QUORUM:
+			ri := st.ReplicaInfo()
+			if ri.Quorum <= 0 || ri.Group == "" {
+				singletonStores[st] = true
+				continue
+			}
+			storeGroup[st] = ri.Group
+			groupStores[ri.Group]++
+			if prev, ok := groupQuorum[ri.Group]; ok && prev != ri.Quorum {
+				// Be conservative if misconfigured: require the highest quorum we see.
+				if ri.Quorum > prev {
+					groupQuorum[ri.Group] = ri.Quorum
+				}
+				level.Warn(reqLogger).Log("msg", "inconsistent quorum value for replica group", "group", ri.Group, "seen", ri.Quorum, "kept", groupQuorum[ri.Group])
+			} else if !ok {
+				groupQuorum[ri.Group] = ri.Quorum
+			}
+		}
 	}
 	if len(stores) == 0 {
 		level.Debug(reqLogger).Log("err", ErrorNoStoresMatched, "stores", strings.Join(storeDebugMsgs, ";"))
@@ -503,7 +594,7 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 		ShardInfo:               originalRequest.ShardInfo,
 		WithoutReplicaLabels:    originalRequest.WithoutReplicaLabels,
 	}
-	if originalRequest.PartialResponseStrategy == storepb.PartialResponseStrategy_GROUP_REPLICA && !s.forwardPartialStrategy {
+	if (strategy == storepb.PartialResponseStrategy_GROUP_REPLICA || strategy == storepb.PartialResponseStrategy_QUORUM) && !s.forwardPartialStrategy {
 		// Do not forward this field as it might cause data loss.
 		r.PartialResponseDisabled = true
 		r.PartialResponseStrategy = storepb.PartialResponseStrategy_ABORT
@@ -514,35 +605,66 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 
 	storeResponses := make([]respSet, 0, len(stores))
 
-	checkGroupReplicaErrors := func(st Client, err error) error {
-		if len(failedStores[st.GroupKey()]) > 1 {
+	checkGroupReplicaErrors := func(group, replica string, err error) error {
+		if len(failedStores[group]) > 1 {
 			msg := "Multiple replicas have failures for the same group"
-			group := st.GroupKey()
 			replicas := fmt.Sprintf("%+v", failedStores[group])
-			level.Error(reqLogger).Log(
-				"msg", msg,
-				"group", group,
-				"replicas", replicas,
-			)
+			level.Error(reqLogger).Log("msg", msg, "group", group, "replicas", replicas)
 			return fmt.Errorf("%s group=%s replicas=%s: %w", msg, group, replicas, err)
 		}
-		if len(groupReplicaStores[st.GroupKey()]) == 1 && failedStores[st.GroupKey()][st.ReplicaKey()] > 1 {
+		if len(groupReplicaStores[group]) == 1 && failedStores[group][replica] > 1 {
 			msg := "A group with single replica has multiple failures"
-			group := st.GroupKey()
 			replicas := fmt.Sprintf("%+v", failedStores[group])
-			level.Error(reqLogger).Log(
-				"msg", msg,
-				"group", group,
-				"replicas", replicas,
-			)
+			level.Error(reqLogger).Log("msg", msg, "group", group, "replicas", replicas)
 			return fmt.Errorf("%s group=%s replicas=%s: %w", msg, group, replicas, err)
 		}
 		return nil
 	}
 
+	markStoreFailed := func(st Client) bool {
+		if storeFailed[st] {
+			return false
+		}
+		storeFailed[st] = true
+		return true
+	}
+
+	checkQuorumErrors := func(st Client, err error) error {
+		if singletonStores[st] {
+			addr, _ := st.Addr()
+			msg := "Singleton store failed"
+			level.Error(reqLogger).Log("msg", msg, "store", addr)
+			return fmt.Errorf("%s store=%s: %w", msg, addr, err)
+		}
+		group := storeGroup[st]
+		if group == "" {
+			group = st.ReplicaInfo().Group
+		}
+		if markStoreFailed(st) {
+			groupFailed[group]++
+		}
+		healthy := groupStores[group] - groupFailed[group]
+		requiredQuorum := groupQuorum[group]
+		if healthy < requiredQuorum {
+			msg := "Replica group does not meet quorum requirement"
+			level.Error(reqLogger).Log("msg", msg, "group", group, "healthy", healthy, "quorum", requiredQuorum, "total", groupStores[group], "failed", groupFailed[group], "successful", groupSucceeded[group])
+			return fmt.Errorf("%s group=%s healthy=%d quorum=%d: %w", msg, group, healthy, requiredQuorum, err)
+		}
+		return nil
+	}
+
 	logGroupReplicaErrors := func() {
-		if len(failedStores) > 0 {
+		if strategy == storepb.PartialResponseStrategy_QUORUM && len(groupFailed) > 0 {
+			level.Warn(s.logger).Log("msg", "Group/quorum errors",
+				"mode", "quorum-based",
+				"group_failures", fmt.Sprintf("%+v", groupFailed),
+				"total_failed_stores", totalFailedStores,
+			)
+			s.metrics.failedStoresPerQuery.Set(float64(totalFailedStores))
+		}
+		if strategy == storepb.PartialResponseStrategy_GROUP_REPLICA && len(failedStores) > 0 {
 			level.Warn(s.logger).Log("msg", "Group/replica errors",
+				"mode", "dns-based",
 				"errors", fmt.Sprintf("%+v", failedStores),
 				"total_failed_stores", totalFailedStores,
 			)
@@ -609,13 +731,30 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 				grpcErrorCode = extractGRPCCode(err)
 			}
 
-			level.Warn(s.logger).Log("msg", "Store failure", "group", st.GroupKey(), "replica", st.ReplicaKey(), "err", err)
-			s.metrics.storeFailureCount.WithLabelValues(st.GroupKey(), st.ReplicaKey()).Inc()
-			bumpCounter(st.GroupKey(), st.ReplicaKey(), failedStores)
 			totalFailedStores++
-			if originalRequest.PartialResponseStrategy == storepb.PartialResponseStrategy_GROUP_REPLICA {
-				if checkGroupReplicaErrors(st, err) != nil {
+			switch strategy {
+			case storepb.PartialResponseStrategy_GROUP_REPLICA:
+				group, replica := st.GroupKey(), st.ReplicaKey()
+				level.Warn(s.logger).Log("msg", "Store failure", "group", group, "replica", replica, "err", err)
+				s.metrics.storeFailureCount.WithLabelValues(group, replica).Inc()
+				bumpCounter(group, replica, failedStores)
+				if checkGroupReplicaErrors(group, replica, err) != nil {
 					return err
+				}
+				continue
+			case storepb.PartialResponseStrategy_QUORUM:
+				ri := st.ReplicaInfo()
+				if singletonStores[st] || ri.Quorum <= 0 || ri.Group == "" {
+					group, replica := st.GroupKey(), st.ReplicaKey()
+					level.Warn(s.logger).Log("msg", "Singleton store failure", "group", group, "replica", replica, "err", err)
+					s.metrics.storeFailureCount.WithLabelValues(group, replica).Inc()
+					return err
+				}
+				addr, _ := st.Addr()
+				level.Warn(s.logger).Log("msg", "Store failure", "group", storeGroup[st], "store", addr, "err", err)
+				// Note: storeFailureCount uses (groupKey, replicaKey). In quorum mode group is InfoAPI-based.
+				if qerr := checkQuorumErrors(st, err); qerr != nil {
+					return qerr
 				}
 				continue
 			}
@@ -630,23 +769,41 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 			}
 		}
 
+		if strategy == storepb.PartialResponseStrategy_QUORUM {
+			respSet = &trackedRespSet{
+				respSet:         respSet,
+				store:          st,
+				group:          storeGroup[st],
+				singleton:      singletonStores[st],
+				groupSucceeded: groupSucceeded,
+				storeFailed:    storeFailed,
+			}
+		}
 		storeResponses = append(storeResponses, respSet)
 		defer respSet.Close()
 	}
 
 	level.Debug(reqLogger).Log("msg", "Series: started fanout streams", "num_stores", len(stores), "status", strings.Join(storeDebugMsgs, " | "))
 
-	var respHeap seriesStream = NewProxyResponseLoserTree(storeResponses...)
+	rawHeap := NewProxyResponseLoserTree(storeResponses...)
+	var warnStream *warnAttributingStream
+	var respHeap seriesStream = rawHeap
+	if strategy == storepb.PartialResponseStrategy_QUORUM {
+		warnStream = newWarnAttributingStream(rawHeap)
+		respHeap = warnStream
+	}
 	if s.enableDedup {
 		respHeap = NewResponseDeduplicatorInternal(respHeap, s.quorumChunkDedup)
 	}
 
 	i := 0
 	var firstWarning *string
+	limited := false
 	for respHeap.Next() {
 		i++
 		seriesCount = i // Update our tracking variable
 		if r.Limit > 0 && i > int(r.Limit) {
+			limited = true
 			break
 		}
 		resp := respHeap.At()
@@ -666,9 +823,28 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 			}
 
 			level.Error(s.logger).Log("msg", "Store failure with warning", "warning", warning)
-			// Don't have group/replica keys here, so we can't attribute the warning to a specific store.
-			s.metrics.storeFailureCount.WithLabelValues("", "").Inc()
-			if originalRequest.PartialResponseStrategy == storepb.PartialResponseStrategy_GROUP_REPLICA {
+			if strategy == storepb.PartialResponseStrategy_QUORUM && warnStream != nil {
+				if strings.Contains(resp.GetWarning(), "The specified key does not exist") || strings.Contains(resp.GetWarning(), "The specified blob does not exist") {
+					level.Warn(s.logger).Log("msg", "Ignore 'the specified key/blob does not exist' error from Store")
+					s.metrics.missingBlockFileErrorCount.Inc()
+				} else {
+					if src, ok := warnStream.warnSrc[resp]; ok {
+						if tr, ok := src.(*trackedRespSet); ok {
+							if markStoreFailed(tr.store) {
+								groupFailed[tr.group]++
+								totalFailedStores++
+							}
+							if qerr := checkQuorumErrors(tr.store, errors.New(warning)); qerr != nil {
+								return qerr
+							}
+						}
+					}
+				}
+			} else {
+				// Don't have group/replica keys here, so we can't attribute the warning to a specific store.
+				s.metrics.storeFailureCount.WithLabelValues("", "").Inc()
+			}
+			if strategy == storepb.PartialResponseStrategy_GROUP_REPLICA {
 				// The first error message is from AWS S3 and the second one is from Azure Blob Storage.
 				if strings.Contains(resp.GetWarning(), "The specified key does not exist") || strings.Contains(resp.GetWarning(), "The specified blob does not exist") {
 					level.Warn(s.logger).Log("msg", "Ignore 'the specified key/blob does not exist' error from Store")
@@ -700,6 +876,13 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 		}
 	}
 
+	if strategy == storepb.PartialResponseStrategy_QUORUM && !limited {
+		for group, quorum := range groupQuorum {
+			if groupSucceeded[group] < quorum {
+				return fmt.Errorf("Replica group does not meet quorum requirement group=%s successful=%d quorum=%d", group, groupSucceeded[group], quorum)
+			}
+		}
+	}
 	return nil
 }
 

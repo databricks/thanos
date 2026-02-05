@@ -22,8 +22,16 @@ type TestClient struct {
 	IsLocalStore                bool
 	StoreTSDBInfos              []infopb.TSDBInfo
 	StoreFilterNotMatches       bool
-	GroupKeyStr                 string
-	ReplicaKeyStr               string
+
+	// ReplicaInfo fields for GROUP_REPLICA strategy testing.
+	// GroupKeyStr is used as Group when ReplicaGroupStr is empty (DNS-based fallback).
+	// ReplicaGroupStr is the first-class StoreInfo field - if set, it takes precedence.
+	// ReplicaKeyStr is used as Replica in ReplicaInfo.
+	// QuorumValue is used as Quorum when ReplicaGroupStr is set (0 = singleton store).
+	GroupKeyStr     string
+	ReplicaKeyStr   string
+	ReplicaGroupStr string // First-class StoreInfo field (takes precedence over GroupKeyStr)
+	QuorumValue     int
 }
 
 func (c TestClient) LabelSets() []labels.Labels         { return c.ExtLset }
@@ -38,3 +46,24 @@ func (c TestClient) Matches(matches []*labels.Matcher) bool { return !c.StoreFil
 
 func (c TestClient) GroupKey() string   { return c.GroupKeyStr }
 func (c TestClient) ReplicaKey() string { return c.ReplicaKeyStr }
+
+// ReplicaInfo returns replica topology hints used by the QUORUM partial response strategy.
+// It mimics the unification logic of endpointRef.ReplicaInfo():
+// - If ReplicaGroupStr is set (first-class StoreInfo field), use it as Group with QuorumValue.
+// - Otherwise fall back to GroupKeyStr (DNS-based) with Quorum=0 (singleton store).
+func (c TestClient) ReplicaInfo() storepb.ReplicaInfo {
+	// Prefer first-class ReplicaGroupStr if set
+	if c.ReplicaGroupStr != "" {
+		return storepb.ReplicaInfo{
+			Group:   c.ReplicaGroupStr,
+			Replica: c.ReplicaKeyStr,
+			Quorum:  c.QuorumValue,
+		}
+	}
+	// Fall back to DNS-based grouping
+	return storepb.ReplicaInfo{
+		Group:   c.GroupKeyStr,
+		Replica: c.ReplicaKeyStr,
+		Quorum:  0, // Singleton store for DNS-based stores
+	}
+}

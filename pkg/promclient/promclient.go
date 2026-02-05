@@ -400,7 +400,7 @@ func (p *QueryOptions) AddTo(values url.Values) error {
 
 	var partialResponseValue string
 	switch p.PartialResponseStrategy {
-	case storepb.PartialResponseStrategy_WARN, storepb.PartialResponseStrategy_GROUP_REPLICA:
+	case storepb.PartialResponseStrategy_WARN, storepb.PartialResponseStrategy_GROUP_REPLICA, storepb.PartialResponseStrategy_QUORUM:
 		partialResponseValue = strconv.FormatBool(true)
 	case storepb.PartialResponseStrategy_ABORT:
 		partialResponseValue = strconv.FormatBool(false)

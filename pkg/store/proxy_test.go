@@ -644,6 +644,256 @@ func TestProxyStore_Series(t *testing.T) {
 			expectedErr: errors.New("fetch series for {ext=\"1\"} : error!"),
 		},
 		{
+			title: "quorum strategy; quorum met",
+			storeAPIs: []Client{
+				&storetestutil.TestClient{
+					StoreClient: &mockedStoreAPI{
+						RespSeries: []*storepb.SeriesResponse{
+							storeSeriesResponse(t, labels.FromStrings("a", "b"), []sample{{1, 1}, {2, 2}, {3, 3}}),
+						},
+					},
+					ExtLset:         []labels.Labels{labels.FromStrings("ext", "1")},
+					MinTime:         1,
+					MaxTime:         300,
+					GroupKeyStr:     "legacy-group",
+					ReplicaKeyStr:   "replica1",
+					ReplicaGroupStr: "rg",
+					QuorumValue:     2,
+				},
+				&storetestutil.TestClient{
+					StoreClient: &mockedStoreAPI{
+						RespSeries: []*storepb.SeriesResponse{
+							storeSeriesResponse(t, labels.FromStrings("a", "b"), []sample{{1, 1}, {2, 2}, {3, 3}}),
+						},
+					},
+					ExtLset:         []labels.Labels{labels.FromStrings("ext", "1")},
+					MinTime:         1,
+					MaxTime:         300,
+					GroupKeyStr:     "legacy-group",
+					ReplicaKeyStr:   "replica2",
+					ReplicaGroupStr: "rg",
+					QuorumValue:     2,
+				},
+				&storetestutil.TestClient{
+					StoreClient: &mockedStoreAPI{
+						RespError: errors.New("error!"),
+					},
+					ExtLset:         []labels.Labels{labels.FromStrings("ext", "1")},
+					MinTime:         1,
+					MaxTime:         300,
+					GroupKeyStr:     "legacy-group",
+					ReplicaKeyStr:   "replica3",
+					ReplicaGroupStr: "rg",
+					QuorumValue:     2,
+				},
+			},
+			req: &storepb.SeriesRequest{
+				MinTime:                 1,
+				MaxTime:                 300,
+				Matchers:                []storepb.LabelMatcher{{Name: "ext", Value: "1", Type: storepb.LabelMatcher_EQ}},
+				PartialResponseStrategy: storepb.PartialResponseStrategy_QUORUM,
+			},
+			expectedSeries: []rawSeries{
+				{
+					lset:   labels.FromStrings("a", "b"),
+					chunks: [][]sample{{{1, 1}, {2, 2}, {3, 3}}},
+				},
+			},
+			expectedWarningsLen: 0,
+		},
+		{
+			title: "quorum strategy; multiple warnings tolerated when quorum met",
+			storeAPIs: []Client{
+				&storetestutil.TestClient{
+					StoreClient: &mockedStoreAPI{
+						RespSeries: []*storepb.SeriesResponse{
+							storeSeriesResponse(t, labels.FromStrings("a", "b"), []sample{{1, 1}, {2, 2}, {3, 3}}),
+						},
+					},
+					Name:            "store1",
+					ExtLset:         []labels.Labels{labels.FromStrings("ext", "1")},
+					MinTime:         1,
+					MaxTime:         300,
+					GroupKeyStr:     "legacy-group",
+					ReplicaKeyStr:   "replica1",
+					ReplicaGroupStr: "rg",
+					QuorumValue:     1,
+				},
+				&storetestutil.TestClient{
+					StoreClient: &mockedStoreAPI{
+						RespSeries: []*storepb.SeriesResponse{
+							storeSeriesResponse(t, labels.FromStrings("a", "b"), []sample{{1, 1}, {2, 2}, {3, 3}}),
+						},
+						injectedErrorIndex: 0,
+						injectedError:      errors.New("error!"),
+					},
+					Name:            "store2",
+					ExtLset:         []labels.Labels{labels.FromStrings("ext", "1")},
+					MinTime:         1,
+					MaxTime:         300,
+					GroupKeyStr:     "legacy-group",
+					ReplicaKeyStr:   "replica2",
+					ReplicaGroupStr: "rg",
+					QuorumValue:     1,
+				},
+				&storetestutil.TestClient{
+					StoreClient: &mockedStoreAPI{
+						RespSeries: []*storepb.SeriesResponse{
+							storeSeriesResponse(t, labels.FromStrings("a", "b"), []sample{{1, 1}, {2, 2}, {3, 3}}),
+						},
+						injectedErrorIndex: 0,
+						injectedError:      errors.New("error!"),
+					},
+					Name:            "store3",
+					ExtLset:         []labels.Labels{labels.FromStrings("ext", "1")},
+					MinTime:         1,
+					MaxTime:         300,
+					GroupKeyStr:     "legacy-group",
+					ReplicaKeyStr:   "replica3",
+					ReplicaGroupStr: "rg",
+					QuorumValue:     1,
+				},
+			},
+			req: &storepb.SeriesRequest{
+				MinTime:                 1,
+				MaxTime:                 300,
+				Matchers:                []storepb.LabelMatcher{{Name: "ext", Value: "1", Type: storepb.LabelMatcher_EQ}},
+				PartialResponseStrategy: storepb.PartialResponseStrategy_QUORUM,
+			},
+			expectedSeries: []rawSeries{
+				{
+					lset:   labels.FromStrings("a", "b"),
+					chunks: [][]sample{{{1, 1}, {2, 2}, {3, 3}}},
+				},
+			},
+			expectedWarningsLen: 2,
+		},
+		{
+			title: "quorum strategy; quorum not met",
+			storeAPIs: []Client{
+				&storetestutil.TestClient{
+					StoreClient: &mockedStoreAPI{
+						RespError: errors.New("error!"),
+					},
+					ExtLset:         []labels.Labels{labels.FromStrings("ext", "1")},
+					MinTime:         1,
+					MaxTime:         300,
+					GroupKeyStr:     "legacy-group",
+					ReplicaKeyStr:   "replica1",
+					ReplicaGroupStr: "rg",
+					QuorumValue:     2,
+				},
+				&storetestutil.TestClient{
+					StoreClient: &mockedStoreAPI{
+						RespError: errors.New("error!"),
+					},
+					ExtLset:         []labels.Labels{labels.FromStrings("ext", "1")},
+					MinTime:         1,
+					MaxTime:         300,
+					GroupKeyStr:     "legacy-group",
+					ReplicaKeyStr:   "replica2",
+					ReplicaGroupStr: "rg",
+					QuorumValue:     2,
+				},
+				&storetestutil.TestClient{
+					StoreClient: &mockedStoreAPI{
+						RespSeries: []*storepb.SeriesResponse{
+							storeSeriesResponse(t, labels.FromStrings("a", "b"), []sample{{1, 1}, {2, 2}, {3, 3}}),
+						},
+					},
+					ExtLset:         []labels.Labels{labels.FromStrings("ext", "1")},
+					MinTime:         1,
+					MaxTime:         300,
+					GroupKeyStr:     "legacy-group",
+					ReplicaKeyStr:   "replica3",
+					ReplicaGroupStr: "rg",
+					QuorumValue:     2,
+				},
+			},
+			req: &storepb.SeriesRequest{
+				MinTime:                 1,
+				MaxTime:                 300,
+				Matchers:                []storepb.LabelMatcher{{Name: "ext", Value: "1", Type: storepb.LabelMatcher_EQ}},
+				PartialResponseStrategy: storepb.PartialResponseStrategy_QUORUM,
+			},
+			expectedErr: errors.New("Replica group does not meet quorum requirement group=rg healthy=1 quorum=2: fetch series for {ext=\"1\"} : error!"),
+		},
+		{
+			title: "quorum strategy; quorum not met when one store is missing from discovery",
+			// Equivalent to a 3-replica group with quorum=2 where only 2 stores are discovered/attempted.
+			storeAPIs: []Client{
+				&storetestutil.TestClient{
+					StoreClient: &mockedStoreAPI{
+						RespSeries: []*storepb.SeriesResponse{
+							storeSeriesResponse(t, labels.FromStrings("a", "b"), []sample{{1, 1}, {2, 2}, {3, 3}}),
+						},
+					},
+					ExtLset:         []labels.Labels{labels.FromStrings("ext", "1")},
+					MinTime:         1,
+					MaxTime:         300,
+					GroupKeyStr:     "legacy-group",
+					ReplicaKeyStr:   "replica1",
+					ReplicaGroupStr: "rg",
+					QuorumValue:     2,
+				},
+				&storetestutil.TestClient{
+					StoreClient: &mockedStoreAPI{
+						RespError: errors.New("error!"),
+					},
+					ExtLset:         []labels.Labels{labels.FromStrings("ext", "1")},
+					MinTime:         1,
+					MaxTime:         300,
+					GroupKeyStr:     "legacy-group",
+					ReplicaKeyStr:   "replica2",
+					ReplicaGroupStr: "rg",
+					QuorumValue:     2,
+				},
+			},
+			req: &storepb.SeriesRequest{
+				MinTime:                 1,
+				MaxTime:                 300,
+				Matchers:                []storepb.LabelMatcher{{Name: "ext", Value: "1", Type: storepb.LabelMatcher_EQ}},
+				PartialResponseStrategy: storepb.PartialResponseStrategy_QUORUM,
+			},
+			expectedErr: errors.New("Replica group does not meet quorum requirement group=rg healthy=1 quorum=2: fetch series for {ext=\"1\"} : error!"),
+		},
+		{
+			title: "quorum strategy; singleton store failure aborts",
+			storeAPIs: []Client{
+				&storetestutil.TestClient{
+					StoreClient: &mockedStoreAPI{
+						RespError: errors.New("error!"),
+					},
+					ExtLset:       []labels.Labels{labels.FromStrings("ext", "1")},
+					MinTime:       1,
+					MaxTime:       300,
+					GroupKeyStr:   "singleton-group",
+					ReplicaKeyStr: "singleton-replica",
+				},
+				&storetestutil.TestClient{
+					StoreClient: &mockedStoreAPI{
+						RespSeries: []*storepb.SeriesResponse{
+							storeSeriesResponse(t, labels.FromStrings("a", "b"), []sample{{1, 1}, {2, 2}, {3, 3}}),
+						},
+					},
+					ExtLset:         []labels.Labels{labels.FromStrings("ext", "1")},
+					MinTime:         1,
+					MaxTime:         300,
+					GroupKeyStr:     "legacy-group",
+					ReplicaKeyStr:   "replica1",
+					ReplicaGroupStr: "rg",
+					QuorumValue:     1,
+				},
+			},
+			req: &storepb.SeriesRequest{
+				MinTime:                 1,
+				MaxTime:                 300,
+				Matchers:                []storepb.LabelMatcher{{Name: "ext", Value: "1", Type: storepb.LabelMatcher_EQ}},
+				PartialResponseStrategy: storepb.PartialResponseStrategy_QUORUM,
+			},
+			expectedErr: errors.New("fetch series for {ext=\"1\"} : error!"),
+		},
+		{
 			title: "group replica strategy; a group with single replica has one failure",
 			storeAPIs: []Client{
 				&storetestutil.TestClient{
@@ -3555,4 +3805,100 @@ func TestDedupRespHeap_QuorumChunkDedup(t *testing.T) {
 		})
 	}
 
+}
+
+func TestProxyStore_GetGroupKeyQuorum(t *testing.T) {
+	t.Parallel()
+
+	// Test that getGroupKey and getQuorum use first-class fields from StoreInfo
+	// when available, otherwise fall back to DNS-based grouping.
+	for _, tc := range []struct {
+		name              string
+		client            *storetestutil.TestClient
+		expectedGroup     string
+		expectedReplica   string
+		expectedQuorum    int
+		expectMustSuccess bool
+	}{
+		{
+			name: "no ReplicaGroup set - fallback to DNS-based GroupKey",
+			client: &storetestutil.TestClient{
+				Name:            "receive-rep0-0.receive.svc.cluster.local:10901",
+				GroupKeyStr:     "receive-rep0",
+				ReplicaKeyStr:   "receive-rep0-0",
+				ReplicaGroupStr: "", // Not set - triggers DNS fallback
+				QuorumValue:     0,  // Ignored when ReplicaGroupStr is empty
+			},
+			expectedGroup:     "receive-rep0", // Falls back to GroupKeyStr
+			expectedReplica:   "receive-rep0-0",
+			expectedQuorum:    0, // DNS fallback always has quorum=0
+			expectMustSuccess: true,
+		},
+		{
+			name: "ReplicaGroup and Quorum set - use first-class fields",
+			client: &storetestutil.TestClient{
+				Name:            "receive-rep0-0.receive.svc.cluster.local:10901",
+				GroupKeyStr:     "receive-rep0", // Ignored when ReplicaGroupStr is set
+				ReplicaKeyStr:   "receive-rep0-0",
+				ReplicaGroupStr: "receive-0",
+				QuorumValue:     2,
+			},
+			expectedGroup:     "receive-0", // Uses ReplicaGroupStr
+			expectedReplica:   "receive-rep0-0",
+			expectedQuorum:    2, // Uses QuorumValue
+			expectMustSuccess: false,
+		},
+		{
+			name: "store without ReplicaGroup/Quorum - singleton store via DNS fallback",
+			client: &storetestutil.TestClient{
+				Name:            "bucket-store.svc.cluster.local:10901",
+				GroupKeyStr:     "bucket-store",
+				ReplicaKeyStr:   "bucket-store",
+				ReplicaGroupStr: "",
+				QuorumValue:     0,
+			},
+			expectedGroup:     "bucket-store", // Falls back to GroupKeyStr
+			expectedReplica:   "bucket-store",
+			expectedQuorum:     0, // Singleton store
+			expectMustSuccess:  true,
+		},
+		{
+			name: "ReplicaGroup set but Quorum is 0 - use ReplicaGroup, singleton store",
+			client: &storetestutil.TestClient{
+				Name:            "partial-store.svc.cluster.local:10901",
+				GroupKeyStr:     "partial-store",
+				ReplicaKeyStr:   "partial-store",
+				ReplicaGroupStr: "receive-0",
+				QuorumValue:     0, // Not set, singleton store
+			},
+			expectedGroup:     "receive-0", // Uses ReplicaGroupStr
+			expectedReplica:   "partial-store",
+			expectedQuorum:     0, // Singleton store
+			expectMustSuccess:  true,
+		},
+		{
+			name: "high quorum value",
+			client: &storetestutil.TestClient{
+				Name:            "receive-0.receive.svc.cluster.local:10901",
+				GroupKeyStr:     "receive-0",
+				ReplicaKeyStr:   "receive-0",
+				ReplicaGroupStr: "group-a",
+				QuorumValue:     5,
+			},
+			expectedGroup:     "group-a",
+			expectedReplica:   "receive-0",
+			expectedQuorum:    5,
+			expectMustSuccess: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Test the unified ReplicaInfo() method directly
+			ri := tc.client.ReplicaInfo()
+
+			testutil.Equals(t, tc.expectedGroup, ri.Group)
+			testutil.Equals(t, tc.expectedReplica, ri.Replica)
+			testutil.Equals(t, tc.expectedQuorum, ri.Quorum)
+			testutil.Equals(t, tc.expectMustSuccess, ri.IsSingletonStore())
+		})
+	}
 }
