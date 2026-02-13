@@ -59,6 +59,7 @@ type Writer struct {
 	logger    log.Logger
 	multiTSDB TenantStorage
 	opts      *WriterOptions
+	blocklist *MetricBlocklist
 }
 
 func NewWriter(logger log.Logger, multiTSDB TenantStorage, opts *WriterOptions) *Writer {
@@ -70,6 +71,12 @@ func NewWriter(logger log.Logger, multiTSDB TenantStorage, opts *WriterOptions) 
 		multiTSDB: multiTSDB,
 		opts:      opts,
 	}
+}
+
+// SetBlocklist sets the metric blocklist for the writer.
+// This allows filtering out metrics that match blocklist rules after deserialization.
+func (r *Writer) SetBlocklist(blocklist *MetricBlocklist) {
+	r.blocklist = blocklist
 }
 
 func (r *Writer) Write(ctx context.Context, tenantID string, wreq []prompb.TimeSeries) error {
@@ -108,6 +115,14 @@ func (r *Writer) Write(ctx context.Context, tenantID string, wreq []prompb.TimeS
 		}
 
 		lset := labelpb.ZLabelsToPromLabels(t.Labels)
+
+		// Check if the time series should be blocked based on blocklist rules.
+		if r.blocklist != nil {
+			if blocked, ruleName := r.blocklist.ShouldBlock(lset); blocked {
+				r.blocklist.RecordBlocked(ruleName, tenantID)
+				continue
+			}
+		}
 
 		// Check if the TSDB has cached reference for those labels.
 		ref, lset = getRef.GetRef(lset, lset.Hash())

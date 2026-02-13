@@ -27,6 +27,7 @@ type CapNProtoWriter struct {
 	logger    log.Logger
 	multiTSDB TenantStorage
 	opts      *CapNProtoWriterOptions
+	blocklist *MetricBlocklist
 }
 
 func NewCapNProtoWriter(logger log.Logger, multiTSDB TenantStorage, opts *CapNProtoWriterOptions) *CapNProtoWriter {
@@ -38,6 +39,12 @@ func NewCapNProtoWriter(logger log.Logger, multiTSDB TenantStorage, opts *CapNPr
 		multiTSDB: multiTSDB,
 		opts:      opts,
 	}
+}
+
+// SetBlocklist sets the metric blocklist for the writer.
+// This allows filtering out metrics that match blocklist rules after deserialization.
+func (r *CapNProtoWriter) SetBlocklist(blocklist *MetricBlocklist) {
+	r.blocklist = blocklist
 }
 
 func (r *CapNProtoWriter) Write(ctx context.Context, tenantID string, wreq *writecapnp.Request) error {
@@ -81,6 +88,14 @@ func (r *CapNProtoWriter) Write(ctx context.Context, tenantID string, wreq *writ
 			lset := &labelpb.ZLabelSet{Labels: labelpb.ZLabelsFromPromLabels(series.Labels)}
 			errorTracker.addLabelsError(err, lset, tLogger)
 			continue
+		}
+
+		// Check if the time series should be blocked based on blocklist rules.
+		if r.blocklist != nil {
+			if blocked, ruleName := r.blocklist.ShouldBlock(series.Labels); blocked {
+				r.blocklist.RecordBlocked(ruleName, tenantID)
+				continue
+			}
 		}
 
 		var lset labels.Labels

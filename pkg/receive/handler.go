@@ -182,6 +182,7 @@ type Options struct {
 	ForwardTimeout          time.Duration
 	MaxBackoff              time.Duration
 	Relabeller              *Relabeller
+	MetricBlocklist         *MetricBlocklist
 	TSDBStats               TSDBStats
 	Limiter                 *Limiter
 	AsyncForwardWorkerCount uint
