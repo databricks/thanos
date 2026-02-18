@@ -1148,7 +1148,9 @@ func TestReceiveExtractsTenant(t *testing.T) {
 			return err
 		}))
 
-		testutil.Ok(t, i.WaitSumMetricsWithOptions(e2emon.Equals(0), []string{"prometheus_tsdb_blocks_loaded"}, e2emon.WithLabelMatchers(matchers.MustNewMatcher(matchers.MatchEqual, "tenant", "http-tenant")), e2emon.WaitMissingMetrics()))
+		// When splitTenantLabelName is configured but the series doesn't have that label,
+		// the handler falls back to DefaultTenantID (not the HTTP header tenant).
+		testutil.Ok(t, i.WaitSumMetricsWithOptions(e2emon.Equals(0), []string{"prometheus_tsdb_blocks_loaded"}, e2emon.WithLabelMatchers(matchers.MustNewMatcher(matchers.MatchEqual, "tenant", "default-tenant")), e2emon.WaitMissingMetrics()))
 		testutil.Ok(t, i.WaitSumMetricsWithOptions(e2emon.Equals(0), []string{"prometheus_tsdb_blocks_loaded"}, e2emon.WithLabelMatchers(matchers.MustNewMatcher(matchers.MatchEqual, "tenant", tenantLabelName+":tenant-3")), e2emon.WaitMissingMetrics()))
 
 	})
