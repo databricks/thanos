@@ -30,7 +30,7 @@ func TestNewFilterFromFilterValueWithNegation(t *testing.T) {
 			negate:  false,
 			data: []mockFilterData{
 				{val: "foo", match: true},
-				{val: "fx", match: false},
+				{val: "boo", match: false},
 			},
 		},
 		{
@@ -66,7 +66,7 @@ func TestNewFilterFromFilterValueWithNegation(t *testing.T) {
 			negate:  true,
 			data: []mockFilterData{
 				{val: "foo", match: false},
-				{val: "fx", match: true},
+				{val: "bar", match: true},
 			},
 		},
 		{
@@ -120,8 +120,8 @@ func TestFilters(t *testing.T) {
 		newTestInput("test", false, false, false),
 		newTestInput("bar", false, true, false),
 		newTestInput("foobar", true, true, false),
-		newTestInput("waxbar08", true, false, true),
-		newTestInput("waxybar09", true, false, true),
+		newTestInput("waxbar08", false, false, true),
+		newTestInput("waxybar09", false, false, true),
 	}
 
 	for _, input := range inputs {
