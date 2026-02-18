@@ -30,7 +30,7 @@ func TestNewFilterFromFilterValueWithNegation(t *testing.T) {
 			negate:  false,
 			data: []mockFilterData{
 				{val: "foo", match: true},
-				{val: "fo", match: false},
+				{val: "fx", match: false},
 			},
 		},
 		{
@@ -52,11 +52,11 @@ func TestNewFilterFromFilterValueWithNegation(t *testing.T) {
 			},
 		},
 		{
-			pattern: "{ba,fo,car}*",
+			pattern: "{ba,fx,car}*",
 			negate:  false,
 			data: []mockFilterData{
 				{val: "ba", match: true},
-				{val: "foo", match: true},
+				{val: "fxy", match: true},
 				{val: "car", match: true},
 				{val: "ca", match: false},
 			},
@@ -66,7 +66,7 @@ func TestNewFilterFromFilterValueWithNegation(t *testing.T) {
 			negate:  true,
 			data: []mockFilterData{
 				{val: "foo", match: false},
-				{val: "fo", match: true},
+				{val: "fx", match: true},
 			},
 		},
 		{
@@ -88,11 +88,11 @@ func TestNewFilterFromFilterValueWithNegation(t *testing.T) {
 			},
 		},
 		{
-			pattern: "{ba,fo,car}*",
+			pattern: "{ba,fx,car}*",
 			negate:  true,
 			data: []mockFilterData{
 				{val: "ba", match: false},
-				{val: "foo", match: false},
+				{val: "fxy", match: false},
 				{val: "car", match: false},
 				{val: "ca", match: true},
 			},
@@ -110,9 +110,9 @@ func TestNewFilterFromFilterValueWithNegation(t *testing.T) {
 
 func TestFilters(t *testing.T) {
 	filters := genAndValidateFilters(t, []testPattern{
-		testPattern{pattern: "f[A-z]?*", expectedStr: "StartsWith(Equals(\"f\") then Range(\"A-z\") then AnyChar)"},
-		testPattern{pattern: "*ba[a-z]", expectedStr: "EndsWith(Equals(\"ba\") then Range(\"a-z\"))"},
-		testPattern{pattern: "fo*?ba[!0-9][0-9]{8,9}", expectedStr: "StartsWith(Equals(\"fo\")) && EndsWith(AnyChar then Equals(\"ba\") then Not(Range(\"0-9\")) then Range(\"0-9\") then Range(\"8,9\"))"},
+		{pattern: "f[A-z]?*", expectedStr: "StartsWith(Equals(\"f\") then Range(\"A-z\") then AnyChar)"},
+		{pattern: "*ba[a-z]", expectedStr: "EndsWith(Equals(\"ba\") then Range(\"a-z\"))"},
+		{pattern: "wa*?ba[!0-9][0-9]{8,9}", expectedStr: "StartsWith(Equals(\"wa\")) && EndsWith(AnyChar then Equals(\"ba\") then Not(Range(\"0-9\")) then Range(\"0-9\") then Range(\"8,9\"))"},
 	})
 
 	inputs := []testInput{
@@ -120,8 +120,8 @@ func TestFilters(t *testing.T) {
 		newTestInput("test", false, false, false),
 		newTestInput("bar", false, true, false),
 		newTestInput("foobar", true, true, false),
-		newTestInput("foobar08", true, false, true),
-		newTestInput("footybar09", true, false, true),
+		newTestInput("waxbar08", true, false, true),
+		newTestInput("waxybar09", true, false, true),
 	}
 
 	for _, input := range inputs {
@@ -135,7 +135,7 @@ func TestFilters(t *testing.T) {
 func TestEqualityFilter(t *testing.T) {
 	inputs := []mockFilterData{
 		{val: "foo", match: true},
-		{val: "fo", match: false},
+		{val: "fx", match: false},
 		{val: "foob", match: false},
 	}
 	// Use NewFilter with a pattern that has no wildcards - creates an equalityFilter internally
@@ -156,12 +156,12 @@ func TestEmptyFilter(t *testing.T) {
 
 func TestWildcardFilters(t *testing.T) {
 	filters := genAndValidateFilters(t, []testPattern{
-		testPattern{pattern: "foo", expectedStr: "Equals(\"foo\")"},
-		testPattern{pattern: "*bar", expectedStr: "EndsWith(Equals(\"bar\"))"},
-		testPattern{pattern: "baz*", expectedStr: "StartsWith(Equals(\"baz\"))"},
-		testPattern{pattern: "*cat*", expectedStr: "Contains(\"cat\")"},
-		testPattern{pattern: "foo*bar", expectedStr: "StartsWith(Equals(\"foo\")) && EndsWith(Equals(\"bar\"))"},
-		testPattern{pattern: "*", expectedStr: "All"},
+		{pattern: "foo", expectedStr: "Equals(\"foo\")"},
+		{pattern: "*bar", expectedStr: "EndsWith(Equals(\"bar\"))"},
+		{pattern: "baz*", expectedStr: "StartsWith(Equals(\"baz\"))"},
+		{pattern: "*cat*", expectedStr: "Contains(\"cat\")"},
+		{pattern: "foo*bar", expectedStr: "StartsWith(Equals(\"foo\")) && EndsWith(Equals(\"bar\"))"},
+		{pattern: "*", expectedStr: "All"},
 	})
 
 	inputs := []testInput{
@@ -187,24 +187,26 @@ func TestWildcardFilters(t *testing.T) {
 
 func TestRangeFilters(t *testing.T) {
 	filters := genAndValidateFilters(t, []testPattern{
-		testPattern{pattern: "fo[a-zA-Z0-9]", expectedStr: "Equals(\"fo\") then Range(\"a-z || A-Z || 0-9\")"},
-		testPattern{pattern: "f[o-o]?", expectedStr: "Equals(\"f\") then Range(\"o-o\") then AnyChar"},
-		testPattern{pattern: "???", expectedStr: "AnyChar then AnyChar then AnyChar"},
-		testPattern{pattern: "ba?", expectedStr: "Equals(\"ba\") then AnyChar"},
-		testPattern{pattern: "[!cC]ar", expectedStr: "Not(Range(\"cC\")) then Equals(\"ar\")"},
-		testPattern{pattern: "ba?[0-9][!a-z]9", expectedStr: "Equals(\"ba\") then AnyChar then Range(\"0-9\") then Not(Range(\"a-z\")) then Equals(\"9\")"},
-		testPattern{pattern: "{ba,fo,car}*", expectedStr: "StartsWith(Range(\"ba,fo,car\"))"},
-		testPattern{pattern: "ba{r,t}*[!a-zA-Z]", expectedStr: "StartsWith(Equals(\"ba\") then Range(\"r,t\")) && EndsWith(Not(Range(\"a-z || A-Z\")))"},
-		testPattern{pattern: "*{9}", expectedStr: "EndsWith(Range(\"9\"))"},
+		{pattern: "ax[a-zA-Z0-9]", expectedStr: "Equals(\"ax\") then Range(\"a-z || A-Z || 0-9\")"},
+		{pattern: "f[o-o]?", expectedStr: "Equals(\"f\") then Range(\"o-o\") then AnyChar"},
+		{pattern: "???", expectedStr: "AnyChar then AnyChar then AnyChar"},
+		{pattern: "ba?", expectedStr: "Equals(\"ba\") then AnyChar"},
+		{pattern: "[!cC]ar", expectedStr: "Not(Range(\"cC\")) then Equals(\"ar\")"},
+		{pattern: "ba?[0-9][!a-z]9", expectedStr: "Equals(\"ba\") then AnyChar then Range(\"0-9\") then Not(Range(\"a-z\")) then Equals(\"9\")"},
+		{pattern: "{ba,fx,car}*", expectedStr: "StartsWith(Range(\"ba,fx,car\"))"},
+		{pattern: "ba{r,t}*[!a-zA-Z]", expectedStr: "StartsWith(Equals(\"ba\") then Range(\"r,t\")) && EndsWith(Not(Range(\"a-z || A-Z\")))"},
+		{pattern: "*{9}", expectedStr: "EndsWith(Range(\"9\"))"},
 	})
 
 	inputs := []testInput{
-		newTestInput("foo", true, true, true, false, false, false, true, false, false),
-		newTestInput("fo!", false, true, true, false, false, false, true, false, false),
+		newTestInput("axo", true, false, true, false, false, false, false, false, false),
+		newTestInput("ax!", false, false, true, false, false, false, false, false, false),
+		newTestInput("foo", false, true, true, false, false, false, false, false, false),
 		newTestInput("boo", false, false, true, false, false, false, false, false, false),
 		newTestInput("bar", false, false, true, true, true, false, true, false, false),
 		newTestInput("Bar", false, false, true, false, true, false, false, false, false),
 		newTestInput("car", false, false, true, false, false, false, true, false, false),
+		newTestInput("fxy", false, false, true, false, false, false, true, false, false),
 		newTestInput("bar9", false, false, false, false, false, false, true, true, true),
 		newTestInput("bar990", false, false, false, false, false, false, true, true, false),
 		newTestInput("bar959", false, false, false, false, false, true, true, true, true),
@@ -222,12 +224,12 @@ func TestRangeFilters(t *testing.T) {
 
 func TestNegationFilter(t *testing.T) {
 	filters := genAndValidateFilters(t, []testPattern{
-		testPattern{pattern: "!foo", expectedStr: "Not(Equals(\"foo\"))"},
-		testPattern{pattern: "!*bar", expectedStr: "Not(EndsWith(Equals(\"bar\")))"},
-		testPattern{pattern: "!baz*", expectedStr: "Not(StartsWith(Equals(\"baz\")))"},
-		testPattern{pattern: "!*cat*", expectedStr: "Not(Contains(\"cat\"))"},
-		testPattern{pattern: "!foo*bar", expectedStr: "Not(StartsWith(Equals(\"foo\")) && EndsWith(Equals(\"bar\")))"},
-		testPattern{pattern: "foo!", expectedStr: "Equals(\"foo!\")"},
+		{pattern: "!foo", expectedStr: "Not(Equals(\"foo\"))"},
+		{pattern: "!*bar", expectedStr: "Not(EndsWith(Equals(\"bar\")))"},
+		{pattern: "!baz*", expectedStr: "Not(StartsWith(Equals(\"baz\")))"},
+		{pattern: "!*cat*", expectedStr: "Not(Contains(\"cat\"))"},
+		{pattern: "!foo*bar", expectedStr: "Not(StartsWith(Equals(\"foo\")) && EndsWith(Equals(\"bar\")))"},
+		{pattern: "foo!", expectedStr: "Equals(\"foo!\")"},
 	})
 
 	inputs := []testInput{
