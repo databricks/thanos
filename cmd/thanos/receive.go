@@ -182,7 +182,6 @@ func runReceive(
 		level.Info(logger).Log("msg", "series resorting disabled for TSDB store queries")
 	}
 
-
 	rwTLSConfig, err := tls.NewServerConfig(log.With(logger, "protocol", "HTTP"), conf.rwServerCert, conf.rwServerKey, conf.rwServerClientCA, conf.rwServerTlsMinVersion)
 	if err != nil {
 		return err
