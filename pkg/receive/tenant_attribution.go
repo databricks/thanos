@@ -41,9 +41,6 @@ type TenantAttributor struct {
 	verifyMode            bool
 	attributionMatches    prometheus.Counter
 	attributionMismatches *prometheus.CounterVec
-
-	// Sampled logging for debugging mismatches
-	sampleCounter uint64
 }
 
 // NewTenantAttributor creates a new TenantAttributor from a config file.
