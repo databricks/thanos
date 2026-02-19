@@ -108,14 +108,15 @@ var (
 		return false // discard the buffer that is too large.
 	}).Build()
 
-	decompressedBufPoolV2 = syncutil.NewPool(func() []byte {
+	decompressedBufPoolV2 = syncutil.NewPool(func() *[]byte {
 		// We do not need to allocate capacity to this buffer here,
 		// as we will grow the buffer to the required size later.
 		// This is a requirement of the s2.Decode function.
-		return make([]byte, 0)
-	}).WithReset(func(b []byte) bool {
-		if cap(b) <= maxPooledDecompressedCap {
-			b = b[:0]
+		b := make([]byte, 0)
+		return &b
+	}).WithReset(func(b *[]byte) bool {
+		if cap(*b) <= maxPooledDecompressedCap {
+			*b = (*b)[:0]
 			return true // return buffer to the pool.
 		}
 		return false // discard the buffer that is too large.
@@ -715,8 +716,8 @@ func (h *Handler) receiveHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// get a buffer to temporarily store compressed contents.
-	compressed, doneCompressed := compressedBufPoolV2.Get()
-	defer doneCompressed(compressed)
+	compressed, ret1 := compressedBufPoolV2.Get()
+	defer ret1(compressed)
 	if r.ContentLength > 0 {
 		compressed.Grow(int(r.ContentLength))
 	}
@@ -737,8 +738,8 @@ func (h *Handler) receiveHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Decode into a pooled buffer to avoid allocs. (cap-guarded on return)
-	reqBuf, doneDecompressBuff := decompressedBufPoolV2.Get()
-	defer doneDecompressBuff(reqBuf)
+	reqBuf, ret2 := decompressedBufPoolV2.Get()
+	defer ret2(reqBuf)
 
 	decodeLen, err := s2.DecodedLen(compressed.Bytes())
 	if err != nil {
@@ -751,10 +752,10 @@ func (h *Handler) receiveHTTP(w http.ResponseWriter, r *http.Request) {
 	// otherwise s2 will allocate a new slice for us, ignoring the provided buffer.
 	// Without this check, in the worst case we would be reserving large blocks of memory
 	// that can never actually be used, then allocating even more memory for the GC to clean up.
-	if cap(reqBuf) < decodeLen {
-		reqBuf = slices.Grow(reqBuf, decodeLen)
+	if cap(*reqBuf) < decodeLen {
+		*reqBuf = slices.Grow(*reqBuf, decodeLen)
 	}
-	reqBuf, err = s2.Decode((reqBuf)[:0], compressed.Bytes())
+	*reqBuf, err = s2.Decode(*reqBuf, compressed.Bytes())
 	if err != nil {
 		level.Error(tLogger).Log("msg", "snappy decode error", "err", err)
 		http.Error(w, errors.Wrap(err, "snappy decode error").Error(), http.StatusBadRequest)
@@ -762,7 +763,7 @@ func (h *Handler) receiveHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Enforce size limits after decompression.
-	if !requestLimiter.AllowSizeBytes(tenantHTTP, int64(len(reqBuf))) {
+	if !requestLimiter.AllowSizeBytes(tenantHTTP, int64(len(*reqBuf))) {
 		http.Error(w, errRequestTooLarge.Error(), http.StatusRequestEntityTooLarge)
 		return
 	}
@@ -776,7 +777,7 @@ func (h *Handler) receiveHTTP(w http.ResponseWriter, r *http.Request) {
 		wreq.Reset()
 		writeRequestPool.Put(wreq)
 	}()
-	if err := proto.Unmarshal(reqBuf, wreq); err != nil {
+	if err := proto.Unmarshal(*reqBuf, wreq); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}

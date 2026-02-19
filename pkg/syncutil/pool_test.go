@@ -19,37 +19,50 @@ func TestPool_GetReturn(t *testing.T) {
 }
 
 func TestPool_WithReset(t *testing.T) {
-	p := NewPool(func() *bytes.Buffer { return new(bytes.Buffer) }).
-		WithReset(func(b *bytes.Buffer) bool { b.Reset(); return true }).
-		Build()
+	p := NewPool(func() *bytes.Buffer {
+		return &bytes.Buffer{}
+	}).WithReset(func(b *bytes.Buffer) bool {
+		b.Reset()
+		b.WriteString("cleared")
+		return true
+	}).Build()
 
 	buf, ret := p.Get()
+	testutil.Equals(t, "", buf.String())
 	buf.WriteString("data")
 	ret(buf)
+	// !!! usually we would never hold onto a reference
+	// after returning it to the pool, but this is for testing.
+	testutil.Equals(t, "cleared", buf.String())
 
-	buf2, ret2 := p.Get()
-	defer ret2(buf2)
-
-	// After reset the buffer should be empty (assuming same object was reused,
-	// which is not guaranteed by sync.Pool but is the common case in tests).
-	if buf == buf2 {
-		testutil.Equals(t, 0, buf2.Len())
-	}
+	buf, ret = p.Get()
+	defer ret(buf)
+	testutil.Equals(t, "cleared", buf.String())
 }
 
-type tracker struct {
-	value int
-}
+func TestPool_WithByteSlicePointer(t *testing.T) {
+	p := NewPool(func() *[]byte {
+		b := make([]byte, 0, 10)
+		return &b
+	}).WithReset(func(b *[]byte) bool {
+		*b = (*b)[:0]
+		return true
+	}).Build()
 
-func TestPool_DeferPattern(t *testing.T) {
-	p := NewPool(func() *tracker { return &tracker{} }).
-		WithReset(func(tr *tracker) bool { tr.value = 0; return true }).
-		Build()
-
-	func() {
-		obj, ret := p.Get()
-		defer ret(obj)
-		obj.value = 42
-		testutil.Equals(t, 42, obj.value)
-	}()
+	buf, ret := p.Get()
+	testutil.Equals(t, 10, cap(*buf))
+	testutil.Equals(t, 0, len(*buf))
+	*buf = append(*buf, make([]byte, 20)...)
+	testutil.Equals(t, 24, cap(*buf))
+	testutil.Equals(t, 20, len(*buf))
+	ret(buf)
+	// !!! usually we would never hold onto a reference
+	// after returning it to the pool, but this is for testing.
+	testutil.Equals(t, 24, cap(*buf))
+	testutil.Equals(t, 0, len(*buf))
+	buf, ret = p.Get()
+	defer ret(buf)
+	testutil.Equals(t, 24, cap(*buf))
+	testutil.Equals(t, 0, len(*buf))
+	testutil.Equals(t, []byte{}, *buf)
 }
