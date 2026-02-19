@@ -131,11 +131,19 @@ var (
 		return false // discard the buffer that is too large.
 	}).Build()
 
-	writeRequestPool = sync.Pool{
-		New: func() interface{} {
-			return &prompb.WriteRequest{}
-		},
-	}
+	writeRequestPoolV2 = syncutil.NewPool(func() *prompb.WriteRequest {
+		return &prompb.WriteRequest{}
+	}).WithReset(func(wreq *prompb.WriteRequest) bool {
+		// Keep the memory allocated for the slice, but clear the contents.
+		// If we call *prompb.WriteRequest.Reset() on the WriteRequest,
+		// it will replace the reference with a new struct, so we would
+		// effectively be pooling a pointer.
+		// The drawback of this approach is that if the underlying proto changes (e.g. new fields are added),
+		// we need to update this code to clear the new fields.
+		wreq.Metadata = wreq.Metadata[:0]
+		wreq.Timeseries = wreq.Timeseries[:0]
+		return true
+	}).Build()
 )
 
 // zlabelsGet avoids ZLabels -> PromLabels conversion in hot paths.
@@ -819,13 +827,11 @@ func (h *Handler) receiveHTTP(w http.ResponseWriter, r *http.Request) {
 	// NOTE: Due to zero copy ZLabels, Labels used from WriteRequests keeps memory
 	// from the whole request. Ensure that we always copy those when we want to
 	// store them for longer time.
-	wreq := writeRequestPool.Get().(*prompb.WriteRequest)
-	wreq.Reset()
-	defer func() {
-		wreq.Reset()
-		writeRequestPool.Put(wreq)
-	}()
-	if err := proto.Unmarshal(*reqBuf, wreq); err != nil {
+	wreq, ret3 := writeRequestPoolV2.Get()
+	defer ret3(wreq)
+	// Note: do not use proto.Unmarshal here, it will call Reset() which replaces the underlying
+	// struct entirely, so we ould effectively be pooling a pointer.
+	if err := wreq.Unmarshal(*reqBuf); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
