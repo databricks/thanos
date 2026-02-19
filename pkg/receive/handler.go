@@ -796,7 +796,7 @@ func (h *Handler) receiveHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ¡Important! If decode len is greater than the capacity of the buffer, we need to grow the buffer
-	// otherwise s2 will allocate a new slice for us, ignorning the provided buffer.
+	// otherwise s2 will allocate a new slice for us, ignoring the provided buffer.
 	// Without this check, in the worst case we would be reserving large blocks of memory
 	// that can never actually be used, then allocating even more memory for the GC to clean up.
 	if cap(reqBuf) < decodeLen {
