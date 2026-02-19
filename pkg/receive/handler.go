@@ -545,7 +545,7 @@ func (h *Handler) tenantKeyForDistribution(tenantHTTP string, ts prompb.TimeSeri
 		if h.options.TenantAttributor.IsVerifyMode() {
 			lbls := labelpb.ZLabelsToPromLabels(ts.Labels)
 			attributedTenant := h.options.TenantAttributor.GetTenantFromLabels(lbls)
-			h.options.TenantAttributor.RecordVerification(attributedTenant, tenantHTTP, lbls)
+			h.options.TenantAttributor.RecordVerification(attributedTenant, tenantHTTP)
 			return tenantHTTP
 		}
 

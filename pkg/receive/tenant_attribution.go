@@ -146,8 +146,7 @@ func (ta *TenantAttributor) GetTenantFromLabels(lbls labels.Labels) string {
 
 // RecordVerification records match/mismatch metrics for verification mode.
 // httpTenant is the tenant from HTTP header (or default if no header).
-// lbls are the time series labels, used for sampled debug logging on mismatches.
-func (ta *TenantAttributor) RecordVerification(attributedTenant, httpTenant string, lbls labels.Labels) {
+func (ta *TenantAttributor) RecordVerification(attributedTenant, httpTenant string) {
 	if !ta.verifyMode {
 		return
 	}
