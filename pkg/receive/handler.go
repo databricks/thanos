@@ -128,10 +128,6 @@ var (
 	}
 )
 
-type sizeLimiter interface {
-	AllowSizeBytes(string, int64) bool
-}
-
 // zlabelsGet avoids ZLabels -> PromLabels conversion in hot paths.
 func zlabelsGet(lbls []labelpb.ZLabel, name string) (string, bool) {
 	for _, l := range lbls {
