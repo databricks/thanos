@@ -10,6 +10,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync/atomic"
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
@@ -41,6 +42,9 @@ type TenantAttributor struct {
 	verifyMode            bool
 	attributionMatches    prometheus.Counter
 	attributionMismatches *prometheus.CounterVec
+
+	// Sampled logging for debugging mismatches
+	sampleCounter uint64
 }
 
 // NewTenantAttributor creates a new TenantAttributor from a config file.
@@ -143,7 +147,8 @@ func (ta *TenantAttributor) GetTenantFromLabels(lbls labels.Labels) string {
 
 // RecordVerification records match/mismatch metrics for verification mode.
 // httpTenant is the tenant from HTTP header (or default if no header).
-func (ta *TenantAttributor) RecordVerification(attributedTenant, httpTenant string) {
+// lbls are the time series labels, used for sampled debug logging on mismatches.
+func (ta *TenantAttributor) RecordVerification(attributedTenant, httpTenant string, lbls labels.Labels) {
 	if !ta.verifyMode {
 		return
 	}
@@ -154,6 +159,15 @@ func (ta *TenantAttributor) RecordVerification(attributedTenant, httpTenant stri
 	} else {
 		if ta.attributionMismatches != nil {
 			ta.attributionMismatches.WithLabelValues(httpTenant, attributedTenant).Inc()
+		}
+		// Log 1 in every 10000 mismatches for debugging
+		if atomic.AddUint64(&ta.sampleCounter, 1)%10000 == 1 {
+			level.Warn(ta.logger).Log(
+				"msg", "tenant attribution mismatch sample",
+				"http_tenant", httpTenant,
+				"attributed_tenant", attributedTenant,
+				"labels", lbls.String(),
+			)
 		}
 	}
 }
