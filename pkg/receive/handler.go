@@ -43,9 +43,9 @@ import (
 
 	"github.com/thanos-io/thanos/pkg/api"
 	statusapi "github.com/thanos-io/thanos/pkg/api/status"
-	"github.com/thanos-io/thanos/pkg/bricksync"
 	"github.com/thanos-io/thanos/pkg/logging"
 	"github.com/thanos-io/thanos/pkg/receive/writecapnp"
+	"github.com/thanos-io/thanos/pkg/syncutil"
 
 	extpromhttp "github.com/thanos-io/thanos/pkg/extprom/http"
 	"github.com/thanos-io/thanos/pkg/pool"
@@ -98,7 +98,7 @@ var (
 	maxPooledCompressedCap   = 1 << 20 // 1MB
 	maxPooledDecompressedCap = 4 << 20 // 4MB
 
-	compressedBufPoolV2 = bricksync.NewPool(func() *bytes.Buffer {
+	compressedBufPoolV2 = syncutil.NewPool(func() *bytes.Buffer {
 		return bytes.NewBuffer(make([]byte, 0, defaultCompressedBufCap))
 	}).WithReset(func(b *bytes.Buffer) bool {
 		if b.Cap() <= maxPooledCompressedCap {
@@ -108,7 +108,7 @@ var (
 		return false // discard the buffer that is too large.
 	}).Build()
 
-	decompressedBufPoolV2 = bricksync.NewPool(func() []byte {
+	decompressedBufPoolV2 = syncutil.NewPool(func() []byte {
 		// We do not need to allocate capacity to this buffer here,
 		// as we will grow the buffer to the required size later.
 		// This is a requirement of the s2.Decode function.

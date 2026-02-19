@@ -1,4 +1,4 @@
-package bricksync
+package syncutil
 
 import "sync"
 
