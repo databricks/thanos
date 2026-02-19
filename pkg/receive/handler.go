@@ -43,6 +43,7 @@ import (
 
 	"github.com/thanos-io/thanos/pkg/api"
 	statusapi "github.com/thanos-io/thanos/pkg/api/status"
+	"github.com/thanos-io/thanos/pkg/bricksync"
 	"github.com/thanos-io/thanos/pkg/logging"
 	"github.com/thanos-io/thanos/pkg/receive/writecapnp"
 	"github.com/thanos-io/thanos/pkg/syncutil"
@@ -100,8 +101,42 @@ var (
 
 	// Used internally to abort reads when the limiter is exceeded mid-stream.
 	errRequestTooLarge = errors.New("write request too large")
-)
 
+	// Default / max capacities for pooled buffers. These caps prevent "pool ballooning"
+	// where a single large request permanently inflates process RSS.
+	defaultCompressedBufCap  = 32 * 1024
+	maxPooledCompressedCap   = 1 << 20 // 1MB
+	maxPooledDecompressedCap = 4 << 20 // 4MB
+
+	compressedBufPoolV2 = bricksync.NewPool(func() *bytes.Buffer {
+		return bytes.NewBuffer(make([]byte, 0, defaultCompressedBufCap))
+	}).WithReset(func(b *bytes.Buffer) bool {
+		if b.Cap() <= maxPooledCompressedCap {
+			b.Reset()
+			return true // return buffer to the pool.
+		}
+		return false // discard the buffer that is too large.
+	}).Build()
+
+	decompressedBufPoolV2 = bricksync.NewPool(func() []byte {
+		// We do not need to allocate capacity to this buffer here,
+		// as we will grow the buffer to the required size later.
+		// This is a requirement of the s2.Decode function.
+		return make([]byte, 0)
+	}).WithReset(func(b []byte) bool {
+		if cap(b) <= maxPooledDecompressedCap {
+			b = b[:0]
+			return true // return buffer to the pool.
+		}
+		return false // discard the buffer that is too large.
+	}).Build()
+
+	writeRequestPool = sync.Pool{
+		New: func() interface{} {
+			return &prompb.WriteRequest{}
+		},
+	}
+)
 // zlabelsGet avoids ZLabels -> PromLabels conversion in hot paths.
 func zlabelsGet(lbls []labelpb.ZLabel, name string) (string, bool) {
 	for _, l := range lbls {
@@ -728,8 +763,8 @@ func (h *Handler) receiveHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// get a buffer to temporarily store compressed contents.
-	compressed, ret1 := h.compressedBufPool.Get()
-	defer ret1(compressed)
+	compressed, doneCompressed := compressedBufPoolV2.Get()
+	defer doneCompressed(compressed)
 	if r.ContentLength > 0 {
 		compressed.Grow(int(r.ContentLength))
 	}
@@ -750,8 +785,8 @@ func (h *Handler) receiveHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Decode into a pooled buffer to avoid allocs. (cap-guarded on return)
-	reqBuf, ret2 := h.decompressedBufPool.Get()
-	defer ret2(reqBuf)
+	reqBuf, doneDecompressBuff := decompressedBufPoolV2.Get()
+	defer doneDecompressBuff(reqBuf)
 
 	decodeLen, err := s2.DecodedLen(compressed.Bytes())
 	if err != nil {
@@ -761,13 +796,13 @@ func (h *Handler) receiveHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ¡Important! If decode len is greater than the capacity of the buffer, we need to grow the buffer
-	// otherwise s2 will allocate a new slice for us, ignoring the provided buffer.
+	// otherwise s2 will allocate a new slice for us, ignorning the provided buffer.
 	// Without this check, in the worst case we would be reserving large blocks of memory
-	// just to send them to GC for collection.
-	if cap(*reqBuf) < decodeLen {
-		*reqBuf = slices.Grow(*reqBuf, decodeLen)
+	// that can never actually be used, then allocating even more memory for the GC to clean up.
+	if cap(reqBuf) < decodeLen {
+		reqBuf = slices.Grow(reqBuf, decodeLen)
 	}
-	*reqBuf, err = s2.Decode(*reqBuf, compressed.Bytes())
+	reqBuf, err = s2.Decode((reqBuf)[:0], compressed.Bytes())
 	if err != nil {
 		level.Error(tLogger).Log("msg", "snappy decode error", "err", err)
 		http.Error(w, errors.Wrap(err, "snappy decode error").Error(), http.StatusBadRequest)
@@ -775,7 +810,7 @@ func (h *Handler) receiveHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Enforce size limits after decompression.
-	if !requestLimiter.AllowSizeBytes(tenantHTTP, int64(len(*reqBuf))) {
+	if !requestLimiter.AllowSizeBytes(tenantHTTP, int64(len(reqBuf))) {
 		http.Error(w, errRequestTooLarge.Error(), http.StatusRequestEntityTooLarge)
 		return
 	}
@@ -783,8 +818,13 @@ func (h *Handler) receiveHTTP(w http.ResponseWriter, r *http.Request) {
 	// NOTE: Due to zero copy ZLabels, Labels used from WriteRequests keeps memory
 	// from the whole request. Ensure that we always copy those when we want to
 	// store them for longer time.
-	wreq := &prompb.WriteRequest{}
-	if err := wreq.Unmarshal(*reqBuf); err != nil {
+	wreq := writeRequestPool.Get().(*prompb.WriteRequest)
+	wreq.Reset()
+	defer func() {
+		wreq.Reset()
+		writeRequestPool.Put(wreq)
+	}()
+	if err := proto.Unmarshal(reqBuf, wreq); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
