@@ -38,9 +38,13 @@ func TestPool_WithReset(t *testing.T) {
 	// after returning it to the pool, but this is for testing.
 	testutil.Equals(t, "cleared", buf.String())
 
-	buf, ret = p.Get()
-	defer ret(buf)
-	testutil.Equals(t, "cleared", buf.String())
+	buf2, ret := p.Get()
+	defer ret(buf2)
+	if buf2 == buf { // Note: sometimes the same object is returned, sometimes it is not.
+		testutil.Equals(t, "cleared", buf2.String())
+	} else {
+		testutil.Equals(t, "", buf2.String())
+	}
 }
 
 func TestPool_WithByteSlicePointer(t *testing.T) {
@@ -63,9 +67,12 @@ func TestPool_WithByteSlicePointer(t *testing.T) {
 	// after returning it to the pool, but this is for testing.
 	testutil.Equals(t, 24, cap(*buf))
 	testutil.Equals(t, 0, len(*buf))
-	buf, ret = p.Get()
+	buf2, ret := p.Get()
 	defer ret(buf)
-	testutil.Equals(t, 24, cap(*buf))
-	testutil.Equals(t, 0, len(*buf))
-	testutil.Equals(t, []byte{}, *buf)
+	if buf2 == buf { // Note: sometimes the same object is returned, sometimes it is not.
+		testutil.Equals(t, 24, cap(*buf2))
+	} else {
+		testutil.Equals(t, 10, cap(*buf2))
+	}
+	testutil.Equals(t, 0, len(*buf2))
 }
