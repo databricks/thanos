@@ -10,7 +10,6 @@ import (
 	"os"
 	"sort"
 	"strings"
-	"sync/atomic"
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
@@ -159,15 +158,6 @@ func (ta *TenantAttributor) RecordVerification(attributedTenant, httpTenant stri
 	} else {
 		if ta.attributionMismatches != nil {
 			ta.attributionMismatches.WithLabelValues(httpTenant, attributedTenant).Inc()
-		}
-		// Log 1 in every 10000 mismatches for debugging
-		if atomic.AddUint64(&ta.sampleCounter, 1)%10000 == 1 {
-			level.Warn(ta.logger).Log(
-				"msg", "tenant attribution mismatch sample",
-				"http_tenant", httpTenant,
-				"attributed_tenant", attributedTenant,
-				"labels", lbls.String(),
-			)
 		}
 	}
 }
