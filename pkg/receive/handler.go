@@ -70,6 +70,18 @@ const (
 	labelSuccess = "success"
 	labelError   = "error"
 	labelPreAgg  = "__rollup__"
+
+	// DefaultCompressedBufCap is the initial capacity allocated for the
+	// compressed-request read buffer obtained from the pool.
+	DefaultCompressedBufCap = 32 * 1024
+	// DefaultMaxPooledCompressedCap is the maximum capacity of a compressed
+	// buffer that will be returned to the pool. Buffers that grew beyond this
+	// size are discarded to prevent pool ballooning.
+	DefaultMaxPooledCompressedCap = 1 << 20 // 1 MiB
+	// DefaultMaxPooledDecompressedCap is the maximum capacity of a
+	// decompressed buffer that will be returned to the pool. Buffers that
+	// grew beyond this size are discarded to prevent pool ballooning.
+	DefaultMaxPooledDecompressedCap = 4 << 20 // 4 MiB
 )
 
 type ReplicationProtocol string
@@ -90,50 +102,6 @@ var (
 
 	// Used internally to abort reads when the limiter is exceeded mid-stream.
 	errRequestTooLarge = errors.New("write request too large")
-
-	// Default / max capacities for pooled buffers. These caps prevent "pool ballooning"
-	// where a single large request permanently inflates process RSS.
-	defaultCompressedBufCap  = 32 * 1024
-	maxPooledCompressedCap   = 1 << 20 // 1MB
-	maxPooledDecompressedCap = 4 << 20 // 4MB
-
-	compressedBufPoolV2 = syncutil.NewPool(func() *bytes.Buffer {
-		return bytes.NewBuffer(make([]byte, 0, defaultCompressedBufCap))
-	}).WithReset(func(b *bytes.Buffer) bool {
-		if b.Cap() <= maxPooledCompressedCap {
-			b.Reset()
-			return true // return buffer to the pool.
-		}
-		return false // discard the buffer that is too large.
-	}).Build()
-
-	decompressedBufPoolV2 = syncutil.NewPool(func() *[]byte {
-		// We do not need to allocate capacity to this buffer here,
-		// as we will grow the buffer to the required size later.
-		// This is a requirement of the s2.Decode function.
-		b := make([]byte, 0)
-		return &b
-	}).WithReset(func(b *[]byte) bool {
-		if cap(*b) <= maxPooledDecompressedCap {
-			*b = (*b)[:0]
-			return true // return buffer to the pool.
-		}
-		return false // discard the buffer that is too large.
-	}).Build()
-
-	writeRequestPoolV2 = syncutil.NewPool(func() *prompb.WriteRequest {
-		return &prompb.WriteRequest{}
-	}).WithReset(func(wreq *prompb.WriteRequest) bool {
-		// Keep the memory allocated for the slice, but clear the contents.
-		// If we call *prompb.WriteRequest.Reset() on the WriteRequest,
-		// it will replace the reference with a new struct, so we would
-		// effectively be pooling a pointer.
-		// The drawback of this approach is that if the underlying proto changes (e.g. new fields are added),
-		// we need to update this code to clear the new fields.
-		wreq.Metadata = wreq.Metadata[:0]
-		wreq.Timeseries = wreq.Timeseries[:0]
-		return true
-	}).Build()
 )
 
 // zlabelsGet avoids ZLabels -> PromLabels conversion in hot paths.
@@ -206,6 +174,10 @@ type Handler struct {
 	tenantAttributedTotal *prometheus.CounterVec
 
 	Limiter *Limiter
+
+	compressedBufPool   *syncutil.Pool[*bytes.Buffer]
+	decompressedBufPool *syncutil.Pool[*[]byte]
+	writeRequestPool    *syncutil.Pool[*prompb.WriteRequest]
 }
 
 func NewHandler(logger log.Logger, o *Options) *Handler {
@@ -310,30 +282,32 @@ func NewHandler(logger log.Logger, o *Options) *Handler {
 				Buckets:   []float64{1, 5, 10, 20, 30, 40, 50, 60, 90, 120, 300, 600, 900, 1200, 1800, 3600},
 			}, []string{"code", "tenant", "rollup"},
 		),
-		writeRequestsTotal: promauto.With(registerer).NewCounterVec(
-			prometheus.CounterOpts{
-				Namespace: "thanos",
-				Subsystem: "receive",
-				Name:      "write_requests_total",
-				Help:      "The total number of write requests by tenant and response code.",
-			}, []string{"code", "tenant"},
-		),
-		writeRejectedTotal: promauto.With(registerer).NewCounterVec(
-			prometheus.CounterOpts{
-				Namespace: "thanos",
-				Subsystem: "receive",
-				Name:      "write_rejected_total",
-				Help:      "The total number of write requests rejected by reason and tenant.",
-			}, []string{"reason", "tenant"},
-		),
-		tenantAttributedTotal: promauto.With(registerer).NewCounterVec(
-			prometheus.CounterOpts{
-				Namespace: "thanos",
-				Subsystem: "receive",
-				Name:      "tenant_attributed_total",
-				Help:      "The total number of time series attributed to each tenant by source.",
-			}, []string{"tenant", "source"},
-		),
+		compressedBufPool: syncutil.NewPool(func() *bytes.Buffer {
+			return bytes.NewBuffer(make([]byte, 0, DefaultCompressedBufCap))
+		}).WithReset(func(b *bytes.Buffer) bool {
+			if b.Cap() <= DefaultMaxPooledCompressedCap {
+				b.Reset()
+				return true
+			}
+			return false
+		}).Build(),
+		decompressedBufPool: syncutil.NewPool(func() *[]byte {
+			b := make([]byte, 0)
+			return &b
+		}).WithReset(func(b *[]byte) bool {
+			if cap(*b) <= DefaultMaxPooledDecompressedCap {
+				*b = (*b)[:0]
+				return true
+			}
+			return false
+		}).Build(),
+		writeRequestPool: syncutil.NewPool(func() *prompb.WriteRequest {
+			return &prompb.WriteRequest{}
+		}).WithReset(func(wreq *prompb.WriteRequest) bool {
+			wreq.Metadata = wreq.Metadata[:0]
+			wreq.Timeseries = wreq.Timeseries[:0]
+			return true
+		}).Build(),
 	}
 
 	h.forwardRequests.WithLabelValues(labelSuccess)
@@ -723,7 +697,7 @@ func (h *Handler) receiveHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// get a buffer to temporarily store compressed contents.
-	compressed, ret1 := compressedBufPoolV2.Get()
+	compressed, ret1 := h.compressedBufPool.Get()
 	defer ret1(compressed)
 	if r.ContentLength > 0 {
 		compressed.Grow(int(r.ContentLength))
@@ -745,7 +719,7 @@ func (h *Handler) receiveHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Decode into a pooled buffer to avoid allocs. (cap-guarded on return)
-	reqBuf, ret2 := decompressedBufPoolV2.Get()
+	reqBuf, ret2 := h.decompressedBufPool.Get()
 	defer ret2(reqBuf)
 
 	decodeLen, err := s2.DecodedLen(compressed.Bytes())
@@ -778,7 +752,7 @@ func (h *Handler) receiveHTTP(w http.ResponseWriter, r *http.Request) {
 	// NOTE: Due to zero copy ZLabels, Labels used from WriteRequests keeps memory
 	// from the whole request. Ensure that we always copy those when we want to
 	// store them for longer time.
-	wreq, ret3 := writeRequestPoolV2.Get()
+	wreq, ret3 := h.writeRequestPool.Get()
 	defer ret3(wreq)
 	// Note: do not use proto.Unmarshal here, it will call Reset() which replaces the underlying
 	// struct entirely, so we ould effectively be pooling a pointer.
