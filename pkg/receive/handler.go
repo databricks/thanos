@@ -148,8 +148,8 @@ type Options struct {
 	TenantAttributor        *TenantAttributor
 
 	// Pool configuration for receive-path buffer reuse.
-	// Note: If any of the capacity options are not set, we will use defaults.
-	PoolingDisabled          bool
+	PoolingEnabled           bool
+	InitialCompressedBufCap  int
 	MaxPooledCompressedCap   int
 	MaxPooledDecompressedCap int
 }
@@ -320,14 +320,14 @@ func NewHandler(logger log.Logger, o *Options) *Handler {
 			}, []string{"tenant", "source"},
 		),
 		compressedBufPool: syncutil.NewPool(func() *bytes.Buffer {
-			return bytes.NewBuffer(make([]byte, 0, DefaultInitialCompressedBufCap))
+			return bytes.NewBuffer(make([]byte, 0, o.InitialCompressedBufCap))
 		}).WithReset(func(b *bytes.Buffer) bool {
-			if b.Cap() <= o.MaxPooledCompressedCap {
+			if b.Cap() <= cmp.Or(o.MaxPooledCompressedCap, DefaultMaxPooledCompressedCap) {
 				b.Reset()
 				return true // return buffer to the pool.
 			}
 			return false // discard the buffer that is too large.
-		}).WithDisabled(o.PoolingDisabled).
+		}).WithDisabled(!o.PoolingEnabled).
 			Build(),
 		decompressedBufPool: syncutil.NewPool(func() *[]byte {
 			// We do not need to allocate capacity to this buffer here,
@@ -336,19 +336,28 @@ func NewHandler(logger log.Logger, o *Options) *Handler {
 			b := make([]byte, 0)
 			return &b
 		}).WithReset(func(b *[]byte) bool {
-			if cap(*b) <= o.MaxPooledDecompressedCap {
+			if cap(*b) <= cmp.Or(o.MaxPooledDecompressedCap, DefaultMaxPooledDecompressedCap) {
 				*b = (*b)[:0]
 				return true // return buffer to the pool.
 			}
 			return false // discard the buffer that is too large.
-		}).WithDisabled(o.PoolingDisabled).Build(),
+		}).WithDisabled(!o.PoolingEnabled).
+			Build(),
 		writeRequestPool: syncutil.NewPool(func() *prompb.WriteRequest {
 			return &prompb.WriteRequest{}
 		}).WithReset(func(wreq *prompb.WriteRequest) bool {
+			// Keep the memory allocated for the slice, but clear the contents.
+			// If we call *prompb.WriteRequest.Reset() on the WriteRequest,
+			// it will replace the reference with a new struct, so we would
+			// effectively be pooling a pointer.
+			// Note: The drawback of this approach is that if the underlying
+			// proto changes (e.g. new fields are added), we need to update
+			// this code to clear the new fields.
 			wreq.Metadata = wreq.Metadata[:0]
 			wreq.Timeseries = wreq.Timeseries[:0]
 			return true
-		}).Build(),
+		}).WithDisabled(!o.PoolingEnabled).
+			Build(),
 	}
 
 	h.forwardRequests.WithLabelValues(labelSuccess)
