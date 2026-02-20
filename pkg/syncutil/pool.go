@@ -23,12 +23,15 @@ import "sync"
 //	defer ret(buf)
 //	buf.WriteString("hello")
 type Pool[T any] struct {
+	disabled bool
+
 	inner sync.Pool
 	reset func(T) bool
 }
 
 // PoolBuilder accumulates configuration for a Pool and produces one via Build.
 type PoolBuilder[T any] struct {
+	disabled    bool
 	constructor func() T
 	reset       func(T) bool
 }
@@ -49,9 +52,18 @@ func (b *PoolBuilder[T]) WithReset(fn func(T) bool) *PoolBuilder[T] {
 	return b
 }
 
+// WithDisabled registers a flag that indicates whether the pool is disabled.
+// If the pool is disabled, the pool will not return any objects to the pool,
+// rendering the pool effectively a no-op.
+// This is useful to gate usage of pools via flags.
+func (b *PoolBuilder[T]) WithDisabled(disabled bool) *PoolBuilder[T] {
+	b.disabled = disabled
+	return b
+}
+
 // Build creates the Pool from the accumulated builder configuration.
 func (b *PoolBuilder[T]) Build() *Pool[T] {
-	p := &Pool[T]{reset: b.reset}
+	p := &Pool[T]{reset: b.reset, disabled: b.disabled}
 	p.inner.New = func() any { return b.constructor() }
 	return p
 }
@@ -71,6 +83,9 @@ func (p *Pool[T]) Get() (obj T, Return func(obj T)) {
 // This is exposed in the off-chance that the caller wants to manually return a T to the pool.
 // In most cases, the Return function returned by Get should be used instead.
 func (p *Pool[T]) Put(obj T) {
+	if p.disabled {
+		return
+	}
 	shouldPut := true
 	if p.reset != nil {
 		shouldPut = p.reset(obj)
