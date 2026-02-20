@@ -148,6 +148,7 @@ type Options struct {
 	TenantAttributor *TenantAttributor
 
 	// Pool configuration for receive-path buffer reuse.
+	// Note: If any of the capacity options are not set, we will use defaults.
 	PoolingEnabled           bool
 	InitialCompressedBufCap  int
 	MaxPooledCompressedCap   int
@@ -205,6 +206,7 @@ func NewHandler(logger log.Logger, o *Options) *Handler {
 	}
 	level.Info(logger).Log("msg", "Starting receive handler with async forward workers", "workers", workers)
 
+	// Default the options to the default values if they are not set.
 	o.InitialCompressedBufCap = cmp.Or(o.InitialCompressedBufCap, DefaultInitialCompressedBufCap)
 	o.MaxPooledCompressedCap = cmp.Or(o.MaxPooledCompressedCap, DefaultMaxPooledCompressedCap)
 	o.MaxPooledDecompressedCap = cmp.Or(o.MaxPooledDecompressedCap, DefaultMaxPooledDecompressedCap)
