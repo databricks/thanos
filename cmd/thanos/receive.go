@@ -1257,13 +1257,17 @@ func (rc *receiveConfig) registerFlag(cmd extkingpin.FlagClause) {
 		Default("false").BoolVar(&rc.verifyTenantAttribution)
 
 	cmd.Flag("receive.pooling-enabled", "Enable pooling of buffers for receive-path request handling.").
-		Default("true").BoolVar(&rc.poolingEnabled)
+		Default("true").
+		BoolVar(&rc.poolingEnabled)
 	cmd.Flag("receive.initial-compressed-buf-cap", "Initial capacity (bytes) allocated for compressed-request read buffers obtained from the pool.").
-		Default(fmt.Sprintf("%d", receive.DefaultInitialCompressedBufCap)).IntVar(&rc.initialCompressedBufCap)
+		Default(fmt.Sprintf("%d", receive.DefaultInitialCompressedBufCap)).
+		IntVar(&rc.initialCompressedBufCap)
 	cmd.Flag("receive.max-pooled-compressed-cap", "Maximum capacity (bytes) of a compressed buffer that will be returned to the pool. Buffers larger than this are discarded to prevent pool ballooning.").
-		Default(fmt.Sprintf("%d", receive.DefaultMaxPooledCompressedCap)).IntVar(&rc.maxPooledCompressedCap)
+		Default(fmt.Sprintf("%d", receive.DefaultMaxPooledCompressedCap)).
+		IntVar(&rc.maxPooledCompressedCap)
 	cmd.Flag("receive.max-pooled-decompressed-cap", "Maximum capacity (bytes) of a decompressed buffer that will be returned to the pool. Buffers larger than this are discarded to prevent pool ballooning.").
-		Default(fmt.Sprintf("%d", receive.DefaultMaxPooledDecompressedCap)).IntVar(&rc.maxPooledDecompressedCap)
+		Default(fmt.Sprintf("%d", receive.DefaultMaxPooledDecompressedCap)).
+		IntVar(&rc.maxPooledDecompressedCap)
 }
 
 // determineMode returns the ReceiverMode that this receiver is configured to run in.
