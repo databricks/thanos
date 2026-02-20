@@ -149,7 +149,7 @@ type Options struct {
 
 	// Pool configuration for receive-path buffer reuse.
 	// Note: If any of the capacity options are not set, we will use defaults.
-	PoolingEnabled           bool
+	PoolingDisabled          bool
 	InitialCompressedBufCap  int
 	MaxPooledCompressedCap   int
 	MaxPooledDecompressedCap int
@@ -305,7 +305,7 @@ func NewHandler(logger log.Logger, o *Options) *Handler {
 				return true // return buffer to the pool.
 			}
 			return false // discard the buffer that is too large.
-		}).WithDisabled(!o.PoolingEnabled).
+		}).WithDisabled(o.PoolingDisabled).
 			Build(),
 		decompressedBufPool: syncutil.NewPool(func() *[]byte {
 			// We do not need to allocate capacity to this buffer here,
@@ -319,7 +319,7 @@ func NewHandler(logger log.Logger, o *Options) *Handler {
 				return true // return buffer to the pool.
 			}
 			return false // discard the buffer that is too large.
-		}).WithDisabled(!o.PoolingEnabled).
+		}).WithDisabled(o.PoolingDisabled).
 			Build(),
 		writeRequestPool: syncutil.NewPool(func() *prompb.WriteRequest {
 			return &prompb.WriteRequest{}
@@ -334,7 +334,7 @@ func NewHandler(logger log.Logger, o *Options) *Handler {
 			wreq.Metadata = wreq.Metadata[:0]
 			wreq.Timeseries = wreq.Timeseries[:0]
 			return true
-		}).WithDisabled(!o.PoolingEnabled).
+		}).WithDisabled(o.PoolingDisabled).
 			Build(),
 	}
 
