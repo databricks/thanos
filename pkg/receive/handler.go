@@ -72,11 +72,6 @@ const (
 	labelError   = "error"
 	labelPreAgg  = "__rollup__"
 
-	// DefaultInitialCompressedBufCap is the initial capacity allocated for the
-	// compressed-request read buffer obtained from the pool.
-	// Note: This is primarily useful when no content-length header is provided.
-	// Otherwise, we will use the content-length header to determine the initial capacity.
-	DefaultInitialCompressedBufCap = 32 * 1024
 	// DefaultMaxPooledCompressedCap is the maximum capacity of a compressed
 	// buffer that will be returned to the pool. Buffers that grew beyond this
 	// size are discarded to prevent pool ballooning.
@@ -150,7 +145,6 @@ type Options struct {
 	// Pool configuration for receive-path buffer reuse.
 	// Note: If any of the capacity options are not set, we will use defaults.
 	PoolingDisabled          bool
-	InitialCompressedBufCap  int
 	MaxPooledCompressedCap   int
 	MaxPooledDecompressedCap int
 }
@@ -207,7 +201,6 @@ func NewHandler(logger log.Logger, o *Options) *Handler {
 	level.Info(logger).Log("msg", "Starting receive handler with async forward workers", "workers", workers)
 
 	// Default the options to the default values if they are not set.
-	o.InitialCompressedBufCap = cmp.Or(o.InitialCompressedBufCap, DefaultInitialCompressedBufCap)
 	o.MaxPooledCompressedCap = cmp.Or(o.MaxPooledCompressedCap, DefaultMaxPooledCompressedCap)
 	o.MaxPooledDecompressedCap = cmp.Or(o.MaxPooledDecompressedCap, DefaultMaxPooledDecompressedCap)
 
@@ -322,7 +315,10 @@ func NewHandler(logger log.Logger, o *Options) *Handler {
 			}, []string{"tenant", "source"},
 		),
 		compressedBufPool: syncutil.NewPool(func() *bytes.Buffer {
-			return bytes.NewBuffer(make([]byte, 0, o.InitialCompressedBufCap))
+			// Note: This 1KB initial capacity is a little bit arbitrary; we expect the buffer to
+			// grow as needed and be recycled internally such that at steady-state, there will be
+			// no more allocation overhead.
+			return bytes.NewBuffer(make([]byte, 0, 1024))
 		}).WithReset(func(b *bytes.Buffer) bool {
 			if b.Cap() <= o.MaxPooledCompressedCap {
 				b.Reset()

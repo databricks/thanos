@@ -352,7 +352,6 @@ func runReceive(
 		ReplicationProtocol:      receive.ReplicationProtocol(conf.replicationProtocol),
 		TenantAttributor:         tenantAttributor,
 		PoolingDisabled:          !conf.poolingEnabled,
-		InitialCompressedBufCap:  conf.initialCompressedBufCap,
 		MaxPooledCompressedCap:   conf.maxPooledCompressedCap,
 		MaxPooledDecompressedCap: conf.maxPooledDecompressedCap,
 	})
@@ -1047,7 +1046,6 @@ type receiveConfig struct {
 
 	// Pool configuration for receive-path buffer reuse.
 	poolingEnabled           bool
-	initialCompressedBufCap  int
 	maxPooledCompressedCap   int
 	maxPooledDecompressedCap int
 }
@@ -1260,9 +1258,6 @@ func (rc *receiveConfig) registerFlag(cmd extkingpin.FlagClause) {
 	cmd.Flag("receive.pooling-enabled", "Enable pooling of buffers for receive-path request handling.").
 		Default("false").
 		BoolVar(&rc.poolingEnabled)
-	cmd.Flag("receive.initial-compressed-buf-cap", "Initial capacity (bytes) allocated for compressed-request read buffers obtained from the pool.").
-		Default(fmt.Sprintf("%d", receive.DefaultInitialCompressedBufCap)).
-		IntVar(&rc.initialCompressedBufCap)
 	cmd.Flag("receive.max-pooled-compressed-cap", "Maximum capacity (bytes) of a compressed buffer that will be returned to the pool. Buffers larger than this are discarded to prevent pool ballooning.").
 		Default(fmt.Sprintf("%d", receive.DefaultMaxPooledCompressedCap)).
 		IntVar(&rc.maxPooledCompressedCap)
