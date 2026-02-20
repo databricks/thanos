@@ -72,9 +72,11 @@ const (
 	labelError   = "error"
 	labelPreAgg  = "__rollup__"
 
-	// DefaultCompressedBufCap is the initial capacity allocated for the
+	// DefaultInitialCompressedBufCap is the initial capacity allocated for the
 	// compressed-request read buffer obtained from the pool.
-	DefaultCompressedBufCap = 32 * 1024
+	// Note: This is primarily useful when no content-length header is provided.
+	// Otherwise, we will use the content-length header to determine the initial capacity.
+	DefaultInitialCompressedBufCap = 32 * 1024
 	// DefaultMaxPooledCompressedCap is the maximum capacity of a compressed
 	// buffer that will be returned to the pool. Buffers that grew beyond this
 	// size are discarded to prevent pool ballooning.
@@ -318,10 +320,7 @@ func NewHandler(logger log.Logger, o *Options) *Handler {
 			}, []string{"tenant", "source"},
 		),
 		compressedBufPool: syncutil.NewPool(func() *bytes.Buffer {
-			// Note: This 1KB initial capacity is a little bit arbitrary; we expect the buffer to
-			// grow as needed and be recycled internally such that at steady-state, there will be
-			// no more allocation overhead.
-			return bytes.NewBuffer(make([]byte, 0, 1024))
+			return bytes.NewBuffer(make([]byte, 0, DefaultInitialCompressedBufCap))
 		}).WithReset(func(b *bytes.Buffer) bool {
 			if b.Cap() <= o.MaxPooledCompressedCap {
 				b.Reset()
