@@ -103,7 +103,7 @@ func TestPool_EnabledByDefault(t *testing.T) {
 
 	seen := make(map[*bytes.Buffer]struct{})
 
-	// Iterate 10 times becuase sometimes the pool will return the same object,
+	// Iterate 10 times because sometimes the pool will return the same object,
 	// sometimes it will return a new object.
 	// We expect to find at least one object in the pool.
 	foundOne := false
