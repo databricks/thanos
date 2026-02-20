@@ -205,6 +205,10 @@ func NewHandler(logger log.Logger, o *Options) *Handler {
 	}
 	level.Info(logger).Log("msg", "Starting receive handler with async forward workers", "workers", workers)
 
+	o.InitialCompressedBufCap = cmp.Or(o.InitialCompressedBufCap, DefaultInitialCompressedBufCap)
+	o.MaxPooledCompressedCap = cmp.Or(o.MaxPooledCompressedCap, DefaultMaxPooledCompressedCap)
+	o.MaxPooledDecompressedCap = cmp.Or(o.MaxPooledDecompressedCap, DefaultMaxPooledDecompressedCap)
+
 	h := &Handler{
 		logger:               logger,
 		writer:               o.Writer,
@@ -294,7 +298,7 @@ func NewHandler(logger log.Logger, o *Options) *Handler {
 		compressedBufPool: syncutil.NewPool(func() *bytes.Buffer {
 			return bytes.NewBuffer(make([]byte, 0, o.InitialCompressedBufCap))
 		}).WithReset(func(b *bytes.Buffer) bool {
-			if b.Cap() <= cmp.Or(o.MaxPooledCompressedCap, DefaultMaxPooledCompressedCap) {
+			if b.Cap() <= o.MaxPooledCompressedCap {
 				b.Reset()
 				return true // return buffer to the pool.
 			}
@@ -308,7 +312,7 @@ func NewHandler(logger log.Logger, o *Options) *Handler {
 			b := make([]byte, 0)
 			return &b
 		}).WithReset(func(b *[]byte) bool {
-			if cap(*b) <= cmp.Or(o.MaxPooledDecompressedCap, DefaultMaxPooledDecompressedCap) {
+			if cap(*b) <= o.MaxPooledDecompressedCap {
 				*b = (*b)[:0]
 				return true // return buffer to the pool.
 			}
