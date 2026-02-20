@@ -327,8 +327,8 @@ func NewHandler(logger log.Logger, o *Options) *Handler {
 				Namespace: "thanos",
 				Subsystem: "receive",
 				Name:      "write_requests_total",
-				Help:      "The total number of write requests by tenant, result, and response code.",
-			}, []string{"result", "code", "tenant"},
+				Help:      "The total number of write requests by tenant and response code.",
+			}, []string{"code", "tenant"},
 		),
 		writeRejectedTotal: promauto.With(registerer).NewCounterVec(
 			prometheus.CounterOpts{
@@ -877,12 +877,8 @@ func (h *Handler) receiveHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), responseStatusCode)
 	}
 
-	// Track write requests by tenant, result, and response code
-	result := "success"
-	if responseStatusCode != http.StatusOK {
-		result = "error"
-	}
-	h.writeRequestsTotal.WithLabelValues(result, strconv.Itoa(responseStatusCode), tenantHTTP).Inc()
+	// Track write requests by tenant and response code
+	h.writeRequestsTotal.WithLabelValues(strconv.Itoa(responseStatusCode), tenantHTTP).Inc()
 
 	for tenant, stats := range tenantStats {
 		h.writeTimeseriesTotal.WithLabelValues(strconv.Itoa(responseStatusCode), tenant).Observe(float64(stats.timeseries))
