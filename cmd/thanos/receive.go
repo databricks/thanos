@@ -351,7 +351,7 @@ func runReceive(
 		AsyncForwardWorkerCount:  conf.asyncForwardWorkerCount,
 		ReplicationProtocol:      receive.ReplicationProtocol(conf.replicationProtocol),
 		TenantAttributor:         tenantAttributor,
-		PoolingEnabled:           conf.poolingEnabled,
+		PoolingDisabled:          !conf.poolingEnabled,
 		InitialCompressedBufCap:  conf.initialCompressedBufCap,
 		MaxPooledCompressedCap:   conf.maxPooledCompressedCap,
 		MaxPooledDecompressedCap: conf.maxPooledDecompressedCap,
@@ -1258,7 +1258,7 @@ func (rc *receiveConfig) registerFlag(cmd extkingpin.FlagClause) {
 		Default("false").BoolVar(&rc.verifyTenantAttribution)
 
 	cmd.Flag("receive.pooling-enabled", "Enable pooling of buffers for receive-path request handling.").
-		Default("true").
+		Default("false").
 		BoolVar(&rc.poolingEnabled)
 	cmd.Flag("receive.initial-compressed-buf-cap", "Initial capacity (bytes) allocated for compressed-request read buffers obtained from the pool.").
 		Default(fmt.Sprintf("%d", receive.DefaultInitialCompressedBufCap)).
