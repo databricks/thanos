@@ -181,7 +181,6 @@ type Handler struct {
 
 	compressedBufPool   *syncutil.Pool[*bytes.Buffer]
 	decompressedBufPool *syncutil.Pool[*[]byte]
-	writeRequestPool    *syncutil.Pool[*prompb.WriteRequest]
 }
 
 func NewHandler(logger log.Logger, o *Options) *Handler {
@@ -315,23 +314,7 @@ func NewHandler(logger log.Logger, o *Options) *Handler {
 				return true // return buffer to the pool.
 			}
 			return false // discard the buffer that is too large.
-		}).WithDisabled(o.PoolingDisabled).
-			Build(),
-		writeRequestPool: syncutil.NewPool(func() *prompb.WriteRequest {
-			return &prompb.WriteRequest{}
-		}).WithReset(func(wreq *prompb.WriteRequest) bool {
-			// Keep the memory allocated for the slice, but clear the contents.
-			// If we call *prompb.WriteRequest.Reset() on the WriteRequest,
-			// it will replace the reference with a new struct, so we would
-			// effectively be pooling a pointer.
-			// Note: The drawback of this approach is that if the underlying
-			// proto changes (e.g. new fields are added), we need to update
-			// this code to clear the new fields.
-			wreq.Metadata = wreq.Metadata[:0]
-			wreq.Timeseries = wreq.Timeseries[:0]
-			return true
-		}).WithDisabled(o.PoolingDisabled).
-			Build(),
+		}).WithDisabled(o.PoolingDisabled).Build(),
 	}
 
 	h.forwardRequests.WithLabelValues(labelSuccess)
@@ -776,10 +759,7 @@ func (h *Handler) receiveHTTP(w http.ResponseWriter, r *http.Request) {
 	// NOTE: Due to zero copy ZLabels, Labels used from WriteRequests keeps memory
 	// from the whole request. Ensure that we always copy those when we want to
 	// store them for longer time.
-	wreq, ret3 := h.writeRequestPool.Get()
-	defer ret3(wreq)
-	// Note: do not use proto.Unmarshal here, it will call Reset() which replaces the underlying
-	// struct entirely, so we ould effectively be pooling a pointer.
+	wreq := &prompb.WriteRequest{}
 	if err := wreq.Unmarshal(*reqBuf); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
