@@ -67,6 +67,7 @@ type MultiTSDB struct {
 	tsdbClients     []store.Client
 	exemplarClients map[string]*exemplars.TSDB
 
+	disableSeriesResorting   bool
 	metricNameFilterEnabled  bool
 	noUploadTenants          []string // Support both exact matches and prefix patterns (e.g., "tenant1", "prod-*")
 	enableTenantPathPrefix   bool
@@ -79,6 +80,13 @@ type MultiTSDB struct {
 
 // MultiTSDBOption is a functional option for MultiTSDB.
 type MultiTSDBOption func(mt *MultiTSDB)
+
+// WithSeriesResortingDisabled disables series resorting on TSDB store queries.
+func WithSeriesResortingDisabled() MultiTSDBOption {
+	return func(s *MultiTSDB) {
+		s.disableSeriesResorting = true
+	}
+}
 
 // WithMetricNameFilterEnabled enables metric name filtering on TSDB clients.
 func WithMetricNameFilterEnabled() MultiTSDBOption {
@@ -899,6 +907,9 @@ func (t *MultiTSDB) startTSDB(logger log.Logger, tenantID string, tenant *tenant
 	}
 	if t.matcherCache != nil {
 		options = append(options, store.WithMatcherCacheInstance(t.matcherCache))
+	}
+	if t.disableSeriesResorting {
+		options = append(options, store.WithSeriesResortingDisabled())
 	}
 	tenant.set(store.NewTSDBStore(logger, s, component.Receive, lset, options...), s, ship, exemplars.NewTSDB(s, lset))
 	t.addTenantLocked(tenantID, tenant) // need to update the client list once store is ready & client != nil
