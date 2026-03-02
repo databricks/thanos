@@ -140,7 +140,7 @@ type Options struct {
 	Limiter                 *Limiter
 	AsyncForwardWorkerCount uint
 	ReplicationProtocol     ReplicationProtocol
-	TenantAttributor *TenantAttributor
+	TenantAttributor        *TenantAttributor
 
 	// Pool configuration for receive-path buffer reuse.
 	// Note: If any of the capacity options are not set, we will use defaults.
