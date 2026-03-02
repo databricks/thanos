@@ -289,6 +289,30 @@ func NewHandler(logger log.Logger, o *Options) *Handler {
 				Buckets:   []float64{1, 5, 10, 20, 30, 40, 50, 60, 90, 120, 300, 600, 900, 1200, 1800, 3600},
 			}, []string{"code", "tenant", "rollup"},
 		),
+		writeRequestsTotal: promauto.With(registerer).NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: "thanos",
+				Subsystem: "receive",
+				Name:      "write_requests_total",
+				Help:      "The total number of write requests by tenant and response code.",
+			}, []string{"code", "tenant"},
+		),
+		writeRejectedTotal: promauto.With(registerer).NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: "thanos",
+				Subsystem: "receive",
+				Name:      "write_rejected_total",
+				Help:      "The total number of write requests rejected by reason and tenant.",
+			}, []string{"reason", "tenant"},
+		),
+		tenantAttributedTotal: promauto.With(registerer).NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: "thanos",
+				Subsystem: "receive",
+				Name:      "tenant_attributed_total",
+				Help:      "The total number of time series attributed to each tenant by source.",
+			}, []string{"tenant", "source"},
+		),
 		compressedBufPool: syncutil.NewPool(func() *bytes.Buffer {
 			// Note: This 1KB initial capacity is a little bit arbitrary; we expect the buffer to
 			// grow as needed and be recycled internally such that at steady-state, there will be
