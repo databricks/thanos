@@ -5,7 +5,6 @@ package writecapnp
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -91,7 +90,7 @@ func (r *RemoteWriteClient) RemoteWrite(ctx context.Context, in *storepb.WriteRe
 	for range numAttempts {
 		generation, err = r.conn.connect(ctx, r.logger, r.dialer)
 		if err != nil {
-			return nil, err
+			return nil, status.Error(codes.Unavailable, err.Error())
 		}
 		if resp, release, err = r.write(ctx, in); err == nil {
 			break
@@ -112,13 +111,7 @@ func (r *RemoteWriteClient) RemoteWrite(ctx context.Context, in *storepb.WriteRe
 	case WriteError_invalidArgument:
 		return nil, status.Error(codes.InvalidArgument, "rpc failed")
 	case WriteError_internal:
-		extraContext, err := resp.ExtraErrorContext()
-		if err != nil || extraContext == "" {
-			extraContext = " (no additional context provided)"
-		} else {
-			extraContext = ": " + extraContext
-		}
-		return nil, status.Error(codes.Internal, fmt.Sprintf("rpc failed%s", extraContext))
+		return nil, status.Error(codes.Internal, "rpc failed")
 	default:
 		return &storepb.WriteResponse{}, nil
 	}
@@ -185,7 +178,13 @@ func (r *conn) connect(ctx context.Context, logger log.Logger, dialer Dialer) (u
 		r.closer = codec
 
 		rpcConn := rpc.NewConn(codec, nil)
-		r.writer = Writer(rpcConn.Bootstrap(ctx))
+		writer := Writer(rpcConn.Bootstrap(ctx))
+		if err := writer.Resolve(ctx); err != nil {
+			level.Warn(logger).Log("msg", "failed to bootstrap capnp writer, closing connection", "err", err)
+			r.close(logger)
+			return 0, errors.Wrap(err, "failed to bootstrap capnp writer")
+		}
+		r.writer = writer
 		r.state = connStateConnected
 		r.generation++
 	}
