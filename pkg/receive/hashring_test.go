@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -1048,403 +1049,118 @@ func compareNodeSets(before, after map[string]struct{}) (added, removed []string
 	return
 }
 
-// makeK8sEndpoint creates an endpoint with K8s-style DNS name.
-func makeK8sEndpoint(podName string, shard int, az string) Endpoint {
-	return Endpoint{
-		Address: fmt.Sprintf("%s-%d.svc.test.svc.cluster.local:10901", podName, shard),
-		AZ:      az,
-		Shard:   shard,
-	}
+// podDNS creates a DNS-like string for testing endpoint addresses.
+func podDNS(name string, shard int) string {
+	return name + "-" + strconv.Itoa(shard) + ".test-svc.test-namespace.svc.cluster.local"
 }
 
-func TestAlignedOrdinalShardingBasic(t *testing.T) {
-	t.Parallel()
+func TestGroupByAZ(t *testing.T) {
+	// Test setup endpoints.
+	ep0a := Endpoint{Address: podDNS("pod", 0), AZ: "zone-a", Shard: 0}
+	ep1a := Endpoint{Address: podDNS("pod", 1), AZ: "zone-a", Shard: 1}
+	ep2a := Endpoint{Address: podDNS("pod", 2), AZ: "zone-a", Shard: 2}
+	ep0b := Endpoint{Address: podDNS("pod", 0), AZ: "zone-b", Shard: 0}
+	ep1b := Endpoint{Address: podDNS("pod", 1), AZ: "zone-b", Shard: 1}
+	ep0c := Endpoint{Address: podDNS("pod", 0), AZ: "zone-c", Shard: 0}
+	ep1c := Endpoint{Address: podDNS("pod", 1), AZ: "zone-c", Shard: 1}
+	duplicateEp0a := Endpoint{Address: podDNS("anotherpod", 0), AZ: "zone-a", Shard: 0} // Same shard (0) as ep0a in zone-a.
 
-	// Create 3 AZs with 5 shards each (15 total endpoints)
-	endpoints := make([]Endpoint, 0, 15)
-	azs := []string{"az-a", "az-b", "az-c"}
-	for _, az := range azs {
-		for ord := 0; ord < 5; ord++ {
-			endpoints = append(endpoints, makeK8sEndpoint("pod-"+az, ord, az))
-		}
-	}
-
-	// Create aligned ketama base ring with RF=3 (one per AZ)
-	baseRing, err := newAlignedKetamaHashring(endpoints, SectionsPerNode, 3)
-	require.NoError(t, err)
-
-	// Create shuffle shard hashring with aligned sharding enabled
-	cfg := ShuffleShardingConfig{
-		ShardSize:              2, // Select 2 shards -> 6 endpoints (2 * 3 AZs)
-		AlignedOrdinalSharding: true,
-	}
-	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-aligned")
-	require.NoError(t, err)
-
-	// Get the tenant shard
-	tenant := "test-tenant"
-	shard, err := shardRing.getTenantShardAligned(tenant)
-	require.NoError(t, err)
-
-	// Verify we got the right number of nodes (2 shards * 3 AZs = 6)
-	nodes := shard.Nodes()
-	require.Len(t, nodes, 6, "expected 6 endpoints (2 shards * 3 AZs)")
-
-	// Extract shards from each AZ and verify they're the same
-	shardsByAZ := make(map[string][]int)
-	for _, node := range nodes {
-		shardsByAZ[node.AZ] = append(shardsByAZ[node.AZ], extractShardFromAddress(t, node.Address))
-	}
-
-	// Verify each AZ has exactly 2 shards
-	require.Len(t, shardsByAZ, 3, "expected 3 AZs")
-	for az, shards := range shardsByAZ {
-		require.Len(t, shards, 2, "AZ %s should have 2 shards", az)
-	}
-
-	// Verify all AZs have the SAME shards (the key invariant)
-	var referenceShards []int
-	for _, shards := range shardsByAZ {
-		if referenceShards == nil {
-			referenceShards = shards
-		} else {
-			require.ElementsMatch(t, referenceShards, shards,
-				"all AZs should have the same shards for aligned sharding")
-		}
-	}
-
-	t.Logf("Selected shards: %v", referenceShards)
-}
-
-func TestAlignedOrdinalShardingConsistency(t *testing.T) {
-	t.Parallel()
-
-	// Create 3 AZs with 5 shards each
-	endpoints := make([]Endpoint, 0, 15)
-	azs := []string{"az-a", "az-b", "az-c"}
-	for _, az := range azs {
-		for ord := 0; ord < 5; ord++ {
-			endpoints = append(endpoints, makeK8sEndpoint("pod-"+az, ord, az))
-		}
-	}
-
-	baseRing, err := newAlignedKetamaHashring(endpoints, SectionsPerNode, 3)
-	require.NoError(t, err)
-
-	cfg := ShuffleShardingConfig{
-		ShardSize:              2,
-		AlignedOrdinalSharding: true,
-	}
-	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-consistency")
-	require.NoError(t, err)
-
-	// Verify same tenant always gets same shards across multiple calls
-	tenant := "consistent-tenant"
-	var firstShards []int
-
-	for trial := 0; trial < 10; trial++ {
-		shard, err := shardRing.getTenantShardAligned(tenant)
-		require.NoError(t, err)
-
-		currentShards := extractShardsFromSubring(t, shard)
-		if firstShards == nil {
-			firstShards = currentShards
-		} else {
-			require.Equal(t, firstShards, currentShards,
-				"same tenant should always get same shards")
-		}
-	}
-}
-
-func TestAlignedOrdinalShardingDifferentTenants(t *testing.T) {
-	t.Parallel()
-
-	// Create 3 AZs with 10 shards each to have enough spread
-	endpoints := make([]Endpoint, 0, 30)
-	azs := []string{"az-a", "az-b", "az-c"}
-	for _, az := range azs {
-		for ord := 0; ord < 10; ord++ {
-			endpoints = append(endpoints, makeK8sEndpoint("pod-"+az, ord, az))
-		}
-	}
-
-	baseRing, err := newAlignedKetamaHashring(endpoints, SectionsPerNode, 3)
-	require.NoError(t, err)
-
-	cfg := ShuffleShardingConfig{
-		ShardSize:              3, // Select 3 shards
-		AlignedOrdinalSharding: true,
-	}
-	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-diff-tenants")
-	require.NoError(t, err)
-
-	// Different tenants should (likely) get different shards
-	tenantShards := make(map[string][]int)
-	numTenants := 20
-
-	for i := 0; i < numTenants; i++ {
-		tenant := fmt.Sprintf("tenant-%d", i)
-		shard, err := shardRing.getTenantShardAligned(tenant)
-		require.NoError(t, err)
-		tenantShards[tenant] = extractShardsFromSubring(t, shard)
-	}
-
-	// Count unique shard sets
-	uniqueSets := make(map[string]int)
-	for _, shards := range tenantShards {
-		key := fmt.Sprintf("%v", shards)
-		uniqueSets[key]++
-	}
-
-	// With 10 shards choosing 3, there are C(10,3)=120 possible combinations
-	// We expect multiple unique sets across 20 tenants
-	t.Logf("Unique shard sets: %d out of %d tenants", len(uniqueSets), numTenants)
-	require.Greater(t, len(uniqueSets), 1, "different tenants should get different shard sets")
-}
-
-func TestAlignedOrdinalShardingPreservesAlignment(t *testing.T) {
-	t.Parallel()
-
-	// Create 3 AZs with 5 shards each
-	endpoints := make([]Endpoint, 0, 15)
-	azs := []string{"az-a", "az-b", "az-c"}
-	for _, az := range azs {
-		for ord := 0; ord < 5; ord++ {
-			endpoints = append(endpoints, makeK8sEndpoint("pod-"+az, ord, az))
-		}
-	}
-
-	baseRing, err := newAlignedKetamaHashring(endpoints, SectionsPerNode, 3)
-	require.NoError(t, err)
-
-	cfg := ShuffleShardingConfig{
-		ShardSize:              2,
-		AlignedOrdinalSharding: true,
-	}
-	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-preserves")
-	require.NoError(t, err)
-
-	tenant := "alignment-test-tenant"
-
-	// Use GetN to get replicas and verify they're aligned (same shard across AZs)
-	for i := 0; i < 100; i++ {
-		ts := &prompb.TimeSeries{
-			Labels: []labelpb.ZLabel{
-				{Name: "series", Value: fmt.Sprintf("series-%d", i)},
+	testCases := map[string]struct {
+		inputEndpoints []Endpoint
+		expectedResult [][]Endpoint
+		expectError    bool
+		errorContains  string
+	}{
+		"error on empty input": {
+			inputEndpoints: []Endpoint{},
+			expectedResult: nil,
+			expectError:    true,
+			errorContains:  "no endpoints provided",
+		},
+		"single AZ, multiple endpoints": {
+			inputEndpoints: []Endpoint{ep1a, ep0a, ep2a},
+			expectedResult: [][]Endpoint{
+				{ep0a, ep1a, ep2a},
 			},
-		}
-
-		// Get all 3 replicas (RF=3)
-		var replicas []Endpoint
-		for n := uint64(0); n < 3; n++ {
-			ep, err := shardRing.GetN(tenant, ts, n)
-			require.NoError(t, err)
-			replicas = append(replicas, ep)
-		}
-
-		// Verify all 3 replicas have the same shard but different AZs
-		shardsSeen := make(map[int]struct{})
-		azsSeen := make(map[string]struct{})
-		for _, ep := range replicas {
-			shardsSeen[extractShardFromAddress(t, ep.Address)] = struct{}{}
-			azsSeen[ep.AZ] = struct{}{}
-		}
-
-		require.Len(t, shardsSeen, 1, "all replicas should have the same shard for series %d", i)
-		require.Len(t, azsSeen, 3, "replicas should span all 3 AZs for series %d", i)
-	}
-}
-
-// TestAlignedOrdinalShardingDataDistribution verifies the key behavior:
-// - With shard_size=2, tenant gets 2 shards (e.g., shards 1 and 4)
-// - Series are distributed across both shards
-// - a-1, b-1, c-1 always receive the same series (aligned replicas for shard 1)
-// - a-4, b-4, c-4 always receive the same series (aligned replicas for shard 4)
-// - Series assigned to shard 1 are different from series assigned to shard 4.
-func TestAlignedOrdinalShardingDataDistribution(t *testing.T) {
-	t.Parallel()
-
-	// Create 3 AZs with 5 shards each
-	endpoints := make([]Endpoint, 0, 15)
-	azs := []string{"az-a", "az-b", "az-c"}
-	for _, az := range azs {
-		for ord := 0; ord < 5; ord++ {
-			endpoints = append(endpoints, makeK8sEndpoint("pod-"+az, ord, az))
-		}
-	}
-
-	baseRing, err := newAlignedKetamaHashring(endpoints, SectionsPerNode, 3)
-	require.NoError(t, err)
-
-	cfg := ShuffleShardingConfig{
-		ShardSize:              2, // Select 2 shards
-		AlignedOrdinalSharding: true,
-	}
-	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-distribution")
-	require.NoError(t, err)
-
-	tenant := "distribution-test-tenant"
-
-	// First, get the tenant's selected shards
-	shard, err := shardRing.getTenantShardAligned(tenant)
-	require.NoError(t, err)
-	selectedShards := extractShardsFromSubring(t, shard)
-	require.Len(t, selectedShards, 2, "tenant should have exactly 2 shards")
-	t.Logf("Tenant's selected shards: %v", selectedShards)
-
-	// Track which series go to which shard
-	// Key: shard, Value: set of series indices
-	seriesByShard := make(map[int]map[int]struct{})
-	for _, ord := range selectedShards {
-		seriesByShard[ord] = make(map[int]struct{})
-	}
-
-	// Track which endpoints receive which series
-	// Key: endpoint address, Value: set of series indices
-	seriesByEndpoint := make(map[string]map[int]struct{})
-
-	// Generate many series and track their distribution
-	numSeries := 1000
-	for i := 0; i < numSeries; i++ {
-		ts := &prompb.TimeSeries{
-			Labels: []labelpb.ZLabel{
-				{Name: "series", Value: fmt.Sprintf("series-%d", i)},
-				{Name: "__name__", Value: "test_metric"},
+			expectError: false,
+		},
+		"multiple AZs, balanced and ordered": {
+			inputEndpoints: []Endpoint{ep1a, ep0b, ep0a, ep1b},
+			expectedResult: [][]Endpoint{
+				{ep0a, ep1a},
+				{ep0b, ep1b},
 			},
-		}
+			expectError: false,
+		},
+		"multiple AZs, different counts, stops at first missing shard > 0": {
+			inputEndpoints: []Endpoint{ep1a, ep0b, ep0a, ep1b, ep2a, ep0c},
+			expectedResult: [][]Endpoint{
+				{ep0a},
+				{ep0b},
+				{ep0c},
+			},
+			expectError: false,
+		},
+		"error if shard 0 missing in any AZ": {
+			inputEndpoints: []Endpoint{ep1a, ep2a, ep1b},
+			expectedResult: nil,
+			expectError:    true,
+			errorContains:  "missing endpoint with shard 0",
+		},
+		"error if shard 0 missing in only one AZ": {
+			inputEndpoints: []Endpoint{ep0a, ep1a, ep1b},
+			expectedResult: nil,
+			expectError:    true,
+			errorContains:  `AZ "zone-b" is missing endpoint with shard 0`,
+		},
+		"error on duplicate shard within an AZ": {
+			inputEndpoints: []Endpoint{ep0a, ep1a, ep0b, duplicateEp0a},
+			expectedResult: nil,
+			expectError:    true,
+			errorContains:  "duplicate endpoint shard 0 for address " + duplicateEp0a.Address + " in AZ zone-a",
+		},
+		"AZ sorting check": {
+			inputEndpoints: []Endpoint{ep0b, ep0c, ep0a},
+			expectedResult: [][]Endpoint{
+				{ep0a},
+				{ep0b},
+				{ep0c},
+			},
+			expectError: false,
+		},
+		"multiple AZs, stops correctly when next shard missing everywhere": {
+			inputEndpoints: []Endpoint{ep1a, ep0b, ep0a, ep1b, ep0c, ep1c},
+			expectedResult: [][]Endpoint{
+				{ep0a, ep1a},
+				{ep0b, ep1b},
+				{ep0c, ep1c},
+			},
+			expectError: false,
+		},
+	}
 
-		// Get all 3 replicas
-		var replicas []Endpoint
-		for n := uint64(0); n < 3; n++ {
-			ep, err := shardRing.GetN(tenant, ts, n)
-			require.NoError(t, err)
-			replicas = append(replicas, ep)
+	for tcName, tc := range testCases {
+		t.Run(tcName, func(t *testing.T) {
+			result, err := groupByAZ(tc.inputEndpoints)
 
-			// Track series per endpoint
-			if seriesByEndpoint[ep.Address] == nil {
-				seriesByEndpoint[ep.Address] = make(map[int]struct{})
+			if tc.expectError {
+				testutil.NotOk(t, err)
+				if tc.errorContains != "" {
+					testutil.Assert(t, strings.Contains(err.Error(), tc.errorContains), "Expected error message to contain '%s', but got: %v", tc.errorContains, err)
+				}
+				testutil.Assert(t, result == nil, "Expected nil result on error, got: %v", result)
+			} else {
+				testutil.Ok(t, err)
+				testutil.Equals(t, tc.expectedResult, result)
+
+				// Verify outer slice (AZs) is sorted alphabetically.
+				if err == nil && len(result) > 1 {
+					azOrderCorrect := sort.SliceIsSorted(result, func(i, j int) bool {
+						return result[i][0].AZ < result[j][0].AZ
+					})
+					testutil.Assert(t, azOrderCorrect, "Outer slice is not sorted by AZ")
+				}
 			}
-			seriesByEndpoint[ep.Address][i] = struct{}{}
-		}
-
-		// All replicas should have the same shard
-		primaryShard := extractShardFromAddress(t, replicas[0].Address)
-		for _, ep := range replicas[1:] {
-			epShard := extractShardFromAddress(t, ep.Address)
-			require.Equal(t, primaryShard, epShard, "all replicas for series %d should have same shard", i)
-		}
-
-		// Track which shard this series went to
-		seriesByShard[primaryShard][i] = struct{}{}
+		})
 	}
-
-	// Verify 1: Series are distributed across BOTH shards (not just one)
-	for ord, series := range seriesByShard {
-		t.Logf("Shard %d received %d series", ord, len(series))
-		require.Greater(t, len(series), 0, "shard %d should receive some series", ord)
-	}
-
-	// Verify 2: Same shard across different AZs receives the SAME series
-	// Group endpoints by shard
-	endpointsByShard := make(map[int][]string)
-	for addr := range seriesByEndpoint {
-		ord := extractShardFromAddress(t, addr)
-		endpointsByShard[ord] = append(endpointsByShard[ord], addr)
-	}
-
-	for ord, addrs := range endpointsByShard {
-		if len(addrs) < 2 {
-			continue
-		}
-		// All endpoints with the same shard should have received the exact same series
-		referenceSeries := seriesByEndpoint[addrs[0]]
-		for _, addr := range addrs[1:] {
-			otherSeries := seriesByEndpoint[addr]
-			require.Equal(t, len(referenceSeries), len(otherSeries),
-				"endpoints with shard %d should have same number of series", ord)
-			for seriesIdx := range referenceSeries {
-				_, ok := otherSeries[seriesIdx]
-				require.True(t, ok,
-					"series %d should be on all endpoints with shard %d", seriesIdx, ord)
-			}
-		}
-		t.Logf("Verified: All %d endpoints with shard %d have identical %d series",
-			len(addrs), ord, len(referenceSeries))
-	}
-
-	// Verify 3: Different shards receive DIFFERENT series (no overlap)
-	shardList := make([]int, 0, len(seriesByShard))
-	for ord := range seriesByShard {
-		shardList = append(shardList, ord)
-	}
-	if len(shardList) >= 2 {
-		series1 := seriesByShard[shardList[0]]
-		series2 := seriesByShard[shardList[1]]
-		for seriesIdx := range series1 {
-			_, overlap := series2[seriesIdx]
-			require.False(t, overlap,
-				"series %d should not be on both shard %d and shard %d",
-				seriesIdx, shardList[0], shardList[1])
-		}
-		t.Logf("Verified: Shards %d and %d have no overlapping series", shardList[0], shardList[1])
-	}
-}
-
-func TestAlignedOrdinalShardingValidation(t *testing.T) {
-	t.Parallel()
-
-	endpoints := make([]Endpoint, 0, 15)
-	azs := []string{"az-a", "az-b", "az-c"}
-	for _, az := range azs {
-		for ord := 0; ord < 5; ord++ {
-			endpoints = append(endpoints, makeK8sEndpoint("pod-"+az, ord, az))
-		}
-	}
-
-	baseRing, err := newAlignedKetamaHashring(endpoints, SectionsPerNode, 3)
-	require.NoError(t, err)
-
-	// Test shard size exceeding available shards
-	cfg := ShuffleShardingConfig{
-		ShardSize:              10, // Only 5 shards available
-		AlignedOrdinalSharding: true,
-	}
-	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-validation")
-	require.NoError(t, err)
-
-	_, err = shardRing.getTenantShardAligned("test-tenant")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "exceeds available common shards")
-}
-
-// Helper function to extract shard from K8s-style address.
-func extractShardFromAddress(t *testing.T, address string) int {
-	t.Helper()
-	// Address format: pod-az-N.svc.test.svc.cluster.local:10901
-	parts := strings.Split(address, ".")
-	require.Greater(t, len(parts), 0)
-	podPart := parts[0] // pod-az-N
-	lastDash := strings.LastIndex(podPart, "-")
-	require.Greater(t, lastDash, 0)
-	shardStr := podPart[lastDash+1:]
-	var shard int
-	_, err := fmt.Sscanf(shardStr, "%d", &shard)
-	require.NoError(t, err)
-	return shard
-}
-
-// Helper function to extract unique shards from a subring.
-func extractShardsFromSubring(t *testing.T, subring Hashring) []int {
-	t.Helper()
-	nodes := subring.Nodes()
-	shardSet := make(map[int]struct{})
-	for _, node := range nodes {
-		shardSet[extractShardFromAddress(t, node.Address)] = struct{}{}
-	}
-	shards := make([]int, 0, len(shardSet))
-	for s := range shardSet {
-		shards = append(shards, s)
-	}
-	sort.Ints(shards)
-	return shards
 }
