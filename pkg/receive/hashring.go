@@ -34,8 +34,8 @@ import (
 type HashringAlgorithm string
 
 const (
-	AlgorithmHashmod       HashringAlgorithm = "hashmod"
-	AlgorithmKetama        HashringAlgorithm = "ketama"
+	AlgorithmHashmod    HashringAlgorithm = "hashmod"
+	AlgorithmKetama     HashringAlgorithm = "ketama"
 	AlgorithmRendezvous HashringAlgorithm = "rendezvous"
 
 	// SectionsPerNode is the number of sections in the ring assigned to each node
@@ -592,9 +592,10 @@ func (s *shuffleShardHashring) getTenantShardCached(tenant string) (Hashring, er
 
 	var h Hashring
 	var err error
-	if s.shuffleShardingConfig.AlignedOrdinalSharding {
+	switch s.baseRing.(type) {
+	case *rendezvousHashring:
 		h, err = s.getTenantShardRendezvous(tenant)
-	} else {
+	default:
 		h, err = s.getTenantShard(tenant)
 	}
 	if err != nil {
@@ -866,14 +867,19 @@ func (s *shuffleShardHashring) getTenantShardRendezvous(tenant string) (Hashring
 		return nil, errors.Wrap(err, "failed to extract shard structure")
 	}
 
-	// Determine shard size (number of shards to select)
-	shardSize := s.getShardSize(tenant)
-	if shardSize > len(commonShards) {
-		return nil, fmt.Errorf("shard size %d exceeds available common shards (%d)", shardSize, len(commonShards))
+	// shard_size is the total shard size; divide by numAZs to get per-AZ count.
+	totalShardSize := s.getShardSize(tenant)
+	numAZs := len(azShardMap)
+	perAZShards := totalShardSize / numAZs // floor
+	if perAZShards == 0 {
+		return nil, fmt.Errorf("shard size %d too small for %d AZs", totalShardSize, numAZs)
+	}
+	if perAZShards > len(commonShards) {
+		return nil, fmt.Errorf("per-AZ shard count %d (from total %d / %d AZs) exceeds available common shards (%d)", perAZShards, totalShardSize, numAZs, len(commonShards))
 	}
 
 	// Select shards using rendezvous hashing
-	selectedShards := selectShardsRendezvous(commonShards, tenant, shardSize)
+	selectedShards := selectShardsRendezvous(commonShards, tenant, perAZShards)
 
 	// Build endpoint list with same shards from each AZ
 	sortedAZs := make([]string, 0, len(azShardMap))

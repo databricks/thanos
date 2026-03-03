@@ -297,8 +297,7 @@ func TestRendezvousShuffleShardingBasic(t *testing.T) {
 	require.NoError(t, err)
 
 	cfg := ShuffleShardingConfig{
-		ShardSize:              2,
-		AlignedOrdinalSharding: true,
+		ShardSize: 6,
 	}
 	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-rendezvous")
 	require.NoError(t, err)
@@ -307,7 +306,7 @@ func TestRendezvousShuffleShardingBasic(t *testing.T) {
 	shard, err := shardRing.getTenantShardRendezvous(tenant)
 	require.NoError(t, err)
 
-	// Verify we got the right number of nodes (2 shards * 3 AZs = 6).
+	// Verify we got the right number of nodes (6 total / 3 AZs = 2 shards per AZ → 6 endpoints).
 	nodes := shard.Nodes()
 	require.Len(t, nodes, 6, "expected 6 endpoints (2 shards * 3 AZs)")
 
@@ -349,8 +348,7 @@ func TestRendezvousShuffleShardingConsistency(t *testing.T) {
 	require.NoError(t, err)
 
 	cfg := ShuffleShardingConfig{
-		ShardSize:              2,
-		AlignedOrdinalSharding: true,
+		ShardSize: 6,
 	}
 	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-consistency")
 	require.NoError(t, err)
@@ -386,8 +384,7 @@ func TestRendezvousShuffleShardingDifferentTenants(t *testing.T) {
 	require.NoError(t, err)
 
 	cfg := ShuffleShardingConfig{
-		ShardSize:              3,
-		AlignedOrdinalSharding: true,
+		ShardSize: 9,
 	}
 	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-diff-tenants")
 	require.NoError(t, err)
@@ -426,8 +423,7 @@ func TestRendezvousShuffleShardingPreservesAlignment(t *testing.T) {
 	require.NoError(t, err)
 
 	cfg := ShuffleShardingConfig{
-		ShardSize:              2,
-		AlignedOrdinalSharding: true,
+		ShardSize: 6,
 	}
 	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-preserves")
 	require.NoError(t, err)
@@ -476,8 +472,7 @@ func TestRendezvousShuffleShardingDataDistribution(t *testing.T) {
 	require.NoError(t, err)
 
 	cfg := ShuffleShardingConfig{
-		ShardSize:              2,
-		AlignedOrdinalSharding: true,
+		ShardSize: 6,
 	}
 	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-distribution")
 	require.NoError(t, err)
@@ -587,8 +582,7 @@ func TestRendezvousShuffleShardingValidation(t *testing.T) {
 	require.NoError(t, err)
 
 	cfg := ShuffleShardingConfig{
-		ShardSize:              10, // Only 5 shards available
-		AlignedOrdinalSharding: true,
+		ShardSize: 30, // 30 / 3 AZs = 10 per-AZ, but only 5 shards available
 	}
 	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-validation")
 	require.NoError(t, err)
