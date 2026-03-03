@@ -574,6 +574,23 @@ func runReceive(
 		})
 	}
 
+	// Start the disk probe if configured.
+	if probeInterval := time.Duration(*conf.diskProbeInterval); probeInterval > 0 {
+		level.Info(logger).Log("msg", "setting up disk I/O probe", "interval", probeInterval, "write_size", conf.diskProbeWriteSize)
+		diskProbe := receive.NewDiskProbe(log.With(logger, "component", "disk-probe"), receive.DiskProbeOptions{
+			Dir:       conf.dataDir,
+			Interval:  probeInterval,
+			WriteSize: conf.diskProbeWriteSize,
+		}, reg)
+		stop := make(chan struct{})
+		g.Add(func() error {
+			diskProbe.Run(stop)
+			return nil
+		}, func(err error) {
+			close(stop)
+		})
+	}
+
 	if receiveMode == receive.IngestorOnly {
 		level.Debug(logger).Log("msg", "setting up periodic top metrics collection")
 		topMetricNumSeries := promauto.With(reg).NewGaugeVec(prometheus.GaugeOpts{
@@ -1047,6 +1064,10 @@ type receiveConfig struct {
 	poolingEnabled           bool
 	maxPooledCompressedCap   int
 	maxPooledDecompressedCap int
+
+	// Disk probe configuration.
+	diskProbeInterval  *model.Duration
+	diskProbeWriteSize int
 }
 
 func (rc *receiveConfig) registerFlag(cmd extkingpin.FlagClause) {
@@ -1263,6 +1284,14 @@ func (rc *receiveConfig) registerFlag(cmd extkingpin.FlagClause) {
 	cmd.Flag("receive.max-pooled-decompressed-cap", "Maximum capacity (bytes) of a decompressed buffer that will be returned to the pool. Buffers larger than this are discarded to prevent pool ballooning.").
 		Default(fmt.Sprintf("%d", receive.DefaultMaxPooledDecompressedCap)).
 		IntVar(&rc.maxPooledDecompressedCap)
+
+	rc.diskProbeInterval = extkingpin.ModelDuration(cmd.Flag("receive.disk-probe-interval",
+		"Interval between synthetic disk write probes. The probe writes a small payload to the TSDB data directory "+
+			"and calls fsync to measure actual disk I/O latency. Set to 0s to disable.").
+		Default("0s"))
+	cmd.Flag("receive.disk-probe-write-size",
+		"Number of bytes written per disk probe operation.").
+		Default("1024").IntVar(&rc.diskProbeWriteSize)
 }
 
 // determineMode returns the ReceiverMode that this receiver is configured to run in.
