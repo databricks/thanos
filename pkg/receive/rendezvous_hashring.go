@@ -4,8 +4,8 @@
 package receive
 
 import (
+	"encoding/binary"
 	"fmt"
-	"strconv"
 
 	"github.com/cespare/xxhash"
 	"github.com/pkg/errors"
@@ -77,25 +77,16 @@ func (r *rendezvousHashring) GetN(tenant string, ts *prompb.TimeSeries, n uint64
 	seriesKey := labelpb.HashWithPrefix(tenant, ts.Labels)
 
 	// Rendezvous hashing: for each shard, compute hash(seriesKey, shard), pick the max.
+	// buf is a fixed-size stack array: 8 bytes seriesKey + 2 bytes shard (little-endian).
 	bestShard := 0
 	bestHash := uint64(0)
-	hasher := xxhash.New()
-	buf := make([]byte, 8)
+
+	var buf [10]byte
+	binary.LittleEndian.PutUint64(buf[:8], seriesKey)
 
 	for shard := 0; shard < r.numShards; shard++ {
-		hasher.Reset()
-		// Encode seriesKey as 8 bytes.
-		buf[0] = byte(seriesKey)
-		buf[1] = byte(seriesKey >> 8)
-		buf[2] = byte(seriesKey >> 16)
-		buf[3] = byte(seriesKey >> 24)
-		buf[4] = byte(seriesKey >> 32)
-		buf[5] = byte(seriesKey >> 40)
-		buf[6] = byte(seriesKey >> 48)
-		buf[7] = byte(seriesKey >> 56)
-		_, _ = hasher.Write(buf)
-		_, _ = hasher.Write([]byte(strconv.Itoa(shard)))
-		h := hasher.Sum64()
+		binary.LittleEndian.PutUint16(buf[8:], uint16(shard))
+		h := xxhash.Sum64(buf[:])
 		if shard == 0 || h > bestHash {
 			bestHash = h
 			bestShard = shard
