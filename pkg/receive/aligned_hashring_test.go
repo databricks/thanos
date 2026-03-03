@@ -13,25 +13,23 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/thanos-io/thanos/pkg/store/labelpb"
 	"github.com/thanos-io/thanos/pkg/store/storepb/prompb"
-	"github.com/thanos-io/thanos/pkg/strutil"
 )
 
 // podDNS creates a DNS-like string for testing endpoint addresses.
-func podDNS(name string, ordinal int) string {
-	return name + "-" + strconv.Itoa(ordinal) + ".test-svc.test-namespace.svc.cluster.local"
+func podDNS(name string, shard int) string {
+	return name + "-" + strconv.Itoa(shard) + ".test-svc.test-namespace.svc.cluster.local"
 }
 
 func TestGroupByAZ(t *testing.T) {
 	// Test setup endpoints.
-	ep0a := Endpoint{Address: podDNS("pod", 0), AZ: "zone-a"}
-	ep1a := Endpoint{Address: podDNS("pod", 1), AZ: "zone-a"}
-	ep2a := Endpoint{Address: podDNS("pod", 2), AZ: "zone-a"}
-	ep0b := Endpoint{Address: podDNS("pod", 0), AZ: "zone-b"}
-	ep1b := Endpoint{Address: podDNS("pod", 1), AZ: "zone-b"}
-	ep0c := Endpoint{Address: podDNS("pod", 0), AZ: "zone-c"}
-	ep1c := Endpoint{Address: podDNS("pod", 1), AZ: "zone-c"}
-	invalidEp := Endpoint{Address: "invalid-address-format", AZ: "zone-a"}
-	duplicateEp0a := Endpoint{Address: podDNS("anotherpod", 0), AZ: "zone-a"} // Same ordinal (0) as ep0a in zone-a.
+	ep0a := Endpoint{Address: podDNS("pod", 0), AZ: "zone-a", Shard: 0}
+	ep1a := Endpoint{Address: podDNS("pod", 1), AZ: "zone-a", Shard: 1}
+	ep2a := Endpoint{Address: podDNS("pod", 2), AZ: "zone-a", Shard: 2}
+	ep0b := Endpoint{Address: podDNS("pod", 0), AZ: "zone-b", Shard: 0}
+	ep1b := Endpoint{Address: podDNS("pod", 1), AZ: "zone-b", Shard: 1}
+	ep0c := Endpoint{Address: podDNS("pod", 0), AZ: "zone-c", Shard: 0}
+	ep1c := Endpoint{Address: podDNS("pod", 1), AZ: "zone-c", Shard: 1}
+	duplicateEp0a := Endpoint{Address: podDNS("anotherpod", 0), AZ: "zone-a", Shard: 0} // Same shard (0) as ep0a in zone-a.
 
 	testCases := map[string]struct {
 		inputEndpoints []Endpoint
@@ -60,7 +58,7 @@ func TestGroupByAZ(t *testing.T) {
 			},
 			expectError: false,
 		},
-		"multiple AZs, different counts, stops at first missing ordinal > 0": {
+		"multiple AZs, different counts, stops at first missing shard > 0": {
 			inputEndpoints: []Endpoint{ep1a, ep0b, ep0a, ep1b, ep2a, ep0c},
 			expectedResult: [][]Endpoint{
 				{ep0a},
@@ -69,29 +67,23 @@ func TestGroupByAZ(t *testing.T) {
 			},
 			expectError: false,
 		},
-		"error if ordinal 0 missing in any AZ": {
+		"error if shard 0 missing in any AZ": {
 			inputEndpoints: []Endpoint{ep1a, ep2a, ep1b},
 			expectedResult: nil,
 			expectError:    true,
-			errorContains:  "missing endpoint with ordinal 0",
+			errorContains:  "missing endpoint with shard 0",
 		},
-		"error if ordinal 0 missing in only one AZ": {
+		"error if shard 0 missing in only one AZ": {
 			inputEndpoints: []Endpoint{ep0a, ep1a, ep1b},
 			expectedResult: nil,
 			expectError:    true,
-			errorContains:  `AZ "zone-b" is missing endpoint with ordinal 0`,
+			errorContains:  `AZ "zone-b" is missing endpoint with shard 0`,
 		},
-		"error on invalid address format": {
-			inputEndpoints: []Endpoint{ep0a, invalidEp, ep0b},
-			expectedResult: nil,
-			expectError:    true,
-			errorContains:  "failed to extract ordinal from address invalid-address-format",
-		},
-		"error on duplicate ordinal within an AZ": {
+		"error on duplicate shard within an AZ": {
 			inputEndpoints: []Endpoint{ep0a, ep1a, ep0b, duplicateEp0a},
 			expectedResult: nil,
 			expectError:    true,
-			errorContains:  "duplicate endpoint ordinal 0 for address " + duplicateEp0a.Address + " in AZ zone-a",
+			errorContains:  "duplicate endpoint shard 0 for address " + duplicateEp0a.Address + " in AZ zone-a",
 		},
 		"AZ sorting check": {
 			inputEndpoints: []Endpoint{ep0b, ep0c, ep0a},
@@ -102,7 +94,7 @@ func TestGroupByAZ(t *testing.T) {
 			},
 			expectError: false,
 		},
-		"multiple AZs, stops correctly when next ordinal missing everywhere": {
+		"multiple AZs, stops correctly when next shard missing everywhere": {
 			inputEndpoints: []Endpoint{ep1a, ep0b, ep0a, ep1b, ep0c, ep1c},
 			expectedResult: [][]Endpoint{
 				{ep0a, ep1a},
@@ -142,14 +134,13 @@ func TestGroupByAZ(t *testing.T) {
 func TestAlignedKetamaHashringGet(t *testing.T) {
 	t.Parallel()
 
-	ep0a := Endpoint{Address: podDNS("pod", 0), AZ: "zone-a"}
-	ep1a := Endpoint{Address: podDNS("pod", 1), AZ: "zone-a"}
-	ep0b := Endpoint{Address: podDNS("pod", 0), AZ: "zone-b"}
-	ep1b := Endpoint{Address: podDNS("pod", 1), AZ: "zone-b"}
-	ep0c := Endpoint{Address: podDNS("pod", 0), AZ: "zone-c"}
-	ep1c := Endpoint{Address: podDNS("pod", 1), AZ: "zone-c"}
-	invalidEp := Endpoint{Address: "invalid-address", AZ: "zone-a"}
-	duplicateEp0a := Endpoint{Address: podDNS("anotherpod", 0), AZ: "zone-a"}
+	ep0a := Endpoint{Address: podDNS("pod", 0), AZ: "zone-a", Shard: 0}
+	ep1a := Endpoint{Address: podDNS("pod", 1), AZ: "zone-a", Shard: 1}
+	ep0b := Endpoint{Address: podDNS("pod", 0), AZ: "zone-b", Shard: 0}
+	ep1b := Endpoint{Address: podDNS("pod", 1), AZ: "zone-b", Shard: 1}
+	ep0c := Endpoint{Address: podDNS("pod", 0), AZ: "zone-c", Shard: 0}
+	ep1c := Endpoint{Address: podDNS("pod", 1), AZ: "zone-c", Shard: 1}
+	duplicateEp0a := Endpoint{Address: podDNS("anotherpod", 0), AZ: "zone-a", Shard: 0}
 
 	tsForReplicaTest := &prompb.TimeSeries{
 		Labels: []labelpb.ZLabel{{Name: "test", Value: "replica-routing"}},
@@ -232,26 +223,19 @@ func TestAlignedKetamaHashringGet(t *testing.T) {
 			expectConstructorError:   true,
 			constructorErrorContains: "no endpoints provided",
 		},
-		"error: invalid address": {
-			inputEndpoints:           []Endpoint{ep0a, invalidEp, ep0b},
-			replicationFactor:        2,
-			sectionsPerNode:          SectionsPerNode,
-			expectConstructorError:   true,
-			constructorErrorContains: "failed to extract ordinal from address invalid-address",
-		},
-		"error: duplicate ordinal": {
+		"error: duplicate shard": {
 			inputEndpoints:           []Endpoint{ep0a, ep1a, ep0b, duplicateEp0a},
 			replicationFactor:        2,
 			sectionsPerNode:          SectionsPerNode,
 			expectConstructorError:   true,
 			constructorErrorContains: "duplicate endpoint",
 		},
-		"error: missing ordinal 0": {
+		"error: missing shard 0": {
 			inputEndpoints:           []Endpoint{ep1a, ep1b},
 			replicationFactor:        2,
 			sectionsPerNode:          SectionsPerNode,
 			expectConstructorError:   true,
-			constructorErrorContains: "failed to group endpoints by AZ: AZ \"zone-a\" is missing endpoint with ordinal 0",
+			constructorErrorContains: "failed to group endpoints by AZ: AZ \"zone-a\" is missing endpoint with shard 0",
 		},
 		"error: AZ count != RF (too few AZs)": {
 			inputEndpoints:           []Endpoint{ep0a, ep1a},
@@ -323,18 +307,18 @@ func TestAlignedKetamaHashringGet(t *testing.T) {
 	}
 }
 
-func TestAlignedKetamaHashringReplicaOrdinals(t *testing.T) {
+func TestAlignedKetamaHashringReplicaShards(t *testing.T) {
 	t.Parallel()
 
 	var endpoints []Endpoint
 	for i := 0; i < 20; i++ {
-		endpoints = append(endpoints, Endpoint{Address: podDNS("pod", i), AZ: "zone-a"})
+		endpoints = append(endpoints, Endpoint{Address: podDNS("pod", i), AZ: "zone-a", Shard: i})
 	}
 	for i := 0; i < 20; i++ {
-		endpoints = append(endpoints, Endpoint{Address: podDNS("pod", i), AZ: "zone-b"})
+		endpoints = append(endpoints, Endpoint{Address: podDNS("pod", i), AZ: "zone-b", Shard: i})
 	}
 	for i := 0; i < 20; i++ {
-		endpoints = append(endpoints, Endpoint{Address: podDNS("pod", i), AZ: "zone-c"})
+		endpoints = append(endpoints, Endpoint{Address: podDNS("pod", i), AZ: "zone-c", Shard: i})
 	}
 	replicationFactor := uint64(3)
 	sectionsPerNode := 10
@@ -344,13 +328,13 @@ func TestAlignedKetamaHashringReplicaOrdinals(t *testing.T) {
 	require.NotNil(t, hashRing, "Hashring should not be nil")
 	require.NotEmpty(t, hashRing.sections, "Hashring should contain sections")
 
-	// Verify that all replicas within a section have the same ordinal.
+	// Verify that all replicas within a section have the same shard.
 	for i, s := range hashRing.sections {
 		if len(s.replicas) == 0 {
 			continue
 		}
 
-		expectedOrdinal := -1
+		expectedShard := -1
 
 		for replicaNum, replicaIndex := range s.replicas {
 			require.Less(t, int(replicaIndex), len(hashRing.endpoints),
@@ -358,21 +342,17 @@ func TestAlignedKetamaHashringReplicaOrdinals(t *testing.T) {
 				i, s.hash, replicaNum, replicaIndex, len(hashRing.endpoints))
 
 			endpoint := hashRing.endpoints[replicaIndex]
-			ordinal, err := strutil.ExtractPodOrdinal(endpoint.Address)
-			require.NoError(t, err,
-				"Section %d (hash %d), Replica %d: failed to extract ordinal from address %s",
-				i, s.hash, replicaNum, endpoint.Address)
 
-			if expectedOrdinal == -1 {
-				expectedOrdinal = ordinal
+			if expectedShard == -1 {
+				expectedShard = endpoint.Shard
 			} else {
-				require.Equal(t, expectedOrdinal, ordinal,
-					"Section %d (hash %d), Replica %d (%s): Mismatched ordinal. Expected %d, got %d. Replicas in section: %v",
-					i, s.hash, replicaNum, endpoint.Address, expectedOrdinal, ordinal, s.replicas)
+				require.Equal(t, expectedShard, endpoint.Shard,
+					"Section %d (hash %d), Replica %d (%s): Mismatched shard. Expected %d, got %d. Replicas in section: %v",
+					i, s.hash, replicaNum, endpoint.Address, expectedShard, endpoint.Shard, s.replicas)
 			}
 		}
 		if len(s.replicas) > 0 {
-			require.NotEqual(t, -1, expectedOrdinal, "Section %d (hash %d): Failed to determine expected ordinal for replicas %v", i, s.hash, s.replicas)
+			require.NotEqual(t, -1, expectedShard, "Section %d (hash %d): Failed to determine expected shard for replicas %v", i, s.hash, s.replicas)
 		}
 	}
 }

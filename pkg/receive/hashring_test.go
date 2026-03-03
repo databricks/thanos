@@ -6,6 +6,7 @@ package receive
 import (
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"testing"
 
@@ -1047,18 +1048,19 @@ func compareNodeSets(before, after map[string]struct{}) (added, removed []string
 	return
 }
 
-// makeK8sEndpoint creates an endpoint with K8s-style DNS name that has an extractable ordinal.
-func makeK8sEndpoint(podName string, ordinal int, az string) Endpoint {
+// makeK8sEndpoint creates an endpoint with K8s-style DNS name.
+func makeK8sEndpoint(podName string, shard int, az string) Endpoint {
 	return Endpoint{
-		Address: fmt.Sprintf("%s-%d.svc.test.svc.cluster.local:10901", podName, ordinal),
+		Address: fmt.Sprintf("%s-%d.svc.test.svc.cluster.local:10901", podName, shard),
 		AZ:      az,
+		Shard:   shard,
 	}
 }
 
 func TestAlignedOrdinalShardingBasic(t *testing.T) {
 	t.Parallel()
 
-	// Create 3 AZs with 5 ordinals each (15 total endpoints)
+	// Create 3 AZs with 5 shards each (15 total endpoints)
 	endpoints := make([]Endpoint, 0, 15)
 	azs := []string{"az-a", "az-b", "az-c"}
 	for _, az := range azs {
@@ -1071,9 +1073,9 @@ func TestAlignedOrdinalShardingBasic(t *testing.T) {
 	baseRing, err := newAlignedKetamaHashring(endpoints, SectionsPerNode, 3)
 	require.NoError(t, err)
 
-	// Create shuffle shard hashring with aligned ordinal sharding enabled
+	// Create shuffle shard hashring with aligned sharding enabled
 	cfg := ShuffleShardingConfig{
-		ShardSize:              2, // Select 2 ordinals -> 6 endpoints (2 * 3 AZs)
+		ShardSize:              2, // Select 2 shards -> 6 endpoints (2 * 3 AZs)
 		AlignedOrdinalSharding: true,
 	}
 	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-aligned")
@@ -1084,40 +1086,40 @@ func TestAlignedOrdinalShardingBasic(t *testing.T) {
 	shard, err := shardRing.getTenantShardAligned(tenant)
 	require.NoError(t, err)
 
-	// Verify we got the right number of nodes (2 ordinals * 3 AZs = 6)
+	// Verify we got the right number of nodes (2 shards * 3 AZs = 6)
 	nodes := shard.Nodes()
-	require.Len(t, nodes, 6, "expected 6 endpoints (2 ordinals * 3 AZs)")
+	require.Len(t, nodes, 6, "expected 6 endpoints (2 shards * 3 AZs)")
 
-	// Extract ordinals from each AZ and verify they're the same
-	ordinalsByAZ := make(map[string][]int)
+	// Extract shards from each AZ and verify they're the same
+	shardsByAZ := make(map[string][]int)
 	for _, node := range nodes {
-		ordinalsByAZ[node.AZ] = append(ordinalsByAZ[node.AZ], extractOrdinalFromAddress(t, node.Address))
+		shardsByAZ[node.AZ] = append(shardsByAZ[node.AZ], extractShardFromAddress(t, node.Address))
 	}
 
-	// Verify each AZ has exactly 2 ordinals
-	require.Len(t, ordinalsByAZ, 3, "expected 3 AZs")
-	for az, ordinals := range ordinalsByAZ {
-		require.Len(t, ordinals, 2, "AZ %s should have 2 ordinals", az)
+	// Verify each AZ has exactly 2 shards
+	require.Len(t, shardsByAZ, 3, "expected 3 AZs")
+	for az, shards := range shardsByAZ {
+		require.Len(t, shards, 2, "AZ %s should have 2 shards", az)
 	}
 
-	// Verify all AZs have the SAME ordinals (the key invariant)
-	var referenceOrdinals []int
-	for _, ordinals := range ordinalsByAZ {
-		if referenceOrdinals == nil {
-			referenceOrdinals = ordinals
+	// Verify all AZs have the SAME shards (the key invariant)
+	var referenceShards []int
+	for _, shards := range shardsByAZ {
+		if referenceShards == nil {
+			referenceShards = shards
 		} else {
-			require.ElementsMatch(t, referenceOrdinals, ordinals,
-				"all AZs should have the same ordinals for aligned ordinal sharding")
+			require.ElementsMatch(t, referenceShards, shards,
+				"all AZs should have the same shards for aligned sharding")
 		}
 	}
 
-	t.Logf("Selected ordinals: %v", referenceOrdinals)
+	t.Logf("Selected shards: %v", referenceShards)
 }
 
 func TestAlignedOrdinalShardingConsistency(t *testing.T) {
 	t.Parallel()
 
-	// Create 3 AZs with 5 ordinals each
+	// Create 3 AZs with 5 shards each
 	endpoints := make([]Endpoint, 0, 15)
 	azs := []string{"az-a", "az-b", "az-c"}
 	for _, az := range azs {
@@ -1136,20 +1138,20 @@ func TestAlignedOrdinalShardingConsistency(t *testing.T) {
 	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-consistency")
 	require.NoError(t, err)
 
-	// Verify same tenant always gets same ordinals across multiple calls
+	// Verify same tenant always gets same shards across multiple calls
 	tenant := "consistent-tenant"
-	var firstOrdinals []int
+	var firstShards []int
 
 	for trial := 0; trial < 10; trial++ {
 		shard, err := shardRing.getTenantShardAligned(tenant)
 		require.NoError(t, err)
 
-		currentOrdinals := extractOrdinalsFromShard(t, shard)
-		if firstOrdinals == nil {
-			firstOrdinals = currentOrdinals
+		currentShards := extractShardsFromSubring(t, shard)
+		if firstShards == nil {
+			firstShards = currentShards
 		} else {
-			require.Equal(t, firstOrdinals, currentOrdinals,
-				"same tenant should always get same ordinals")
+			require.Equal(t, firstShards, currentShards,
+				"same tenant should always get same shards")
 		}
 	}
 }
@@ -1157,7 +1159,7 @@ func TestAlignedOrdinalShardingConsistency(t *testing.T) {
 func TestAlignedOrdinalShardingDifferentTenants(t *testing.T) {
 	t.Parallel()
 
-	// Create 3 AZs with 10 ordinals each to have enough spread
+	// Create 3 AZs with 10 shards each to have enough spread
 	endpoints := make([]Endpoint, 0, 30)
 	azs := []string{"az-a", "az-b", "az-c"}
 	for _, az := range azs {
@@ -1170,40 +1172,40 @@ func TestAlignedOrdinalShardingDifferentTenants(t *testing.T) {
 	require.NoError(t, err)
 
 	cfg := ShuffleShardingConfig{
-		ShardSize:              3, // Select 3 ordinals
+		ShardSize:              3, // Select 3 shards
 		AlignedOrdinalSharding: true,
 	}
 	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-diff-tenants")
 	require.NoError(t, err)
 
-	// Different tenants should (likely) get different ordinals
-	tenantOrdinals := make(map[string][]int)
+	// Different tenants should (likely) get different shards
+	tenantShards := make(map[string][]int)
 	numTenants := 20
 
 	for i := 0; i < numTenants; i++ {
 		tenant := fmt.Sprintf("tenant-%d", i)
 		shard, err := shardRing.getTenantShardAligned(tenant)
 		require.NoError(t, err)
-		tenantOrdinals[tenant] = extractOrdinalsFromShard(t, shard)
+		tenantShards[tenant] = extractShardsFromSubring(t, shard)
 	}
 
-	// Count unique ordinal sets
+	// Count unique shard sets
 	uniqueSets := make(map[string]int)
-	for _, ordinals := range tenantOrdinals {
-		key := fmt.Sprintf("%v", ordinals)
+	for _, shards := range tenantShards {
+		key := fmt.Sprintf("%v", shards)
 		uniqueSets[key]++
 	}
 
-	// With 10 ordinals choosing 3, there are C(10,3)=120 possible combinations
+	// With 10 shards choosing 3, there are C(10,3)=120 possible combinations
 	// We expect multiple unique sets across 20 tenants
-	t.Logf("Unique ordinal sets: %d out of %d tenants", len(uniqueSets), numTenants)
-	require.Greater(t, len(uniqueSets), 1, "different tenants should get different ordinal sets")
+	t.Logf("Unique shard sets: %d out of %d tenants", len(uniqueSets), numTenants)
+	require.Greater(t, len(uniqueSets), 1, "different tenants should get different shard sets")
 }
 
 func TestAlignedOrdinalShardingPreservesAlignment(t *testing.T) {
 	t.Parallel()
 
-	// Create 3 AZs with 5 ordinals each
+	// Create 3 AZs with 5 shards each
 	endpoints := make([]Endpoint, 0, 15)
 	azs := []string{"az-a", "az-b", "az-c"}
 	for _, az := range azs {
@@ -1224,7 +1226,7 @@ func TestAlignedOrdinalShardingPreservesAlignment(t *testing.T) {
 
 	tenant := "alignment-test-tenant"
 
-	// Use GetN to get replicas and verify they're aligned (same ordinal across AZs)
+	// Use GetN to get replicas and verify they're aligned (same shard across AZs)
 	for i := 0; i < 100; i++ {
 		ts := &prompb.TimeSeries{
 			Labels: []labelpb.ZLabel{
@@ -1240,29 +1242,29 @@ func TestAlignedOrdinalShardingPreservesAlignment(t *testing.T) {
 			replicas = append(replicas, ep)
 		}
 
-		// Verify all 3 replicas have the same ordinal but different AZs
-		ordinals := make(map[int]struct{})
+		// Verify all 3 replicas have the same shard but different AZs
+		shardsSeen := make(map[int]struct{})
 		azsSeen := make(map[string]struct{})
 		for _, ep := range replicas {
-			ordinals[extractOrdinalFromAddress(t, ep.Address)] = struct{}{}
+			shardsSeen[extractShardFromAddress(t, ep.Address)] = struct{}{}
 			azsSeen[ep.AZ] = struct{}{}
 		}
 
-		require.Len(t, ordinals, 1, "all replicas should have the same ordinal for series %d", i)
+		require.Len(t, shardsSeen, 1, "all replicas should have the same shard for series %d", i)
 		require.Len(t, azsSeen, 3, "replicas should span all 3 AZs for series %d", i)
 	}
 }
 
 // TestAlignedOrdinalShardingDataDistribution verifies the key behavior:
-// - With shard_size=2, tenant gets 2 ordinals (e.g., ordinals 1 and 4)
-// - Series are distributed across both ordinals
-// - a-1, b-1, c-1 always receive the same series (aligned replicas for ordinal 1)
-// - a-4, b-4, c-4 always receive the same series (aligned replicas for ordinal 4)
-// - Series assigned to ordinal 1 are different from series assigned to ordinal 4.
+// - With shard_size=2, tenant gets 2 shards (e.g., shards 1 and 4)
+// - Series are distributed across both shards
+// - a-1, b-1, c-1 always receive the same series (aligned replicas for shard 1)
+// - a-4, b-4, c-4 always receive the same series (aligned replicas for shard 4)
+// - Series assigned to shard 1 are different from series assigned to shard 4.
 func TestAlignedOrdinalShardingDataDistribution(t *testing.T) {
 	t.Parallel()
 
-	// Create 3 AZs with 5 ordinals each
+	// Create 3 AZs with 5 shards each
 	endpoints := make([]Endpoint, 0, 15)
 	azs := []string{"az-a", "az-b", "az-c"}
 	for _, az := range azs {
@@ -1275,7 +1277,7 @@ func TestAlignedOrdinalShardingDataDistribution(t *testing.T) {
 	require.NoError(t, err)
 
 	cfg := ShuffleShardingConfig{
-		ShardSize:              2, // Select 2 ordinals
+		ShardSize:              2, // Select 2 shards
 		AlignedOrdinalSharding: true,
 	}
 	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-distribution")
@@ -1283,18 +1285,18 @@ func TestAlignedOrdinalShardingDataDistribution(t *testing.T) {
 
 	tenant := "distribution-test-tenant"
 
-	// First, get the tenant's selected ordinals
+	// First, get the tenant's selected shards
 	shard, err := shardRing.getTenantShardAligned(tenant)
 	require.NoError(t, err)
-	selectedOrdinals := extractOrdinalsFromShard(t, shard)
-	require.Len(t, selectedOrdinals, 2, "tenant should have exactly 2 ordinals")
-	t.Logf("Tenant's selected ordinals: %v", selectedOrdinals)
+	selectedShards := extractShardsFromSubring(t, shard)
+	require.Len(t, selectedShards, 2, "tenant should have exactly 2 shards")
+	t.Logf("Tenant's selected shards: %v", selectedShards)
 
-	// Track which series go to which ordinal
-	// Key: ordinal, Value: set of series indices
-	seriesByOrdinal := make(map[int]map[int]struct{})
-	for _, ord := range selectedOrdinals {
-		seriesByOrdinal[ord] = make(map[int]struct{})
+	// Track which series go to which shard
+	// Key: shard, Value: set of series indices
+	seriesByShard := make(map[int]map[int]struct{})
+	for _, ord := range selectedShards {
+		seriesByShard[ord] = make(map[int]struct{})
 	}
 
 	// Track which endpoints receive which series
@@ -1325,66 +1327,66 @@ func TestAlignedOrdinalShardingDataDistribution(t *testing.T) {
 			seriesByEndpoint[ep.Address][i] = struct{}{}
 		}
 
-		// All replicas should have the same ordinal
-		ordinal := extractOrdinalFromAddress(t, replicas[0].Address)
+		// All replicas should have the same shard
+		primaryShard := extractShardFromAddress(t, replicas[0].Address)
 		for _, ep := range replicas[1:] {
-			epOrdinal := extractOrdinalFromAddress(t, ep.Address)
-			require.Equal(t, ordinal, epOrdinal, "all replicas for series %d should have same ordinal", i)
+			epShard := extractShardFromAddress(t, ep.Address)
+			require.Equal(t, primaryShard, epShard, "all replicas for series %d should have same shard", i)
 		}
 
-		// Track which ordinal this series went to
-		seriesByOrdinal[ordinal][i] = struct{}{}
+		// Track which shard this series went to
+		seriesByShard[primaryShard][i] = struct{}{}
 	}
 
-	// Verify 1: Series are distributed across BOTH ordinals (not just one)
-	for ord, series := range seriesByOrdinal {
-		t.Logf("Ordinal %d received %d series", ord, len(series))
-		require.Greater(t, len(series), 0, "ordinal %d should receive some series", ord)
+	// Verify 1: Series are distributed across BOTH shards (not just one)
+	for ord, series := range seriesByShard {
+		t.Logf("Shard %d received %d series", ord, len(series))
+		require.Greater(t, len(series), 0, "shard %d should receive some series", ord)
 	}
 
-	// Verify 2: Same ordinal across different AZs receives the SAME series
-	// Group endpoints by ordinal
-	endpointsByOrdinal := make(map[int][]string)
+	// Verify 2: Same shard across different AZs receives the SAME series
+	// Group endpoints by shard
+	endpointsByShard := make(map[int][]string)
 	for addr := range seriesByEndpoint {
-		ord := extractOrdinalFromAddress(t, addr)
-		endpointsByOrdinal[ord] = append(endpointsByOrdinal[ord], addr)
+		ord := extractShardFromAddress(t, addr)
+		endpointsByShard[ord] = append(endpointsByShard[ord], addr)
 	}
 
-	for ord, addrs := range endpointsByOrdinal {
+	for ord, addrs := range endpointsByShard {
 		if len(addrs) < 2 {
 			continue
 		}
-		// All endpoints with the same ordinal should have received the exact same series
+		// All endpoints with the same shard should have received the exact same series
 		referenceSeries := seriesByEndpoint[addrs[0]]
 		for _, addr := range addrs[1:] {
 			otherSeries := seriesByEndpoint[addr]
 			require.Equal(t, len(referenceSeries), len(otherSeries),
-				"endpoints with ordinal %d should have same number of series", ord)
+				"endpoints with shard %d should have same number of series", ord)
 			for seriesIdx := range referenceSeries {
 				_, ok := otherSeries[seriesIdx]
 				require.True(t, ok,
-					"series %d should be on all endpoints with ordinal %d", seriesIdx, ord)
+					"series %d should be on all endpoints with shard %d", seriesIdx, ord)
 			}
 		}
-		t.Logf("Verified: All %d endpoints with ordinal %d have identical %d series",
+		t.Logf("Verified: All %d endpoints with shard %d have identical %d series",
 			len(addrs), ord, len(referenceSeries))
 	}
 
-	// Verify 3: Different ordinals receive DIFFERENT series (no overlap)
-	ordinalList := make([]int, 0, len(seriesByOrdinal))
-	for ord := range seriesByOrdinal {
-		ordinalList = append(ordinalList, ord)
+	// Verify 3: Different shards receive DIFFERENT series (no overlap)
+	shardList := make([]int, 0, len(seriesByShard))
+	for ord := range seriesByShard {
+		shardList = append(shardList, ord)
 	}
-	if len(ordinalList) >= 2 {
-		series1 := seriesByOrdinal[ordinalList[0]]
-		series2 := seriesByOrdinal[ordinalList[1]]
+	if len(shardList) >= 2 {
+		series1 := seriesByShard[shardList[0]]
+		series2 := seriesByShard[shardList[1]]
 		for seriesIdx := range series1 {
 			_, overlap := series2[seriesIdx]
 			require.False(t, overlap,
-				"series %d should not be on both ordinal %d and ordinal %d",
-				seriesIdx, ordinalList[0], ordinalList[1])
+				"series %d should not be on both shard %d and shard %d",
+				seriesIdx, shardList[0], shardList[1])
 		}
-		t.Logf("Verified: Ordinals %d and %d have no overlapping series", ordinalList[0], ordinalList[1])
+		t.Logf("Verified: Shards %d and %d have no overlapping series", shardList[0], shardList[1])
 	}
 }
 
@@ -1402,9 +1404,9 @@ func TestAlignedOrdinalShardingValidation(t *testing.T) {
 	baseRing, err := newAlignedKetamaHashring(endpoints, SectionsPerNode, 3)
 	require.NoError(t, err)
 
-	// Test shard size exceeding available ordinals
+	// Test shard size exceeding available shards
 	cfg := ShuffleShardingConfig{
-		ShardSize:              10, // Only 5 ordinals available
+		ShardSize:              10, // Only 5 shards available
 		AlignedOrdinalSharding: true,
 	}
 	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-validation")
@@ -1412,11 +1414,11 @@ func TestAlignedOrdinalShardingValidation(t *testing.T) {
 
 	_, err = shardRing.getTenantShardAligned("test-tenant")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "exceeds available common ordinals")
+	require.Contains(t, err.Error(), "exceeds available common shards")
 }
 
-// Helper function to extract ordinal from K8s-style address.
-func extractOrdinalFromAddress(t *testing.T, address string) int {
+// Helper function to extract shard from K8s-style address.
+func extractShardFromAddress(t *testing.T, address string) int {
 	t.Helper()
 	// Address format: pod-az-N.svc.test.svc.cluster.local:10901
 	parts := strings.Split(address, ".")
@@ -1424,32 +1426,25 @@ func extractOrdinalFromAddress(t *testing.T, address string) int {
 	podPart := parts[0] // pod-az-N
 	lastDash := strings.LastIndex(podPart, "-")
 	require.Greater(t, lastDash, 0)
-	ordinalStr := podPart[lastDash+1:]
-	var ordinal int
-	_, err := fmt.Sscanf(ordinalStr, "%d", &ordinal)
+	shardStr := podPart[lastDash+1:]
+	var shard int
+	_, err := fmt.Sscanf(shardStr, "%d", &shard)
 	require.NoError(t, err)
-	return ordinal
+	return shard
 }
 
-// Helper function to extract unique ordinals from a shard.
-func extractOrdinalsFromShard(t *testing.T, shard Hashring) []int {
+// Helper function to extract unique shards from a subring.
+func extractShardsFromSubring(t *testing.T, subring Hashring) []int {
 	t.Helper()
-	nodes := shard.Nodes()
-	ordinalSet := make(map[int]struct{})
+	nodes := subring.Nodes()
+	shardSet := make(map[int]struct{})
 	for _, node := range nodes {
-		ordinalSet[extractOrdinalFromAddress(t, node.Address)] = struct{}{}
+		shardSet[extractShardFromAddress(t, node.Address)] = struct{}{}
 	}
-	ordinals := make([]int, 0, len(ordinalSet))
-	for ord := range ordinalSet {
-		ordinals = append(ordinals, ord)
+	shards := make([]int, 0, len(shardSet))
+	for s := range shardSet {
+		shards = append(shards, s)
 	}
-	// Sort for consistent comparison
-	for i := 0; i < len(ordinals); i++ {
-		for j := i + 1; j < len(ordinals); j++ {
-			if ordinals[i] > ordinals[j] {
-				ordinals[i], ordinals[j] = ordinals[j], ordinals[i]
-			}
-		}
-	}
-	return ordinals
+	sort.Ints(shards)
+	return shards
 }
