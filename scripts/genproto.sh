@@ -110,7 +110,7 @@ for dir in ${VT_DIRS}; do
 done
 
 # This is a requirement to get the most performance out of string interning.
-# If we use the stdlib unique package, string interning tends to deadlock 
+# If we use the stdlib unique package, string interning tends to deadlock
 # and increase latency considerably.
 echo "replacing stdlib unique with pkg/unique in vtproto generated code"
 for dir in ${VT_DIRS}; do

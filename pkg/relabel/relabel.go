@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
 	"github.com/thanos-io/thanos/pkg/unique"
 
 	"github.com/prometheus/common/model"

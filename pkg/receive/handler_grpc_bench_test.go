@@ -72,13 +72,13 @@ func setupBenchCluster(b *testing.B, numNodes int, rf uint64) *benchCluster {
 	for i := 0; i < numNodes; i++ {
 		appendable := &fakeAppendable{appender: newFakeAppender(nil, nil, nil)}
 		handlers[i] = NewHandler(logger, &Options{
-			TenantHeader:      tenancy.DefaultTenantHeader,
-			DefaultTenantID:   "bench-grpc",
-			ReplicaHeader:     DefaultReplicaHeader,
-			ReplicationFactor: rf,
-			ForwardTimeout:    5 * time.Minute,
-			Writer:            NewWriter(log.NewNopLogger(), newFakeTenantAppendable(appendable), &WriterOptions{}),
-			Limiter:           limiter,
+			TenantHeader:        tenancy.DefaultTenantHeader,
+			DefaultTenantID:     "bench-grpc",
+			ReplicaHeader:       DefaultReplicaHeader,
+			ReplicationFactor:   rf,
+			ForwardTimeout:      5 * time.Minute,
+			Writer:              NewWriter(log.NewNopLogger(), newFakeTenantAppendable(appendable), &WriterOptions{}),
+			Limiter:             limiter,
 			Endpoint:            addresses[i],
 			ReplicationProtocol: ProtobufReplication,
 			DialOpts: []grpc.DialOption{
@@ -176,7 +176,7 @@ func BenchmarkHandlerRemoteWriteGRPC(b *testing.B) {
 func buildWriteRequest(b *testing.B, numSeries, samplesPerSeries, labelsPerSeries int) *storepb.WriteRequest {
 	b.Helper()
 	wreq := &storepb.WriteRequest{
-		Tenant: "bench-grpc",
+		Tenant:     "bench-grpc",
 		Timeseries: make([]*prompb.TimeSeries, numSeries),
 	}
 	for s := 0; s < numSeries; s++ {

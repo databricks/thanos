@@ -58,8 +58,8 @@ import (
 	"github.com/thanos-io/thanos/pkg/store/storepb"
 	"github.com/thanos-io/thanos/pkg/store/storepb/prompb"
 	"github.com/thanos-io/thanos/pkg/tenancy"
-	"github.com/thanos-io/thanos/pkg/vtproto"
 	thanostestutil "github.com/thanos-io/thanos/pkg/testutil"
+	"github.com/thanos-io/thanos/pkg/vtproto"
 )
 
 const dnsScheme = "dns"

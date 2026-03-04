@@ -12,10 +12,10 @@ import (
 )
 
 const (
-	contextPackage  = protogen.GoImportPath("context")
-	grpcPackage     = protogen.GoImportPath("google.golang.org/grpc")
-	syncPackage     = protogen.GoImportPath("sync")
-	vtprotoPackage  = protogen.GoImportPath("github.com/thanos-io/thanos/pkg/vtproto")
+	contextPackage = protogen.GoImportPath("context")
+	grpcPackage    = protogen.GoImportPath("google.golang.org/grpc")
+	syncPackage    = protogen.GoImportPath("sync")
+	vtprotoPackage = protogen.GoImportPath("github.com/thanos-io/thanos/pkg/vtproto")
 )
 
 // hasMempool reports whether the message has option (vtproto.mempool) = true.
@@ -325,4 +325,3 @@ func fromVTPoolIdent(msgIdent protogen.GoIdent) protogen.GoIdent {
 		GoImportPath: msgIdent.GoImportPath,
 	}
 }
-
