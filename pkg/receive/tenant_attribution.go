@@ -15,7 +15,7 @@ import (
 	"github.com/go-kit/log/level"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
-	"github.com/prometheus/prometheus/model/labels"
+	"github.com/thanos-io/thanos/pkg/store/labelpb"
 	"gopkg.in/yaml.v2"
 )
 
@@ -132,7 +132,7 @@ func NewTenantAttributorFromContent(
 
 // GetTenantFromLabels returns the tenant for the given labels based on rules.
 // First matching rule wins. Returns defaultTenant if no rule matches.
-func (ta *TenantAttributor) GetTenantFromLabels(lbls labels.Labels) string {
+func (ta *TenantAttributor) GetTenantFromLabels(lbls labelpb.Labels) string {
 	for _, rule := range ta.rules {
 		if rule.Filter.MatchLabels(lbls) {
 			return rule.Tenant
@@ -308,7 +308,7 @@ type Filter interface {
 // TagsFilter matches labels against certain conditions.
 type TagsFilter interface {
 	fmt.Stringer
-	MatchLabels(lbls labels.Labels) bool
+	MatchLabels(lbls labelpb.Labels) bool
 }
 
 // TagsFilterOptions provide a set of tag filter options.
@@ -389,11 +389,11 @@ func (f *tagsFilter) String() string {
 }
 
 // MatchLabels checks if the labels match the filter.
-func (f *tagsFilter) MatchLabels(lbls labels.Labels) bool {
+func (f *tagsFilter) MatchLabels(lbls labelpb.Labels) bool {
 	return f.matchLabelsSimple(lbls)
 }
 
-func (f *tagsFilter) matchLabelsSimple(lbls labels.Labels) bool {
+func (f *tagsFilter) matchLabelsSimple(lbls labelpb.Labels) bool {
 	if len(f.tagFilters) == 0 {
 		return true
 	}

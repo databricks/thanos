@@ -18,6 +18,7 @@ import (
 	"github.com/thanos-io/thanos/pkg/component"
 	"github.com/thanos-io/thanos/pkg/store"
 	storecache "github.com/thanos-io/thanos/pkg/store/cache"
+	"github.com/thanos-io/thanos/pkg/store/labelpb"
 	"github.com/thanos-io/thanos/pkg/store/storepb"
 	storetestutil "github.com/thanos-io/thanos/pkg/store/storepb/testutil"
 	"github.com/thanos-io/thanos/pkg/testutil/custom"
@@ -66,7 +67,7 @@ func TestQuerier_Proxy(t *testing.T) {
 			logger,
 			nil,
 			store.NewProxyStore(logger, nil, func() []store.Client { return sc.get() },
-				component.Debug, nil, 5*time.Minute, store.EagerRetrieval, store.WithMatcherCache(cache)),
+				component.Debug, labelpb.EmptyLabels(), 5*time.Minute, store.EagerRetrieval, store.WithMatcherCache(cache)),
 			1000000,
 			5*time.Minute,
 		)
@@ -108,14 +109,14 @@ func TestQuerier_Proxy(t *testing.T) {
 
 // selectStore allows wrapping another storeEndpoints with additional time and matcher selection.
 type selectStore struct {
-	matchers []storepb.LabelMatcher
+	matchers []*storepb.LabelMatcher
 
 	storepb.StoreServer
 	mint, maxt int64
 }
 
 // selectedStore wraps given store with selectStore.
-func selectedStore(wrapped storepb.StoreServer, matchers []storepb.LabelMatcher, mint, maxt int64) *selectStore {
+func selectedStore(wrapped storepb.StoreServer, matchers []*storepb.LabelMatcher, mint, maxt int64) *selectStore {
 	return &selectStore{
 		StoreServer: wrapped,
 		matchers:    matchers,
@@ -132,7 +133,7 @@ func (s *selectStore) Series(r *storepb.SeriesRequest, srv storepb.Store_SeriesS
 		r.MaxTime = s.maxt
 	}
 
-	matchers := make([]storepb.LabelMatcher, 0, len(r.Matchers))
+	matchers := make([]*storepb.LabelMatcher, 0, len(r.Matchers))
 	matchers = append(matchers, r.Matchers...)
 
 	req := *r

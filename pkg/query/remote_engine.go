@@ -58,7 +58,7 @@ func NewClient(queryClient querypb.QueryClient, address string, tsdbInfos infopb
 
 func (c Client) GetAddress() string { return c.address }
 
-func (c Client) LabelSets() []labels.Labels {
+func (c Client) LabelSets() []labelpb.Labels {
 	return c.tsdbInfos.LabelSets()
 }
 
@@ -119,15 +119,15 @@ func (r *remoteEngine) MinT() int64 {
 			hashBuf               = make([]byte, 0, 128)
 			highestMintByLabelSet = make(map[uint64]int64)
 		)
-		for _, lset := range r.adjustedInfos() {
-			key, _ := labelpb.ZLabelsToPromLabels(lset.Labels.Labels).HashWithoutLabels(hashBuf)
+		for _, info := range r.adjustedInfos() {
+			key, _ := labelpb.HashWithoutLabels(info.GetLabels().GetLabels(), hashBuf)
 			lsetMinT, ok := highestMintByLabelSet[key]
 			if !ok {
-				highestMintByLabelSet[key] = lset.MinTime
+				highestMintByLabelSet[key] = info.MinTime
 				continue
 			}
-			if lset.MinTime > lsetMinT {
-				highestMintByLabelSet[key] = lset.MinTime
+			if info.MinTime > lsetMinT {
+				highestMintByLabelSet[key] = info.MinTime
 			}
 		}
 		var mint int64 = math.MaxInt64
@@ -151,7 +151,11 @@ func (r *remoteEngine) MaxT() int64 {
 
 func (r *remoteEngine) LabelSets() []labels.Labels {
 	r.labelSetsOnce.Do(func() {
-		r.labelSets = r.adjustedInfos().LabelSets()
+		pbLabelSets := r.adjustedInfos().LabelSets()
+		r.labelSets = make([]labels.Labels, len(pbLabelSets))
+		for i, ls := range pbLabelSets {
+			r.labelSets[i] = labelpb.ToPromLabels(ls)
+		}
 	})
 	return r.labelSets
 }
@@ -170,22 +174,21 @@ func (r *remoteEngine) adjustedInfos() infopb.TSDBInfos {
 
 	// Strip replica labels from the result.
 	infos := make(infopb.TSDBInfos, 0, len(r.client.tsdbInfos))
-	var builder labels.ScratchBuilder
 	for _, info := range r.client.tsdbInfos {
-		builder.Reset()
-		for _, lbl := range info.Labels.Labels {
+		filtered := make(labelpb.Labels, 0, len(info.GetLabels().GetLabels()))
+		for _, lbl := range info.GetLabels().GetLabels() {
 			if _, ok := replicaLabelSet[lbl.Name]; ok {
 				continue
 			}
 			if _, ok := partitionLabelsSet[lbl.Name]; !ok && len(partitionLabelsSet) > 0 {
 				continue
 			}
-			builder.Add(lbl.Name, lbl.Value)
+			filtered = append(filtered, &labelpb.Label{Name: lbl.Name, Value: lbl.Value})
 		}
 		infos = append(infos, infopb.NewTSDBInfo(
 			info.MinTime,
 			info.MaxTime,
-			labelpb.ZLabelsFromPromLabels(builder.Labels())),
+			filtered),
 		)
 	}
 	return infos

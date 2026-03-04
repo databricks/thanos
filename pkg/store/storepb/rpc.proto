@@ -5,22 +5,13 @@ syntax = "proto3";
 package thanos;
 
 import "store/storepb/types.proto";
-import "gogoproto/gogo.proto";
 import "store/storepb/prompb/types.proto";
 import "google/protobuf/any.proto";
+import "tagger/tagger.proto";
+import "github.com/planetscale/vtprotobuf/vtproto/ext.proto";
+import "vtpool.proto";
 
-option go_package = "storepb";
-
-option (gogoproto.sizer_all) = true;
-option (gogoproto.marshaler_all) = true;
-option (gogoproto.unmarshaler_all) = true;
-option (gogoproto.goproto_getters_all) = false;
-
-// Do not generate XXX fields to reduce memory footprint and opening a door
-// for zero-copy casts to/from prometheus data types.
-option (gogoproto.goproto_unkeyed_all) = false;
-option (gogoproto.goproto_unrecognized_all) = false;
-option (gogoproto.goproto_sizecache_all) = false;
+option go_package = "github.com/thanos-io/thanos/pkg/store/storepb";
 
 /// Store represents API against instance that stores XOR encoded values with label set metadata (e.g Prometheus metrics).
 service Store {
@@ -55,7 +46,9 @@ message WriteResponse {
 }
 
 message WriteRequest {
-  repeated prometheus_copy.TimeSeries timeseries = 1 [(gogoproto.nullable) = false];
+  option (vtproto.mempool) = true;
+  option (vtpool.pool_return) = POOL_RETURN_REFCOUNT;
+  repeated prometheus_copy.TimeSeries timeseries = 1 [(tagger.tags) = "json:\"timeseries\""];
   string tenant = 2;
   int64 replica = 3;
 }
@@ -63,7 +56,7 @@ message WriteRequest {
 message SeriesRequest {
   int64 min_time = 1;
   int64 max_time = 2;
-  repeated LabelMatcher matchers = 3 [(gogoproto.nullable) = false];
+  repeated LabelMatcher matchers = 3 [(tagger.tags) = "json:\"matchers\""];
 
   int64 max_resolution_window = 4;
   repeated Aggr aggregates = 5;
@@ -205,13 +198,13 @@ message LabelNamesRequest {
   // implementation of a specific store.
   google.protobuf.Any hints = 5;
 
-  repeated LabelMatcher matchers = 6 [(gogoproto.nullable) = false];
+  repeated LabelMatcher matchers = 6 [(tagger.tags) = "json:\"matchers\""];
 
   // same as in series request.
   repeated string without_replica_labels = 7;
 
-    // limit is used to limit the number of results returned
-    int64 limit = 8;
+  // limit is used to limit the number of results returned
+  int64 limit = 8;
 }
 
 message LabelNamesResponse {
@@ -241,13 +234,13 @@ message LabelValuesRequest {
   // implementation of a specific store.
   google.protobuf.Any hints = 6;
 
-  repeated LabelMatcher matchers = 7 [(gogoproto.nullable) = false];
+  repeated LabelMatcher matchers = 7 [(tagger.tags) = "json:\"matchers\""];
 
   // same as in series request.
   repeated string without_replica_labels = 8;
 
-    // limit is used to limit the number of results returned
-    int64 limit = 9;
+  // limit is used to limit the number of results returned
+  int64 limit = 9;
 }
 
 message LabelValuesResponse {

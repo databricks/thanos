@@ -39,6 +39,7 @@ import (
 	"github.com/thanos-io/thanos/pkg/metadata/metadatapb"
 	"github.com/thanos-io/thanos/pkg/rules/rulespb"
 	"github.com/thanos-io/thanos/pkg/runutil"
+	"github.com/thanos-io/thanos/pkg/store/labelpb"
 	"github.com/thanos-io/thanos/pkg/store/storepb"
 	"github.com/thanos-io/thanos/pkg/targets/targetspb"
 	"github.com/thanos-io/thanos/pkg/tracing"
@@ -180,7 +181,7 @@ func IsDirAccessible(dir string) error {
 
 // ExternalLabels returns sorted external labels from /api/v1/status/config Prometheus endpoint.
 // Note that configuration can be hot reloadable on Prometheus, so this config might change in runtime.
-func (c *Client) ExternalLabels(ctx context.Context, base *url.URL) (labels.Labels, error) {
+func (c *Client) ExternalLabels(ctx context.Context, base *url.URL) (labelpb.Labels, error) {
 	u := *base
 	u.Path = path.Join(u.Path, "/api/v1/status/config")
 
@@ -189,7 +190,7 @@ func (c *Client) ExternalLabels(ctx context.Context, base *url.URL) (labels.Labe
 
 	body, _, err := c.req2xx(ctx, &u, http.MethodGet, nil)
 	if err != nil {
-		return labels.EmptyLabels(), err
+		return nil, err
 	}
 	var d struct {
 		Data struct {
@@ -197,7 +198,7 @@ func (c *Client) ExternalLabels(ctx context.Context, base *url.URL) (labels.Labe
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &d); err != nil {
-		return labels.EmptyLabels(), errors.Wrapf(err, "unmarshal response: %v", string(body))
+		return nil, errors.Wrapf(err, "unmarshal response: %v", string(body))
 	}
 	var cfg struct {
 		GlobalConfig struct {
@@ -205,10 +206,10 @@ func (c *Client) ExternalLabels(ctx context.Context, base *url.URL) (labels.Labe
 		} `yaml:"global"`
 	}
 	if err := yaml.Unmarshal([]byte(d.Data.YAML), &cfg); err != nil {
-		return labels.EmptyLabels(), errors.Wrapf(err, "parse Prometheus config: %v", d.Data.YAML)
+		return nil, errors.Wrapf(err, "parse Prometheus config: %v", d.Data.YAML)
 	}
 
-	return labels.FromMap(cfg.GlobalConfig.ExternalLabels), nil
+	return labelpb.FromMap(cfg.GlobalConfig.ExternalLabels), nil
 }
 
 type Flags struct {
@@ -890,7 +891,7 @@ func (c *Client) AlertsInGRPC(ctx context.Context, base *url.URL) ([]*rulespb.Al
 }
 
 // MetricMetadataInGRPC returns the metadata from Prometheus metric metadata API. It uses gRPC errors.
-func (c *Client) MetricMetadataInGRPC(ctx context.Context, base *url.URL, metric string, limit int) (map[string][]metadatapb.Meta, error) {
+func (c *Client) MetricMetadataInGRPC(ctx context.Context, base *url.URL, metric string, limit int) (map[string][]*metadatapb.Meta, error) {
 	u := *base
 	u.Path = path.Join(u.Path, "/api/v1/metadata")
 	q := u.Query()
@@ -906,7 +907,7 @@ func (c *Client) MetricMetadataInGRPC(ctx context.Context, base *url.URL, metric
 	u.RawQuery = q.Encode()
 
 	var v struct {
-		Data map[string][]metadatapb.Meta `json:"data"`
+		Data map[string][]*metadatapb.Meta `json:"data"`
 	}
 	return v.Data, c.get2xxResultWithGRPCErrors(ctx, "/prom_metric_metadata HTTP[client]", &u, &v)
 }

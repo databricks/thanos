@@ -6,9 +6,9 @@ package exemplars
 import (
 	"testing"
 
-	"github.com/efficientgo/core/testutil"
 	"github.com/thanos-io/thanos/pkg/exemplars/exemplarspb"
 	"github.com/thanos-io/thanos/pkg/store/labelpb"
+	thanostestutil "github.com/thanos-io/thanos/pkg/testutil"
 	"github.com/thanos-io/thanos/pkg/testutil/custom"
 )
 
@@ -36,12 +36,12 @@ func TestDedupExemplarsResponse(t *testing.T) {
 			name: "empty exemplars data",
 			exemplars: []*exemplarspb.ExemplarData{
 				{
-					SeriesLabels: labelpb.ZLabelSet{Labels: []labelpb.ZLabel{
-						{Name: "__name__", Value: "test_exemplar_metric_total"},
-						{Name: "instance", Value: "localhost:8090"},
-						{Name: "job", Value: "prometheus"},
-						{Name: "service", Value: "bar"},
-					}},
+					SeriesLabels: labelpb.LabelSetFromStrings(
+						"__name__", "test_exemplar_metric_total",
+						"instance", "localhost:8090",
+						"job", "prometheus",
+						"service", "bar",
+					),
 				},
 			},
 			want: []*exemplarspb.ExemplarData{},
@@ -51,64 +51,56 @@ func TestDedupExemplarsResponse(t *testing.T) {
 			replicaLabels: []string{"replica"},
 			exemplars: []*exemplarspb.ExemplarData{
 				{
-					SeriesLabels: labelpb.ZLabelSet{Labels: []labelpb.ZLabel{
-						{Name: "__name__", Value: "test_exemplar_metric_total"},
-						{Name: "instance", Value: "localhost:8090"},
-						{Name: "job", Value: "prometheus"},
-						{Name: "service", Value: "bar"},
-						{Name: "replica", Value: "0"},
-					}},
+					SeriesLabels: labelpb.LabelSetFromStrings(
+						"__name__", "test_exemplar_metric_total",
+						"instance", "localhost:8090",
+						"job", "prometheus",
+						"service", "bar",
+						"replica", "0",
+					),
 					Exemplars: []*exemplarspb.Exemplar{
 						{
-							Labels: labelpb.ZLabelSet{Labels: []labelpb.ZLabel{
-								{Name: "traceID", Value: "EpTxMJ40fUus7aGY"},
-							}},
-							Value: 19,
-							Ts:    1600096955479,
+							Labels: labelpb.LabelSetFromStrings("traceID", "EpTxMJ40fUus7aGY"),
+							Value:  19,
+							Ts:     1600096955479,
 						},
 						{
-							Labels: labelpb.ZLabelSet{Labels: []labelpb.ZLabel{
-								{Name: "traceID", Value: "EpTxMJ40fUus7aGY"},
-							}},
-							Value: 19,
-							Ts:    1600096955479,
+							Labels: labelpb.LabelSetFromStrings("traceID", "EpTxMJ40fUus7aGY"),
+							Value:  19,
+							Ts:     1600096955479,
 						},
 					},
 				},
 				{
-					SeriesLabels: labelpb.ZLabelSet{Labels: []labelpb.ZLabel{
-						{Name: "__name__", Value: "test_exemplar_metric_total"},
-						{Name: "instance", Value: "localhost:8090"},
-						{Name: "job", Value: "prometheus"},
-						{Name: "service", Value: "bar"},
-						{Name: "replica", Value: "1"},
-					}},
+					SeriesLabels: labelpb.LabelSetFromStrings(
+						"__name__", "test_exemplar_metric_total",
+						"instance", "localhost:8090",
+						"job", "prometheus",
+						"service", "bar",
+						"replica", "1",
+					),
 					Exemplars: []*exemplarspb.Exemplar{
 						{
-							Labels: labelpb.ZLabelSet{Labels: []labelpb.ZLabel{
-								{Name: "traceID", Value: "EpTxMJ40fUus7aGY"},
-							}},
-							Value: 19,
-							Ts:    1600096955479,
+							Labels: labelpb.LabelSetFromStrings("traceID", "EpTxMJ40fUus7aGY"),
+							Value:  19,
+							Ts:     1600096955479,
 						},
 					},
 				},
 			},
 			want: []*exemplarspb.ExemplarData{
 				{
-					SeriesLabels: labelpb.ZLabelSet{Labels: []labelpb.ZLabel{
-						{Name: "__name__", Value: "test_exemplar_metric_total"},
-						{Name: "instance", Value: "localhost:8090"},
-						{Name: "job", Value: "prometheus"},
-						{Name: "service", Value: "bar"},
-					}},
+					SeriesLabels: labelpb.LabelSetFromStrings(
+						"__name__", "test_exemplar_metric_total",
+						"instance", "localhost:8090",
+						"job", "prometheus",
+						"service", "bar",
+					),
 					Exemplars: []*exemplarspb.Exemplar{
 						{
-							Labels: labelpb.ZLabelSet{Labels: []labelpb.ZLabel{
-								{Name: "traceID", Value: "EpTxMJ40fUus7aGY"},
-							}},
-							Value: 19,
-							Ts:    1600096955479,
+							Labels: labelpb.LabelSetFromStrings("traceID", "EpTxMJ40fUus7aGY"),
+							Value:  19,
+							Ts:     1600096955479,
 						},
 					},
 				},
@@ -119,100 +111,82 @@ func TestDedupExemplarsResponse(t *testing.T) {
 			replicaLabels: []string{"replica"},
 			exemplars: []*exemplarspb.ExemplarData{
 				{
-					SeriesLabels: labelpb.ZLabelSet{Labels: []labelpb.ZLabel{
-						{Name: "__name__", Value: "test_exemplar_metric_total"},
-						{Name: "instance", Value: "localhost:8090"},
-						{Name: "job", Value: "prometheus"},
-						{Name: "service", Value: "bar"},
-						{Name: "replica", Value: "0"},
-					}},
+					SeriesLabels: labelpb.LabelSetFromStrings(
+						"__name__", "test_exemplar_metric_total",
+						"instance", "localhost:8090",
+						"job", "prometheus",
+						"service", "bar",
+						"replica", "0",
+					),
 					Exemplars: []*exemplarspb.Exemplar{
 						{
-							Labels: labelpb.ZLabelSet{Labels: []labelpb.ZLabel{
-								{Name: "traceID", Value: "EpTxMJ40fUus7aGY"},
-							}},
-							Value: 19,
-							Ts:    1600096955479,
+							Labels: labelpb.LabelSetFromStrings("traceID", "EpTxMJ40fUus7aGY"),
+							Value:  19,
+							Ts:     1600096955479,
 						},
 						{
-							Labels: labelpb.ZLabelSet{Labels: []labelpb.ZLabel{
-								{Name: "traceID", Value: "foo"},
-							}},
-							Value: 19,
-							Ts:    1600096955470,
+							Labels: labelpb.LabelSetFromStrings("traceID", "foo"),
+							Value:  19,
+							Ts:     1600096955470,
 						},
 					},
 				},
 				{
-					SeriesLabels: labelpb.ZLabelSet{Labels: []labelpb.ZLabel{
-						{Name: "__name__", Value: "test_exemplar_metric_total"},
-						{Name: "instance", Value: "localhost:8090"},
-						{Name: "job", Value: "prometheus"},
-						{Name: "service", Value: "bar"},
-						{Name: "replica", Value: "1"},
-					}},
+					SeriesLabels: labelpb.LabelSetFromStrings(
+						"__name__", "test_exemplar_metric_total",
+						"instance", "localhost:8090",
+						"job", "prometheus",
+						"service", "bar",
+						"replica", "1",
+					),
 					Exemplars: []*exemplarspb.Exemplar{
 						{
-							Labels: labelpb.ZLabelSet{Labels: []labelpb.ZLabel{
-								{Name: "traceID", Value: "bar"},
-							}},
-							Value: 19,
-							Ts:    1600096955579,
+							Labels: labelpb.LabelSetFromStrings("traceID", "bar"),
+							Value:  19,
+							Ts:     1600096955579,
 						},
 						{
-							Labels: labelpb.ZLabelSet{Labels: []labelpb.ZLabel{
-								{Name: "traceID", Value: "EpTxMJ40fUus7aGY"},
-							}},
-							Value: 19,
-							Ts:    1600096955479,
+							Labels: labelpb.LabelSetFromStrings("traceID", "EpTxMJ40fUus7aGY"),
+							Value:  19,
+							Ts:     1600096955479,
 						},
 						// Same ts but different labels, cannot dedup.
 						{
-							Labels: labelpb.ZLabelSet{Labels: []labelpb.ZLabel{
-								{Name: "traceID", Value: "test"},
-							}},
-							Value: 19,
-							Ts:    1600096955479,
+							Labels: labelpb.LabelSetFromStrings("traceID", "test"),
+							Value:  19,
+							Ts:     1600096955479,
 						},
 					},
 				},
 			},
 			want: []*exemplarspb.ExemplarData{
 				{
-					SeriesLabels: labelpb.ZLabelSet{Labels: []labelpb.ZLabel{
-						{Name: "__name__", Value: "test_exemplar_metric_total"},
-						{Name: "instance", Value: "localhost:8090"},
-						{Name: "job", Value: "prometheus"},
-						{Name: "service", Value: "bar"},
-					}},
+					SeriesLabels: labelpb.LabelSetFromStrings(
+						"__name__", "test_exemplar_metric_total",
+						"instance", "localhost:8090",
+						"job", "prometheus",
+						"service", "bar",
+					),
 					Exemplars: []*exemplarspb.Exemplar{
 						{
-							Labels: labelpb.ZLabelSet{Labels: []labelpb.ZLabel{
-								{Name: "traceID", Value: "foo"},
-							}},
-							Value: 19,
-							Ts:    1600096955470,
+							Labels: labelpb.LabelSetFromStrings("traceID", "foo"),
+							Value:  19,
+							Ts:     1600096955470,
 						},
 						{
-							Labels: labelpb.ZLabelSet{Labels: []labelpb.ZLabel{
-								{Name: "traceID", Value: "EpTxMJ40fUus7aGY"},
-							}},
-							Value: 19,
-							Ts:    1600096955479,
+							Labels: labelpb.LabelSetFromStrings("traceID", "EpTxMJ40fUus7aGY"),
+							Value:  19,
+							Ts:     1600096955479,
 						},
 						{
-							Labels: labelpb.ZLabelSet{Labels: []labelpb.ZLabel{
-								{Name: "traceID", Value: "test"},
-							}},
-							Value: 19,
-							Ts:    1600096955479,
+							Labels: labelpb.LabelSetFromStrings("traceID", "test"),
+							Value:  19,
+							Ts:     1600096955479,
 						},
 						{
-							Labels: labelpb.ZLabelSet{Labels: []labelpb.ZLabel{
-								{Name: "traceID", Value: "bar"},
-							}},
-							Value: 19,
-							Ts:    1600096955579,
+							Labels: labelpb.LabelSetFromStrings("traceID", "bar"),
+							Value:  19,
+							Ts:     1600096955579,
 						},
 					},
 				},
@@ -224,7 +198,7 @@ func TestDedupExemplarsResponse(t *testing.T) {
 			for _, lbl := range tc.replicaLabels {
 				replicaLabels[lbl] = struct{}{}
 			}
-			testutil.Equals(t, tc.want, dedupExemplarsResponse(tc.exemplars, replicaLabels))
+			thanostestutil.ProtoEquals(t, tc.want, dedupExemplarsResponse(tc.exemplars, replicaLabels))
 		})
 	}
 }

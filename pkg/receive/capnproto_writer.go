@@ -78,7 +78,7 @@ func (r *CapNProtoWriter) Write(ctx context.Context, tenantID string, wreq *writ
 		// Check if time series labels are valid. If not, skip the time series
 		// and report the error.
 		if err := validateLabels(series.Labels); err != nil {
-			lset := &labelpb.ZLabelSet{Labels: labelpb.ZLabelsFromPromLabels(series.Labels)}
+			lset := &labelpb.LabelSet{Labels: labelpb.FromPromLabels(series.Labels)}
 			errorTracker.addLabelsError(err, lset, tLogger)
 			continue
 		}

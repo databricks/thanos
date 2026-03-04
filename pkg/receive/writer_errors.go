@@ -4,11 +4,12 @@
 package receive
 
 import (
+	"fmt"
+
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/model/exemplar"
-	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/storage"
 	"github.com/thanos-io/thanos/pkg/store/labelpb"
 )
@@ -28,7 +29,7 @@ type writeErrorTracker struct {
 	numExemplarsLabelLength int
 }
 
-func (a *writeErrorTracker) addLabelsError(err error, lset *labelpb.ZLabelSet, logger log.Logger) {
+func (a *writeErrorTracker) addLabelsError(err error, lset *labelpb.LabelSet, logger log.Logger) {
 	if err == nil {
 		return
 	}
@@ -48,7 +49,7 @@ func (a *writeErrorTracker) addLabelsError(err error, lset *labelpb.ZLabelSet, l
 	}
 }
 
-func (a *writeErrorTracker) addSampleError(err error, tLogger log.Logger, lset labels.Labels, t int64, v float64) {
+func (a *writeErrorTracker) addSampleError(err error, tLogger log.Logger, lset fmt.Stringer, t int64, v float64) {
 	if err == nil {
 		return
 	}
@@ -72,7 +73,7 @@ func (a *writeErrorTracker) addSampleError(err error, tLogger log.Logger, lset l
 	}
 }
 
-func (a *writeErrorTracker) addHistogramError(err error, tLogger log.Logger, lset labels.Labels, timestamp int64) {
+func (a *writeErrorTracker) addHistogramError(err error, tLogger log.Logger, lset fmt.Stringer, timestamp int64) {
 	if err == nil {
 		return
 	}

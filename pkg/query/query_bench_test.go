@@ -67,12 +67,12 @@ func benchQuerySelect(t testutil.TB, totalSamples, totalSeries int, dedup bool) 
 			SamplesPerSeries: samplesPerSeriesPerReplica,
 			Series:           seriesPerReplica,
 			Random:           random,
-			PrependLabels:    labels.FromStrings("a_replica", fmt.Sprintf("%d", j)), // a_ prefix so we keep sorted order.
+			PrependLabels:    labelpb.FromStrings("a_replica", fmt.Sprintf("%d", j)), // a_ prefix so we keep sorted order.
 		})
 		testutil.Ok(t, head.Close())
 		for i := 0; i < len(created); i++ {
 			if !dedup || j == 0 {
-				lset := labelpb.ZLabelsToPromLabels(created[i].Labels).Copy()
+				lset := labelpb.ToPromLabels(created[i].Labels).Copy()
 				if dedup {
 					lset = lset[1:]
 				}

@@ -1,0 +1,28 @@
+syntax = "proto2";
+package vtpool;
+
+import "google/protobuf/descriptor.proto";
+
+option go_package = "github.com/thanos-io/thanos/pkg/vtproto/gen/vtpoolext";
+
+// Pool return strategy for gRPC handler code generation.
+enum PoolReturnMode {
+  // Unset / not specified. The plugin will not generate a pool-aware handler.
+  POOL_RETURN_UNSPECIFIED = 0;
+  // Generate defer in.ReturnToVTPool() immediately after acquisition.
+  POOL_RETURN_DEFER = 1;
+  // No return generated; the RPC handler takes ownership of the pooled object.
+  POOL_RETURN_CALLER = 2;
+  // Reference-counted return. The handler creates a sync.WaitGroup, injects it
+  // into the context via vtproto.WithReturnWG, and defers wg.Done(). A background
+  // goroutine waits on the WG and returns the object to the pool only when all
+  // references are released. Use when the RPC handler fans work out to async
+  // goroutines that outlive the handler call.
+  POOL_RETURN_REFCOUNT = 3;
+}
+
+extend google.protobuf.MessageOptions {
+  // Controls how the generated gRPC handler returns this message to the VT pool.
+  // Only meaningful on messages that also have option (vtproto.mempool) = true.
+  optional PoolReturnMode pool_return = 64201;
+}

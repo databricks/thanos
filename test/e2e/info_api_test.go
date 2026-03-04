@@ -14,9 +14,8 @@ import (
 	"time"
 
 	"github.com/efficientgo/e2e"
-	"github.com/prometheus/prometheus/model/labels"
-
 	"github.com/thanos-io/objstore/client"
+	"github.com/thanos-io/thanos/pkg/store/labelpb"
 
 	"github.com/efficientgo/core/testutil"
 	e2edb "github.com/efficientgo/e2e/db"
@@ -75,48 +74,27 @@ func TestInfo(t *testing.T) {
 		"sidecar": {
 			{
 				Name: "e2e-test-info-sidecar-alone1:9091",
-				LabelSets: []labels.Labels{{
-					{
-						Name:  "prometheus",
-						Value: "prom-alone1",
-					},
-					{
-						Name:  "replica",
-						Value: "0",
-					},
-				}},
+				LabelSets: []labelpb.Labels{
+					labelpb.FromStrings("prometheus", "prom-alone1", "replica", "0"),
+				},
 			},
 			{
 				Name: "e2e-test-info-sidecar-alone2:9091",
-				LabelSets: []labels.Labels{{
-					{
-						Name:  "prometheus",
-						Value: "prom-alone2",
-					},
-					{
-						Name:  "replica",
-						Value: "0",
-					},
-				}},
+				LabelSets: []labelpb.Labels{
+					labelpb.FromStrings("prometheus", "prom-alone2", "replica", "0"),
+				},
 			},
 			{
 				Name: "e2e-test-info-sidecar-alone3:9091",
-				LabelSets: []labels.Labels{{
-					{
-						Name:  "prometheus",
-						Value: "prom-alone3",
-					},
-					{
-						Name:  "replica",
-						Value: "0",
-					},
-				}},
+				LabelSets: []labelpb.Labels{
+					labelpb.FromStrings("prometheus", "prom-alone3", "replica", "0"),
+				},
 			},
 		},
 		"store": {
 			{
 				Name:      "e2e-test-info-store-gw-1:9091",
-				LabelSets: []labels.Labels{},
+				LabelSets: []labelpb.Labels{},
 			},
 		},
 	}

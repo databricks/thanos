@@ -13,15 +13,15 @@ import (
 
 	"github.com/efficientgo/core/testutil"
 	"github.com/go-kit/log"
-	"github.com/gogo/protobuf/proto"
 	"github.com/pkg/errors"
-	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/util/annotations"
 	"github.com/thanos-io/thanos/pkg/promclient"
 	"github.com/thanos-io/thanos/pkg/runutil"
 	"github.com/thanos-io/thanos/pkg/store/labelpb"
 	"github.com/thanos-io/thanos/pkg/targets/targetspb"
+	thanostestutil "github.com/thanos-io/thanos/pkg/testutil"
 	"github.com/thanos-io/thanos/pkg/testutil/e2eutil"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func TestPrometheus_Targets_e2e(t *testing.T) {
@@ -66,46 +66,46 @@ scrape_configs:
 		return errors.New("empty targets response from Prometheus")
 	}))
 
-	promTargets := NewPrometheus(u, promclient.NewDefaultClient(), func() labels.Labels {
-		return labels.FromStrings("replica", "test1")
+	promTargets := NewPrometheus(u, promclient.NewDefaultClient(), func() labelpb.Labels {
+		return labelpb.FromStrings("replica", "test1")
 	})
 
 	expected := &targetspb.TargetDiscovery{
 		ActiveTargets: []*targetspb.ActiveTarget{
 			{
-				DiscoveredLabels: labelpb.ZLabelSet{Labels: []labelpb.ZLabel{
-					{Name: "__address__", Value: p.Addr()},
-					{Name: "__metrics_path__", Value: "/metrics"},
-					{Name: "__scheme__", Value: "http"},
-					{Name: "__scrape_interval__", Value: "1s"},
-					{Name: "__scrape_timeout__", Value: "1s"},
-					{Name: "job", Value: "myself"},
-					{Name: "replica", Value: "test1"},
-				}},
-				Labels: labelpb.ZLabelSet{Labels: []labelpb.ZLabel{
-					{Name: "instance", Value: p.Addr()},
-					{Name: "job", Value: "myself"},
-					{Name: "replica", Value: "test1"},
-				}},
+				DiscoveredLabels: labelpb.LabelSetFromStrings(
+					"__address__", p.Addr(),
+					"__metrics_path__", "/metrics",
+					"__scheme__", "http",
+					"__scrape_interval__", "1s",
+					"__scrape_timeout__", "1s",
+					"job", "myself",
+					"replica", "test1",
+				),
+				Labels: labelpb.LabelSetFromStrings(
+					"instance", p.Addr(),
+					"job", "myself",
+					"replica", "test1",
+				),
 				ScrapePool:         "myself",
 				ScrapeUrl:          fmt.Sprintf("http://%s/metrics", p.Addr()),
 				GlobalUrl:          "",
 				Health:             targetspb.TargetHealth_UP,
-				LastScrape:         time.Time{},
+				LastScrape:         timestamppb.New(time.Time{}),
 				LastScrapeDuration: 0,
 			},
 		},
 		DroppedTargets: []*targetspb.DroppedTarget{
 			{
-				DiscoveredLabels: labelpb.ZLabelSet{Labels: []labelpb.ZLabel{
-					{Name: "__address__", Value: "localhost:80"},
-					{Name: "__metrics_path__", Value: "/metrics"},
-					{Name: "__scheme__", Value: "http"},
-					{Name: "__scrape_interval__", Value: "1s"},
-					{Name: "__scrape_timeout__", Value: "1s"},
-					{Name: "job", Value: "myself"},
-					{Name: "replica", Value: "test1"},
-				}},
+				DiscoveredLabels: labelpb.LabelSetFromStrings(
+					"__address__", "localhost:80",
+					"__metrics_path__", "/metrics",
+					"__scheme__", "http",
+					"__scrape_interval__", "1s",
+					"__scrape_timeout__", "1s",
+					"job", "myself",
+					"replica", "test1",
+				),
 			},
 		},
 	}
@@ -137,7 +137,7 @@ scrape_configs:
 			}
 			testutil.Ok(t, err)
 
-			expectedTargets := proto.Clone(expected).(*targetspb.TargetDiscovery)
+			expectedTargets := expected.CloneVT()
 
 			switch tcase.requestedState {
 			case targetspb.TargetsRequest_ACTIVE:
@@ -148,13 +148,13 @@ scrape_configs:
 
 			for i := range targets.ActiveTargets {
 				targets.ActiveTargets[i].LastScrapeDuration = 0
-				targets.ActiveTargets[i].LastScrape = time.Time{}
+				targets.ActiveTargets[i].LastScrape = timestamppb.New(time.Time{})
 				targets.ActiveTargets[i].LastError = ""
 				targets.ActiveTargets[i].GlobalUrl = ""
 			}
 
-			testutil.Equals(t, expectedTargets.ActiveTargets, targets.ActiveTargets)
-			testutil.Equals(t, expectedTargets.DroppedTargets, targets.DroppedTargets)
+			thanostestutil.ProtoEquals(t, expectedTargets.ActiveTargets, targets.ActiveTargets)
+			thanostestutil.ProtoEquals(t, expectedTargets.DroppedTargets, targets.DroppedTargets)
 		})
 	}
 }

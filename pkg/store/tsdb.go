@@ -77,7 +77,7 @@ type TSDBStore struct {
 	maxBytesPerFrame int
 	matcherCache     storecache.MatchersCache
 
-	extLset                labels.Labels
+	extLset                labelpb.Labels
 	startStoreFilterUpdate bool
 	storeFilter            filter.StoreFilter
 	disableSeriesResorting bool
@@ -108,7 +108,7 @@ func NewTSDBStore(
 	logger log.Logger,
 	db TSDBReader,
 	component component.StoreAPI,
-	extLset labels.Labels,
+	extLset labelpb.Labels,
 	options ...TSDBStoreOption,
 ) *TSDBStore {
 	if logger == nil {
@@ -169,42 +169,38 @@ func NewTSDBStore(
 	return st
 }
 
-func (s *TSDBStore) SetExtLset(extLset labels.Labels) {
+func (s *TSDBStore) SetExtLset(extLset labelpb.Labels) {
 	s.mtx.Lock()
 	defer s.mtx.Unlock()
 
 	s.extLset = extLset
 }
 
-func (s *TSDBStore) getExtLset() labels.Labels {
+func (s *TSDBStore) getExtLset() labelpb.Labels {
 	s.mtx.RLock()
 	defer s.mtx.RUnlock()
 
 	return s.extLset
 }
 
-func (s *TSDBStore) LabelSet() []labelpb.ZLabelSet {
-	labels := labelpb.ZLabelSetsFromPromLabels(s.getExtLset())
-	labelSets := []labelpb.ZLabelSet{}
-	if len(labels) > 0 {
-		labelSets = append(labelSets, labels...)
+func (s *TSDBStore) LabelSet() []*labelpb.LabelSet {
+	extLset := s.getExtLset()
+	if extLset.IsEmpty() {
+		return nil
 	}
-
-	return labelSets
+	return []*labelpb.LabelSet{{Labels: extLset}}
 }
 
-func (s *TSDBStore) TSDBInfos() []infopb.TSDBInfo {
-	labels := s.LabelSet()
-	if len(labels) == 0 {
-		return []infopb.TSDBInfo{}
+func (s *TSDBStore) TSDBInfos() []*infopb.TSDBInfo {
+	labelSets := s.LabelSet()
+	if len(labelSets) == 0 {
+		return []*infopb.TSDBInfo{}
 	}
 
 	mint, maxt := s.TimeRange()
-	return []infopb.TSDBInfo{
+	return []*infopb.TSDBInfo{
 		{
-			Labels: labelpb.ZLabelSet{
-				Labels: labels[0].Labels,
-			},
+			Labels:  labelSets[0],
 			MinTime: mint,
 			MaxTime: maxt,
 		},
@@ -308,13 +304,13 @@ func (s *TSDBStore) Series(r *storepb.SeriesRequest, seriesSrv storepb.Store_Ser
 	for _, lbl := range r.WithoutReplicaLabels {
 		extLsetToRemove[lbl] = struct{}{}
 	}
-	finalExtLset := rmLabels(s.extLset.Copy(), extLsetToRemove)
+	finalExtLset := labelpb.RmLabels(s.extLset, extLsetToRemove)
 
 	// Stream at most one series per frame; series may be split over multiple frames according to maxBytesInFrame.
 	for set.Next() {
 		series := set.At()
 
-		completeLabelset := labelpb.ExtendSortedLabels(rmLabels(series.Labels(), extLsetToRemove), finalExtLset)
+		completeLabelset := labelpb.ExtendSortedLabels(labelpb.RmLabelsInPlace(labelpb.FromPromLabels(series.Labels()), extLsetToRemove), finalExtLset)
 		if !shardMatcher.MatchesLabels(completeLabelset) {
 			continue
 		}
@@ -323,7 +319,7 @@ func (s *TSDBStore) Series(r *storepb.SeriesRequest, seriesSrv storepb.Store_Ser
 				requestMatches(r.Matchers), completeLabelset.String())
 		}
 
-		storeSeries := storepb.Series{Labels: labelpb.ZLabelsFromPromLabels(completeLabelset)}
+		storeSeries := storepb.Series{Labels: completeLabelset}
 		if r.SkipChunks {
 			if err := srv.Send(storepb.NewSeriesResponse(&storeSeries)); err != nil {
 				return status.Error(codes.Aborted, err.Error())
@@ -333,11 +329,11 @@ func (s *TSDBStore) Series(r *storepb.SeriesRequest, seriesSrv storepb.Store_Ser
 
 		bytesLeftForChunks := s.maxBytesPerFrame
 		for _, lbl := range storeSeries.Labels {
-			bytesLeftForChunks -= lbl.Size()
+			bytesLeftForChunks -= lbl.SizeVT()
 		}
 		frameBytesLeft := bytesLeftForChunks
 
-		seriesChunks := []storepb.AggrChunk{}
+		seriesChunks := []*storepb.AggrChunk{}
 		chIter := series.Iterator(nil)
 		isNext := chIter.Next()
 		for isNext {
@@ -348,7 +344,7 @@ func (s *TSDBStore) Series(r *storepb.SeriesRequest, seriesSrv storepb.Store_Ser
 
 			chunkBytes := make([]byte, len(chk.Chunk.Bytes()))
 			copy(chunkBytes, chk.Chunk.Bytes())
-			c := storepb.AggrChunk{
+			c := &storepb.AggrChunk{
 				MinTime: chk.MinTime,
 				MaxTime: chk.MaxTime,
 				Raw: &storepb.Chunk{
@@ -357,7 +353,7 @@ func (s *TSDBStore) Series(r *storepb.SeriesRequest, seriesSrv storepb.Store_Ser
 					Hash: hashChunk(hasher, chunkBytes, enableChunkHashCalculation),
 				},
 			}
-			frameBytesLeft -= c.Size()
+			frameBytesLeft -= c.SizeVT()
 			seriesChunks = append(seriesChunks, c)
 
 			// We are fine with minor inaccuracy of max bytes per frame. The inaccuracy will be max of full chunk size.
@@ -371,7 +367,7 @@ func (s *TSDBStore) Series(r *storepb.SeriesRequest, seriesSrv storepb.Store_Ser
 
 			if isNext {
 				frameBytesLeft = bytesLeftForChunks
-				seriesChunks = make([]storepb.AggrChunk, 0, len(seriesChunks))
+				seriesChunks = make([]*storepb.AggrChunk, 0, len(seriesChunks))
 			}
 		}
 		if err := chIter.Err(); err != nil {
@@ -422,7 +418,7 @@ func (s *TSDBStore) LabelNames(ctx context.Context, r *storepb.LabelNamesRequest
 	}
 
 	if len(res) > 0 {
-		s.getExtLset().Range(func(l labels.Label) {
+		s.getExtLset().Range(func(l *labelpb.Label) {
 			if _, ok := extLsetToRemove[l.Name]; !ok {
 				res = append(res, l.Name)
 			}

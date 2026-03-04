@@ -8,22 +8,21 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/efficientgo/core/testutil"
-	"github.com/prometheus/prometheus/model/labels"
-
 	"github.com/thanos-io/thanos/pkg/errors"
+	labelpb "github.com/thanos-io/thanos/pkg/store/labelpb"
 	"github.com/thanos-io/thanos/pkg/store/storepb"
+	thanostestutil "github.com/thanos-io/thanos/pkg/testutil"
 )
 
 func TestRmLabelsCornerCases(t *testing.T) {
 	t.Parallel()
 
-	testutil.Equals(t, rmLabels(labelsFromStrings("aa", "bb"), map[string]struct{}{
+	thanostestutil.ProtoEquals(t, labelpb.RmLabels(labelpb.FromStrings("aa", "bb"), map[string]struct{}{
 		"aa": {},
-	}), labels.Labels{})
-	testutil.Equals(t, rmLabels(labelsFromStrings(), map[string]struct{}{
+	}), labelpb.EmptyLabels())
+	thanostestutil.ProtoEquals(t, labelpb.RmLabels(labelpb.EmptyLabels(), map[string]struct{}{
 		"aa": {},
-	}), labels.Labels{})
+	}), labelpb.EmptyLabels())
 }
 
 func TestProxyResponseTreeSort(t *testing.T) {
@@ -230,7 +229,7 @@ func TestProxyResponseTreeSort(t *testing.T) {
 				r := h.At()
 				got = append(got, r)
 			}
-			testutil.Equals(t, tcase.exp, got)
+			thanostestutil.ProtoEquals(t, tcase.exp, got)
 		})
 	}
 }
@@ -304,15 +303,14 @@ func TestSortWithoutLabels(t *testing.T) {
 		// Longer series.
 		{
 			input: []*storepb.SeriesResponse{
-				storeSeriesResponse(t, labels.FromStrings(
+				storeSeriesResponse(t, labelpb.FromStrings(
 					"__name__", "gitlab_transaction_cache_read_hit_count_total", "action", "widget.json", "controller", "Projects::MergeRequests::ContentController", "env", "gprd", "environment",
 					"gprd", "fqdn", "web-08-sv-gprd.c.gitlab-production.internal", "instance", "web-08-sv-gprd.c.gitlab-production.internal:8083", "job", "gitlab-rails", "monitor", "app", "provider",
 					"gcp", "region", "us-east", "replica", "01", "shard", "default", "stage", "main", "tier", "sv", "type", "web",
 				)),
 			},
 			exp: []*storepb.SeriesResponse{
-				storeSeriesResponse(t, labels.FromStrings(
-					// No replica label anymore.
+				storeSeriesResponse(t, labelpb.FromStrings(
 					"__name__", "gitlab_transaction_cache_read_hit_count_total", "action", "widget.json", "controller", "Projects::MergeRequests::ContentController", "env", "gprd", "environment",
 					"gprd", "fqdn", "web-08-sv-gprd.c.gitlab-production.internal", "instance", "web-08-sv-gprd.c.gitlab-production.internal:8083", "job", "gitlab-rails", "monitor", "app", "provider",
 					"gcp", "region", "us-east", "shard", "default", "stage", "main", "tier", "sv", "type", "web",
@@ -323,22 +321,21 @@ func TestSortWithoutLabels(t *testing.T) {
 	} {
 		t.Run("", func(t *testing.T) {
 			sortWithoutLabels(tcase.input, tcase.dedupLabels)
-			testutil.Equals(t, tcase.exp, tcase.input)
+			thanostestutil.ProtoEquals(t, tcase.exp, tcase.input)
 		})
 	}
 }
 
-// labelsFromStrings is like labels.FromString, but it does not sort the input.
-func labelsFromStrings(ss ...string) labels.Labels {
+// labelsFromStrings is like labelpb.FromStrings, but does not sort the input.
+func labelsFromStrings(ss ...string) labelpb.Labels {
 	if len(ss)%2 != 0 {
 		panic("invalid number of strings")
 	}
-
-	b := labels.NewScratchBuilder(len(ss) / 2)
+	result := make(labelpb.Labels, 0, len(ss)/2)
 	for i := 0; i < len(ss); i += 2 {
-		b.Add(ss[i], ss[i+1])
+		result = append(result, &labelpb.Label{Name: ss[i], Value: ss[i+1]})
 	}
-	return b.Labels()
+	return result
 }
 
 func BenchmarkSortWithoutLabels(b *testing.B) {
@@ -352,7 +349,7 @@ func BenchmarkSortWithoutLabels(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		b.StopTimer()
 		for i := 0; i < 1e4; i++ {
-			resps[i] = storeSeriesResponse(b, labels.FromStrings("a", "1", "b", "replica-1", "c", "replica-1", "d", "1"))
+			resps[i] = storeSeriesResponse(b, labelpb.FromStrings("a", "1", "b", "replica-1", "c", "replica-1", "d", "1"))
 		}
 		b.StartTimer()
 		sortWithoutLabels(resps, labelsToRemove)

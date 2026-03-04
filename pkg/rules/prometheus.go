@@ -7,8 +7,6 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/prometheus/prometheus/model/labels"
-
 	"github.com/thanos-io/thanos/pkg/promclient"
 	"github.com/thanos-io/thanos/pkg/rules/rulespb"
 	"github.com/thanos-io/thanos/pkg/store/labelpb"
@@ -16,14 +14,16 @@ import (
 
 // Prometheus implements rulespb.Rules gRPC that allows to fetch rules from Prometheus HTTP api/v1/rules endpoint.
 type Prometheus struct {
+	rulespb.UnimplementedRulesServer
+
 	base   *url.URL
 	client *promclient.Client
 
-	extLabels func() labels.Labels
+	extLabels func() labelpb.Labels
 }
 
 // NewPrometheus creates new rules.Prometheus.
-func NewPrometheus(base *url.URL, client *promclient.Client, extLabels func() labels.Labels) *Prometheus {
+func NewPrometheus(base *url.URL, client *promclient.Client, extLabels func() labelpb.Labels) *Prometheus {
 	return &Prometheus{
 		base:      base,
 		client:    client,
@@ -53,11 +53,15 @@ func (p *Prometheus) Rules(r *rulespb.RulesRequest, s rulespb.Rules_RulesServer)
 	return nil
 }
 
-// extLset has to be sorted.
-func enrichRulesWithExtLabels(groups []*rulespb.RuleGroup, extLset labels.Labels) {
+// ext has to be sorted.
+func enrichRulesWithExtLabels(groups []*rulespb.RuleGroup, ext labelpb.Labels) {
 	for _, g := range groups {
 		for _, r := range g.Rules {
-			r.SetLabels(labelpb.ExtendSortedLabels(r.GetLabels(), extLset))
+			if rec := r.GetRecording(); rec != nil {
+				rec.Labels = &labelpb.LabelSet{Labels: labelpb.ExtendSortedLabels(rec.GetLabels().GetLabels(), ext)}
+			} else if alert := r.GetAlert(); alert != nil {
+				alert.Labels = &labelpb.LabelSet{Labels: labelpb.ExtendSortedLabels(alert.GetLabels().GetLabels(), ext)}
+			}
 		}
 	}
 }

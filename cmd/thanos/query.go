@@ -26,7 +26,6 @@ import (
 	"github.com/prometheus/prometheus/discovery"
 	"github.com/prometheus/prometheus/discovery/file"
 	"github.com/prometheus/prometheus/discovery/targetgroup"
-	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql"
 
 	"github.com/thanos-io/promql-engine/api"
@@ -456,7 +455,7 @@ func runQuery(
 	queryReplicaLabels []string,
 	queryPartitionLabels []string,
 	queryDeduplicationFunc string,
-	selectorLset labels.Labels,
+	selectorLset labelpb.Labels,
 	flagsMap map[string]string,
 	endpointAddrs []string,
 	endpointGroupAddrs []string,
@@ -884,7 +883,7 @@ func runQuery(
 
 		infoSrv := info.NewInfoServer(
 			component.Query.String(),
-			info.WithLabelSetFunc(func() []labelpb.ZLabelSet { return proxyStore.LabelSet() }),
+			info.WithLabelSetFunc(func() []*labelpb.LabelSet { return proxyStore.LabelSet() }),
 			info.WithStoreInfoFunc(func() (*infopb.StoreInfo, error) {
 				if httpProbe.IsReady() {
 					mint, maxt := proxyStore.TimeRange()

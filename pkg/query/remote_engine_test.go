@@ -67,42 +67,42 @@ func TestRemoteEngine_LabelSets(t *testing.T) {
 
 	tests := []struct {
 		name            string
-		tsdbInfos       []infopb.TSDBInfo
+		tsdbInfos       []*infopb.TSDBInfo
 		replicaLabels   []string
 		expected        []labels.Labels
 		partitionLabels []string
 	}{
 		{
 			name:      "empty label sets",
-			tsdbInfos: []infopb.TSDBInfo{},
+			tsdbInfos: []*infopb.TSDBInfo{},
 			expected:  []labels.Labels{},
 		},
 		{
 			name:          "empty label sets with replica labels",
-			tsdbInfos:     []infopb.TSDBInfo{},
+			tsdbInfos:     []*infopb.TSDBInfo{},
 			replicaLabels: []string{"replica"},
 			expected:      []labels.Labels{},
 		},
 		{
 			name: "non-empty label sets",
-			tsdbInfos: []infopb.TSDBInfo{{
-				Labels: zLabelSetFromStrings("a", "1"),
+			tsdbInfos: []*infopb.TSDBInfo{{
+				Labels: labelpb.LabelSetFromStrings("a", "1"),
 			}},
 			expected: []labels.Labels{labels.FromStrings("a", "1")},
 		},
 		{
 			name: "non-empty label sets with replica labels",
-			tsdbInfos: []infopb.TSDBInfo{{
-				Labels: zLabelSetFromStrings("a", "1", "b", "2"),
+			tsdbInfos: []*infopb.TSDBInfo{{
+				Labels: labelpb.LabelSetFromStrings("a", "1", "b", "2"),
 			}},
 			replicaLabels: []string{"a"},
 			expected:      []labels.Labels{labels.FromStrings("b", "2")},
 		},
 		{
 			name: "replica labels not in label sets",
-			tsdbInfos: []infopb.TSDBInfo{
+			tsdbInfos: []*infopb.TSDBInfo{
 				{
-					Labels: zLabelSetFromStrings("a", "1", "c", "2"),
+					Labels: labelpb.LabelSetFromStrings("a", "1", "c", "2"),
 				},
 			},
 			replicaLabels: []string{"a", "b"},
@@ -110,9 +110,9 @@ func TestRemoteEngine_LabelSets(t *testing.T) {
 		},
 		{
 			name: "non-empty label sets with partition labels",
-			tsdbInfos: []infopb.TSDBInfo{
+			tsdbInfos: []*infopb.TSDBInfo{
 				{
-					Labels: zLabelSetFromStrings("a", "1", "c", "2"),
+					Labels: labelpb.LabelSetFromStrings("a", "1", "c", "2"),
 				},
 			},
 			partitionLabels: []string{"a"},
@@ -138,33 +138,33 @@ func TestRemoteEngine_MinT(t *testing.T) {
 
 	tests := []struct {
 		name          string
-		tsdbInfos     []infopb.TSDBInfo
+		tsdbInfos     []*infopb.TSDBInfo
 		replicaLabels []string
 		expected      int64
 	}{
 		{
 			name:      "empty label sets",
-			tsdbInfos: []infopb.TSDBInfo{},
+			tsdbInfos: []*infopb.TSDBInfo{},
 			expected:  math.MaxInt64,
 		},
 		{
 			name:          "empty label sets with replica labels",
-			tsdbInfos:     []infopb.TSDBInfo{},
+			tsdbInfos:     []*infopb.TSDBInfo{},
 			replicaLabels: []string{"replica"},
 			expected:      math.MaxInt64,
 		},
 		{
 			name: "non-empty label sets",
-			tsdbInfos: []infopb.TSDBInfo{{
-				Labels:  zLabelSetFromStrings("a", "1"),
+			tsdbInfos: []*infopb.TSDBInfo{{
+				Labels:  labelpb.LabelSetFromStrings("a", "1"),
 				MinTime: 30,
 			}},
 			expected: 30,
 		},
 		{
 			name: "non-empty label sets with replica labels",
-			tsdbInfos: []infopb.TSDBInfo{{
-				Labels:  zLabelSetFromStrings("a", "1", "b", "2"),
+			tsdbInfos: []*infopb.TSDBInfo{{
+				Labels:  labelpb.LabelSetFromStrings("a", "1", "b", "2"),
 				MinTime: 30,
 			}},
 			replicaLabels: []string{"a"},
@@ -172,13 +172,13 @@ func TestRemoteEngine_MinT(t *testing.T) {
 		},
 		{
 			name: "replicated labelsets with different mint",
-			tsdbInfos: []infopb.TSDBInfo{
+			tsdbInfos: []*infopb.TSDBInfo{
 				{
-					Labels:  zLabelSetFromStrings("a", "1", "replica", "1"),
+					Labels:  labelpb.LabelSetFromStrings("a", "1", "replica", "1"),
 					MinTime: 30,
 				},
 				{
-					Labels:  zLabelSetFromStrings("a", "1", "replica", "2"),
+					Labels:  labelpb.LabelSetFromStrings("a", "1", "replica", "2"),
 					MinTime: 60,
 				},
 			},
@@ -187,21 +187,21 @@ func TestRemoteEngine_MinT(t *testing.T) {
 		},
 		{
 			name: "multiple replicated labelsets with different mint",
-			tsdbInfos: []infopb.TSDBInfo{
+			tsdbInfos: []*infopb.TSDBInfo{
 				{
-					Labels:  zLabelSetFromStrings("a", "1", "replica", "1"),
+					Labels:  labelpb.LabelSetFromStrings("a", "1", "replica", "1"),
 					MinTime: 30,
 				},
 				{
-					Labels:  zLabelSetFromStrings("a", "1", "replica", "2"),
+					Labels:  labelpb.LabelSetFromStrings("a", "1", "replica", "2"),
 					MinTime: 60,
 				},
 				{
-					Labels:  zLabelSetFromStrings("a", "2", "replica", "1"),
+					Labels:  labelpb.LabelSetFromStrings("a", "2", "replica", "1"),
 					MinTime: 80,
 				},
 				{
-					Labels:  zLabelSetFromStrings("a", "2", "replica", "2"),
+					Labels:  labelpb.LabelSetFromStrings("a", "2", "replica", "2"),
 					MinTime: 120,
 				},
 			},
@@ -219,12 +219,6 @@ func TestRemoteEngine_MinT(t *testing.T) {
 
 			testutil.Equals(t, testCase.expected, engine.MinT())
 		})
-	}
-}
-
-func zLabelSetFromStrings(ss ...string) labelpb.ZLabelSet {
-	return labelpb.ZLabelSet{
-		Labels: labelpb.ZLabelsFromPromLabels(labels.FromStrings(ss...)),
 	}
 }
 

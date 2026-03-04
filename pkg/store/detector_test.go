@@ -6,16 +6,16 @@ package store
 import (
 	"testing"
 
-	"github.com/prometheus/prometheus/model/labels"
 	"github.com/stretchr/testify/assert"
+	"github.com/thanos-io/thanos/pkg/store/labelpb"
 	"github.com/thanos-io/thanos/pkg/store/storepb"
 )
 
 func TestDetectCorruptLabels_EQ(t *testing.T) {
-	good := labels.New(labels.Label{Name: labels.MetricName, Value: "up"})
-	bad := labels.New(labels.Label{Name: labels.MetricName, Value: "kube_proxy_corrupt"})
-	eq := []storepb.LabelMatcher{{Name: "__name__", Type: storepb.LabelMatcher_EQ, Value: "up"}}
-	neq := []storepb.LabelMatcher{{Name: "__name__", Type: storepb.LabelMatcher_NEQ, Value: "up"}}
+	good := labelpb.FromStrings("__name__", "up")
+	bad := labelpb.FromStrings("__name__", "kube_proxy_corrupt")
+	eq := []*storepb.LabelMatcher{{Name: "__name__", Type: storepb.LabelMatcher_EQ, Value: "up"}}
+	neq := []*storepb.LabelMatcher{{Name: "__name__", Type: storepb.LabelMatcher_NEQ, Value: "up"}}
 	assert.False(t, detectCorruptLabels(good, eq))
 	assert.True(t, detectCorruptLabels(bad, eq))
 	assert.False(t, detectCorruptLabels(bad, neq))
@@ -23,10 +23,10 @@ func TestDetectCorruptLabels_EQ(t *testing.T) {
 }
 
 func TestDetectCorruptLabels_RE(t *testing.T) {
-	good := labels.New(labels.Label{Name: labels.MetricName, Value: "usage_database_pool"})
-	bad := labels.New(labels.Label{Name: labels.MetricName, Value: "kube_proxy_corrupt"})
-	re := []storepb.LabelMatcher{{Name: "__name__", Type: storepb.LabelMatcher_RE, Value: "usage_.+_pool"}}
-	nre := []storepb.LabelMatcher{{Name: "__name__", Type: storepb.LabelMatcher_NRE, Value: "usage_.+_pool"}}
+	good := labelpb.FromStrings("__name__", "usage_database_pool")
+	bad := labelpb.FromStrings("__name__", "kube_proxy_corrupt")
+	re := []*storepb.LabelMatcher{{Name: "__name__", Type: storepb.LabelMatcher_RE, Value: "usage_.+_pool"}}
+	nre := []*storepb.LabelMatcher{{Name: "__name__", Type: storepb.LabelMatcher_NRE, Value: "usage_.+_pool"}}
 	assert.False(t, detectCorruptLabels(good, re))
 	assert.True(t, detectCorruptLabels(bad, re))
 	assert.False(t, detectCorruptLabels(bad, nre))

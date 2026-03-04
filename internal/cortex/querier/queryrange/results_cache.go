@@ -7,11 +7,12 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/thanos-io/thanos/pkg/extpromql"
 	"net/http"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/thanos-io/thanos/pkg/extpromql"
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
@@ -405,7 +406,7 @@ func (s resultsCache) isOffsetCachable(r Request) bool {
 }
 
 func getHeaderValuesWithName(r Response, headerName string) (headerValues []string) {
-	for _, hv := range r.GetHeaders() {
+	for _, hv := range r.PrometheusHeaders() {
 		if hv.GetName() != headerName {
 			continue
 		}

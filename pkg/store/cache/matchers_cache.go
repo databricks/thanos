@@ -180,10 +180,10 @@ func newMatcherCacheMetrics(reg prometheus.Registerer) *matcherCacheMetrics {
 // MatchersToPromMatchersCached returns Prometheus matchers from proto matchers.
 // Works analogously to MatchersToPromMatchers but uses cache to avoid unnecessary allocations and conversions.
 // NOTE: It allocates memory.
-func MatchersToPromMatchersCached(cache MatchersCache, ms ...storepb.LabelMatcher) ([]*labels.Matcher, error) {
+func MatchersToPromMatchersCached(cache MatchersCache, ms ...*storepb.LabelMatcher) ([]*labels.Matcher, error) {
 	res := make([]*labels.Matcher, 0, len(ms))
 	for i := range ms {
-		pm, err := cache.GetOrSet(&ms[i], func() (*labels.Matcher, error) { return storepb.MatcherToPromMatcher(ms[i]) })
+		pm, err := cache.GetOrSet(ms[i], func() (*labels.Matcher, error) { return storepb.MatcherToPromMatcher(ms[i]) })
 		if err != nil {
 			return nil, err
 		}

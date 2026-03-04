@@ -134,7 +134,7 @@ func runReceive(
 	grpcLogOpts []grpc_logging.Option,
 	logFilterMethods []string,
 	tsdbOpts *tsdb.Options,
-	lset labels.Labels,
+	lset labelpb.Labels,
 	comp component.SourceStoreAPI,
 	hashFunc metadata.HashFunc,
 	receiveMode receive.ReceiverMode,
@@ -461,7 +461,7 @@ func runReceive(
 			reg,
 			dbs.TSDBLocalClients,
 			comp,
-			labels.Labels{},
+			labelpb.EmptyLabels(),
 			0,
 			store.LazyRetrieval,
 			options...,
@@ -475,7 +475,7 @@ func runReceive(
 
 		infoSrv := info.NewInfoServer(
 			component.Receive.String(),
-			info.WithLabelSetFunc(func() []labelpb.ZLabelSet { return proxy.LabelSet() }),
+			info.WithLabelSetFunc(func() []*labelpb.LabelSet { return proxy.LabelSet() }),
 			info.WithStoreInfoFunc(func() (*infopb.StoreInfo, error) {
 				if httpProbe.IsReady() {
 					minTime, maxTime := proxy.TimeRange()

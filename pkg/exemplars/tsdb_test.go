@@ -9,6 +9,7 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 
 	"github.com/efficientgo/core/testutil"
+	"github.com/thanos-io/thanos/pkg/store/labelpb"
 )
 
 func TestSelectorsMatchExternalLabels(t *testing.T) {
@@ -16,7 +17,7 @@ func TestSelectorsMatchExternalLabels(t *testing.T) {
 
 	tests := map[string]struct {
 		selectors         [][]*labels.Matcher
-		extLabels         labels.Labels
+		extLabels         labelpb.Labels
 		shouldMatch       bool
 		expectedSelectors [][]*labels.Matcher
 	}{
@@ -27,7 +28,7 @@ func TestSelectorsMatchExternalLabels(t *testing.T) {
 					labels.MustNewMatcher(labels.MatchEqual, "receive", "true"),
 				},
 			},
-			extLabels:   labels.FromStrings("receive", "true"),
+			extLabels:   labelpb.FromStrings("receive", "true"),
 			shouldMatch: true,
 			expectedSelectors: [][]*labels.Matcher{
 				{
@@ -41,7 +42,7 @@ func TestSelectorsMatchExternalLabels(t *testing.T) {
 					labels.MustNewMatcher(labels.MatchEqual, "code", "200"),
 				},
 			},
-			extLabels:   labels.FromStrings("receive", "true"),
+			extLabels:   labelpb.FromStrings("receive", "true"),
 			shouldMatch: true,
 			expectedSelectors: [][]*labels.Matcher{
 				{
@@ -60,7 +61,7 @@ func TestSelectorsMatchExternalLabels(t *testing.T) {
 					labels.MustNewMatcher(labels.MatchRegexp, "receive", "true"),
 				},
 			},
-			extLabels:   labels.FromStrings("receive", "true", "replica", "0"),
+			extLabels:   labelpb.FromStrings("receive", "true", "replica", "0"),
 			shouldMatch: true,
 			expectedSelectors: [][]*labels.Matcher{
 				{
@@ -79,7 +80,7 @@ func TestSelectorsMatchExternalLabels(t *testing.T) {
 					labels.MustNewMatcher(labels.MatchEqual, "replica", "0"),
 				},
 			},
-			extLabels:         labels.FromStrings("replica", "1"),
+			extLabels:         labelpb.FromStrings("replica", "1"),
 			shouldMatch:       false,
 			expectedSelectors: nil,
 		},

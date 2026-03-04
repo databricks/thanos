@@ -18,7 +18,6 @@ import (
 	"github.com/cespare/xxhash"
 	"github.com/efficientgo/core/testutil"
 	"github.com/go-kit/log"
-	"github.com/gogo/protobuf/types"
 	"github.com/oklog/ulid"
 	"github.com/prometheus/prometheus/model/histogram"
 	"github.com/prometheus/prometheus/model/labels"
@@ -28,7 +27,9 @@ import (
 	"github.com/prometheus/prometheus/tsdb/chunks"
 	"github.com/prometheus/prometheus/tsdb/index"
 	"github.com/prometheus/prometheus/tsdb/wlog"
+	thanostestutil "github.com/thanos-io/thanos/pkg/testutil"
 	"go.uber.org/atomic"
+	anypb "google.golang.org/protobuf/types/known/anypb"
 
 	"github.com/thanos-io/thanos/pkg/store/hintspb"
 	"github.com/thanos-io/thanos/pkg/store/labelpb"
@@ -53,7 +54,7 @@ type HeadGenOptions struct {
 	ScrapeInterval           time.Duration
 
 	WithWAL       bool
-	PrependLabels labels.Labels
+	PrependLabels labelpb.Labels
 	SkipChunks    bool // Skips chunks in returned slice (not in generated head!).
 	SampleType    chunkenc.ValueType
 
@@ -130,7 +131,7 @@ func CreateHeadWithSeries(t testing.TB, j int, opts HeadGenOptions) (*tsdb.Head,
 	return h, ReadSeriesFromBlock(t, h, opts.PrependLabels, opts.SkipChunks)
 }
 
-func ReadSeriesFromBlock(t testing.TB, h tsdb.BlockReader, extLabels labels.Labels, skipChunks bool) []*storepb.Series {
+func ReadSeriesFromBlock(t testing.TB, h tsdb.BlockReader, extLabels labelpb.Labels, skipChunks bool) []*storepb.Series {
 	// Use TSDB and get all series for assertion.
 	chks, err := h.Chunks()
 	testutil.Ok(t, err)
@@ -150,8 +151,8 @@ func ReadSeriesFromBlock(t testing.TB, h tsdb.BlockReader, extLabels labels.Labe
 	all := allPostings(context.TODO(), t, ir)
 	for all.Next() {
 		testutil.Ok(t, ir.Series(all.At(), &builder, &chunkMetas))
-		lset := labelpb.ExtendSortedLabels(builder.Labels(), extLabels)
-		expected = append(expected, &storepb.Series{Labels: labelpb.ZLabelsFromPromLabels(lset)})
+		lset := labelpb.ExtendSortedLabels(labelpb.FromPromLabels(builder.Labels()), extLabels)
+		expected = append(expected, &storepb.Series{Labels: lset})
 
 		if skipChunks {
 			continue
@@ -167,7 +168,7 @@ func ReadSeriesFromBlock(t testing.TB, h tsdb.BlockReader, extLabels labels.Labe
 				c.MaxTime = c.MinTime + int64(chEnc.NumSamples()) - 1
 			}
 
-			expected[len(expected)-1].Chunks = append(expected[len(expected)-1].Chunks, storepb.AggrChunk{
+			expected[len(expected)-1].Chunks = append(expected[len(expected)-1].Chunks, &storepb.AggrChunk{
 				MinTime: c.MinTime,
 				MaxTime: c.MaxTime,
 				Raw: &storepb.Chunk{
@@ -268,7 +269,7 @@ type SeriesServer struct {
 
 	SeriesSet []*storepb.Series
 	Warnings  []string
-	HintsSet  []*types.Any
+	HintsSet  []*anypb.Any
 
 	Size int64
 }
@@ -278,7 +279,7 @@ func NewSeriesServer(ctx context.Context) *SeriesServer {
 }
 
 func (s *SeriesServer) Send(r *storepb.SeriesResponse) error {
-	s.Size += int64(r.Size())
+	s.Size += int64(r.SizeVT())
 
 	if r.GetWarning() != "" {
 		s.Warnings = append(s.Warnings, r.GetWarning())
@@ -337,8 +338,8 @@ type SeriesCase struct {
 	// Exact expectations are checked only for tests. For benchmarks only length is assured.
 	ExpectedSeries   []*storepb.Series
 	ExpectedWarnings []string
-	ExpectedHints    []hintspb.SeriesResponseHints
-	HintsCompareFunc func(t testutil.TB, expected, actual hintspb.SeriesResponseHints)
+	ExpectedHints    []*hintspb.SeriesResponseHints
+	HintsCompareFunc func(t testutil.TB, expected, actual *hintspb.SeriesResponseHints)
 }
 
 // TestServerSeries runs tests against given cases.
@@ -364,7 +365,7 @@ func TestServerSeries(t testutil.TB, store storepb.StoreServer, cases ...*Series
 					// Huge responses can produce unreadable diffs - make it more human readable.
 					if len(c.ExpectedSeries) > 4 {
 						for j := range c.ExpectedSeries {
-							testutil.Equals(t, c.ExpectedSeries[j].Labels, srv.SeriesSet[j].Labels)
+							thanostestutil.ProtoEquals(t, c.ExpectedSeries[j].Labels, srv.SeriesSet[j].Labels)
 
 							// Check chunks when it is not a skip chunk query
 							if !c.Req.SkipChunks {
@@ -372,27 +373,27 @@ func TestServerSeries(t testutil.TB, store storepb.StoreServer, cases ...*Series
 									testutil.Equals(t, len(c.ExpectedSeries[j].Chunks), len(srv.SeriesSet[j].Chunks), "%v series chunks number mismatch", j)
 								}
 								for ci := range c.ExpectedSeries[j].Chunks {
-									testutil.Equals(t, c.ExpectedSeries[j].Chunks[ci], srv.SeriesSet[j].Chunks[ci], "%v series chunks mismatch %v", j, ci)
+									thanostestutil.ProtoEquals(t, c.ExpectedSeries[j].Chunks[ci], srv.SeriesSet[j].Chunks[ci], "%v series chunks mismatch %v", j, ci)
 								}
 							}
 						}
 					} else {
 						testutil.Equals(t, true, len(c.ExpectedSeries) == len(srv.SeriesSet))
 						for i := range c.ExpectedSeries {
-							testutil.Equals(t, c.ExpectedSeries[i], srv.SeriesSet[i])
+							thanostestutil.ProtoEquals(t, c.ExpectedSeries[i], srv.SeriesSet[i])
 						}
 					}
 
-					var actualHints []hintspb.SeriesResponseHints
+					var actualHints []*hintspb.SeriesResponseHints
 					for _, anyHints := range srv.HintsSet {
-						hints := hintspb.SeriesResponseHints{}
-						testutil.Ok(t, types.UnmarshalAny(anyHints, &hints))
+						hints := &hintspb.SeriesResponseHints{}
+						testutil.Ok(t, anyHints.UnmarshalTo(hints))
 						actualHints = append(actualHints, hints)
 					}
 					testutil.Equals(t, len(c.ExpectedHints), len(actualHints))
 					for i, hint := range actualHints {
 						if c.HintsCompareFunc == nil {
-							testutil.Equals(t, c.ExpectedHints[i], hint)
+							thanostestutil.ProtoEquals(t, c.ExpectedHints[i], hint)
 						} else {
 							c.HintsCompareFunc(t, c.ExpectedHints[i], hint)
 						}

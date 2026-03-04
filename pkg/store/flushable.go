@@ -4,7 +4,6 @@
 package store
 
 import (
-	"github.com/prometheus/prometheus/model/labels"
 	"golang.org/x/exp/slices"
 
 	"github.com/thanos-io/thanos/pkg/store/labelpb"
@@ -69,17 +68,13 @@ func (r *resortingServer) Send(response *storepb.SeriesResponse) error {
 	}
 
 	series := response.GetSeries()
-	labelpb.ReAllocZLabelsStrings(&series.Labels, false)
 	r.series = append(r.series, series)
 	return nil
 }
 
 func (r *resortingServer) Flush() error {
 	slices.SortFunc(r.series, func(a, b *storepb.Series) int {
-		return labels.Compare(
-			labelpb.ZLabelsToPromLabels(a.Labels),
-			labelpb.ZLabelsToPromLabels(b.Labels),
-		)
+		return labelpb.Compare(a.Labels, b.Labels)
 	})
 	if r.notSend {
 		return nil

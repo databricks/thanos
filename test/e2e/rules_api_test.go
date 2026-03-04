@@ -101,13 +101,10 @@ func TestRulesAPI_Fanout(t *testing.T) {
 			File: q.Dir() + "/rules/rules.yaml",
 			Rules: []*rulespb.Rule{
 				rulespb.NewAlertingRule(&rulespb.Alert{
-					Name:  "TestAlert_AbortOnPartialResponse",
-					State: rulespb.AlertState_FIRING,
-					Query: "absent(some_metric)",
-					Labels: labelpb.ZLabelSet{Labels: []labelpb.ZLabel{
-						{Name: "prometheus", Value: "ha"},
-						{Name: "severity", Value: "page"},
-					}},
+					Name:   "TestAlert_AbortOnPartialResponse",
+					State:  rulespb.AlertState_FIRING,
+					Query:  "absent(some_metric)",
+					Labels: labelpb.LabelSetFromStrings("prometheus", "ha", "severity", "page"),
 					Health: string(rules.HealthGood),
 				}),
 			},
@@ -117,12 +114,10 @@ func TestRulesAPI_Fanout(t *testing.T) {
 			File: q.Dir() + "/thanos-rules/rules-0.yaml",
 			Rules: []*rulespb.Rule{
 				rulespb.NewAlertingRule(&rulespb.Alert{
-					Name:  "TestAlert_AbortOnPartialResponse",
-					State: rulespb.AlertState_FIRING,
-					Query: "absent(some_metric)",
-					Labels: labelpb.ZLabelSet{Labels: []labelpb.ZLabel{
-						{Name: "severity", Value: "page"},
-					}},
+					Name:   "TestAlert_AbortOnPartialResponse",
+					State:  rulespb.AlertState_FIRING,
+					Query:  "absent(some_metric)",
+					Labels: labelpb.LabelSetFromStrings("severity", "page"),
 					Health: string(rules.HealthGood),
 				}),
 			},
@@ -132,12 +127,10 @@ func TestRulesAPI_Fanout(t *testing.T) {
 			File: q.Dir() + "/thanos-rules/rules-1.yaml",
 			Rules: []*rulespb.Rule{
 				rulespb.NewAlertingRule(&rulespb.Alert{
-					Name:  "TestAlert_WarnOnPartialResponse",
-					State: rulespb.AlertState_FIRING,
-					Query: "absent(some_metric)",
-					Labels: labelpb.ZLabelSet{Labels: []labelpb.ZLabel{
-						{Name: "severity", Value: "page"},
-					}},
+					Name:   "TestAlert_WarnOnPartialResponse",
+					State:  rulespb.AlertState_FIRING,
+					Query:  "absent(some_metric)",
+					Labels: labelpb.LabelSetFromStrings("severity", "page"),
 					Health: string(rules.HealthGood),
 				}),
 			},
@@ -148,12 +141,10 @@ func TestRulesAPI_Fanout(t *testing.T) {
 			Limit: 1,
 			Rules: []*rulespb.Rule{
 				rulespb.NewAlertingRule(&rulespb.Alert{
-					Name:  "TestAlert_WithLimit",
-					State: rulespb.AlertState_INACTIVE,
-					Query: `promhttp_metric_handler_requests_total`,
-					Labels: labelpb.ZLabelSet{Labels: []labelpb.ZLabel{
-						{Name: "severity", Value: "page"},
-					}},
+					Name:   "TestAlert_WithLimit",
+					State:  rulespb.AlertState_INACTIVE,
+					Query:  `promhttp_metric_handler_requests_total`,
+					Labels: labelpb.LabelSetFromStrings("severity", "page"),
 					Health: string(rules.HealthBad),
 				}),
 			},
@@ -184,7 +175,7 @@ func ruleAndAssert(t *testing.T, ctx context.Context, addr, typ string, want []*
 		}
 
 		for ig, g := range res {
-			res[ig].LastEvaluation = time.Time{}
+			res[ig].LastEvaluation = nil
 			res[ig].EvaluationDurationSeconds = 0
 			res[ig].Interval = 0
 			res[ig].PartialResponseStrategy = 0

@@ -22,20 +22,20 @@ func BenchmarkMarshalWriteRequest(b *testing.B) {
 		numClusters = 3
 		numPods     = 2
 	)
-	series := make([]prompb.TimeSeries, 0, numSeries)
+	series := make([]*prompb.TimeSeries, 0, numSeries)
 	for i := 0; i < numSeries; i++ {
-		lbls := make([]labelpb.ZLabel, 0, numClusters*numPods)
+		lbls := make(labelpb.Labels, 0, numClusters*numPods)
 		for j := 0; j < numClusters; j++ {
 			for k := 0; k < numPods; k++ {
-				lbls = append(lbls, labelpb.ZLabel{
+				lbls = append(lbls, &labelpb.Label{
 					Name:  fmt.Sprintf("cluster-%d", j),
 					Value: fmt.Sprintf("pod-%d", k),
 				})
 			}
 		}
-		series = append(series, prompb.TimeSeries{
+		series = append(series, &prompb.TimeSeries{
 			Labels: lbls,
-			Samples: []prompb.Sample{
+			Samples: []*prompb.Sample{
 				{
 					Value:     1,
 					Timestamp: 2,
@@ -48,7 +48,7 @@ func BenchmarkMarshalWriteRequest(b *testing.B) {
 		Timeseries: series,
 	}
 	var (
-		protoBytes, err                 = wreq.Marshal()
+		protoBytes, err                 = wreq.MarshalVT()
 		capnprotoBytes, paddedErr       = Marshal(wreq.Tenant, wreq.Timeseries)
 		capnprotoBytesPacked, packedErr = MarshalPacked(wreq.Tenant, wreq.Timeseries)
 	)
@@ -58,7 +58,7 @@ func BenchmarkMarshalWriteRequest(b *testing.B) {
 	b.Run("marshal_proto", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			var err error
-			_, err = wreq.Marshal()
+			_, err = wreq.MarshalVT()
 			require.NoError(b, err)
 		}
 	})
@@ -92,7 +92,7 @@ func BenchmarkMarshalWriteRequest(b *testing.B) {
 	b.Run("unmarshal_proto", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			wr := storepb.WriteRequest{}
-			require.NoError(b, wr.Unmarshal(protoBytes))
+			require.NoError(b, wr.UnmarshalVT(protoBytes))
 		}
 	})
 	b.Run("unmarshal", func(b *testing.B) {

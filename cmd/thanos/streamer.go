@@ -123,7 +123,7 @@ func NewStreamer(
 	}, nil
 }
 
-type aggrChunkByTimestamp []storepb.AggrChunk
+type aggrChunkByTimestamp []*storepb.AggrChunk
 
 func (c aggrChunkByTimestamp) Len() int      { return len(c) }
 func (c aggrChunkByTimestamp) Swap(i, j int) { c[i], c[j] = c[j], c[i] }
@@ -136,7 +136,7 @@ func (c aggrChunkByTimestamp) Less(i, j int) bool {
 func convertToSeriesReq(config *StreamerConfig, streamerReq *streamer.StreamerRequest) *storepb.SeriesRequest {
 	req := &storepb.SeriesRequest{
 		Aggregates: []storepb.Aggr{storepb.Aggr_RAW},
-		Matchers:   make([]storepb.LabelMatcher, 0),
+		Matchers:   make([]*storepb.LabelMatcher, 0),
 		MinTime:    streamerReq.StartTimestampMs,
 		MaxTime:    streamerReq.EndTimestampMs,
 		SkipChunks: streamerReq.SkipChunks,
@@ -145,14 +145,14 @@ func convertToSeriesReq(config *StreamerConfig, streamerReq *streamer.StreamerRe
 		req.WithoutReplicaLabels = []string{config.replicaLabel}
 	}
 	for _, labelMatcher := range streamerReq.LabelMatchers {
-		req.Matchers = append(req.Matchers, storepb.LabelMatcher{
+		req.Matchers = append(req.Matchers, &storepb.LabelMatcher{
 			Type:  storepb.LabelMatcher_Type(labelMatcher.Type),
 			Name:  labelMatcher.Name,
 			Value: labelMatcher.Value,
 		})
 	}
 	if streamerReq.Metric != "" {
-		req.Matchers = append(req.Matchers, storepb.LabelMatcher{
+		req.Matchers = append(req.Matchers, &storepb.LabelMatcher{
 			Type:  storepb.LabelMatcher_EQ,
 			Name:  labels.MetricName,
 			Value: streamerReq.Metric,

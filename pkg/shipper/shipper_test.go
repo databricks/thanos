@@ -16,7 +16,6 @@ import (
 
 	"github.com/go-kit/log"
 	"github.com/oklog/ulid"
-	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/tsdb"
 
 	"github.com/thanos-io/objstore"
@@ -24,6 +23,7 @@ import (
 	"github.com/efficientgo/core/testutil"
 	"github.com/thanos-io/thanos/pkg/block"
 	"github.com/thanos-io/thanos/pkg/block/metadata"
+	"github.com/thanos-io/thanos/pkg/store/labelpb"
 )
 
 func TestShipperTimestamps(t *testing.T) {
@@ -164,8 +164,8 @@ func TestShipperAddsSegmentFiles(t *testing.T) {
 
 	inmemory := objstore.NewInMemBucket()
 
-	lbls := labels.FromStrings("test", "test")
-	s := New(nil, nil, dir, inmemory, func() labels.Labels { return lbls }, metadata.TestSource, nil, false, metadata.NoneFunc, DefaultMetaFilename)
+	lbls := labelpb.FromStrings("test", "test")
+	s := New(nil, nil, dir, inmemory, func() labelpb.Labels { return lbls }, metadata.TestSource, nil, false, metadata.NoneFunc, DefaultMetaFilename)
 
 	id := ulid.MustNew(1, nil)
 	blockDir := path.Join(dir, id.String())
@@ -234,8 +234,8 @@ func TestShipperExistingThanosLabels(t *testing.T) {
 
 	inmemory := objstore.NewInMemBucket()
 
-	lbls := labels.FromStrings("test", "test")
-	s := New(nil, nil, dir, inmemory, func() labels.Labels { return lbls }, metadata.TestSource, nil, false, metadata.NoneFunc, DefaultMetaFilename)
+	lbls := labelpb.FromStrings("test", "test")
+	s := New(nil, nil, dir, inmemory, func() labelpb.Labels { return lbls }, metadata.TestSource, nil, false, metadata.NoneFunc, DefaultMetaFilename)
 
 	id := ulid.MustNew(1, nil)
 	id2 := ulid.MustNew(2, nil)

@@ -4,11 +4,13 @@
 package targetspb
 
 import (
+	"encoding/json"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pkg/errors"
-	"github.com/prometheus/prometheus/model/labels"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/thanos-io/thanos/pkg/store/labelpb"
 )
@@ -64,11 +66,11 @@ func (t1 *ActiveTarget) Compare(t2 *ActiveTarget) int {
 		return d
 	}
 
-	if d := labels.Compare(t1.DiscoveredLabels.PromLabels(), t2.DiscoveredLabels.PromLabels()); d != 0 {
+	if d := labelpb.Compare(t1.DiscoveredLabels.GetLabels(), t2.DiscoveredLabels.GetLabels()); d != 0 {
 		return d
 	}
 
-	if d := labels.Compare(t1.Labels.PromLabels(), t2.Labels.PromLabels()); d != 0 {
+	if d := labelpb.Compare(t1.Labels.GetLabels(), t2.Labels.GetLabels()); d != 0 {
 		return d
 	}
 
@@ -80,11 +82,11 @@ func (t1 *ActiveTarget) CompareState(t2 *ActiveTarget) int {
 		return d
 	}
 
-	if t1.LastScrape.Before(t2.LastScrape) {
+	s1, s2 := t1.LastScrape.AsTime(), t2.LastScrape.AsTime()
+	if s1.Before(s2) {
 		return 1
 	}
-
-	if t1.LastScrape.After(t2.LastScrape) {
+	if s1.After(s2) {
 		return -1
 	}
 
@@ -92,39 +94,65 @@ func (t1 *ActiveTarget) CompareState(t2 *ActiveTarget) int {
 }
 
 func (t1 *DroppedTarget) Compare(t2 *DroppedTarget) int {
-	if d := labels.Compare(t1.DiscoveredLabels.PromLabels(), t2.DiscoveredLabels.PromLabels()); d != 0 {
+	if d := labelpb.Compare(t1.DiscoveredLabels.GetLabels(), t2.DiscoveredLabels.GetLabels()); d != 0 {
 		return d
 	}
 
 	return 0
 }
 
-func (t *ActiveTarget) SetLabels(ls labels.Labels) {
-	var result labelpb.ZLabelSet
-
-	if !ls.IsEmpty() {
-		result = labelpb.ZLabelSet{Labels: labelpb.ZLabelsFromPromLabels(ls)}
-	}
-
-	t.Labels = result
+// MarshalJSON preserves backward compatibility with the previous gogo-proto
+// generated code where LastScrape was time.Time (RFC3339 string).
+func (t *ActiveTarget) MarshalJSON() ([]byte, error) {
+	type Alias ActiveTarget
+	return json.Marshal(&struct {
+		*Alias
+		LastScrape time.Time `json:"lastScrape"`
+	}{
+		Alias:      (*Alias)(t),
+		LastScrape: t.LastScrape.AsTime(),
+	})
 }
 
-func (t *ActiveTarget) SetDiscoveredLabels(ls labels.Labels) {
-	var result labelpb.ZLabelSet
-
-	if !ls.IsEmpty() {
-		result = labelpb.ZLabelSet{Labels: labelpb.ZLabelsFromPromLabels(ls)}
+// UnmarshalJSON preserves backward compatibility with the previous gogo-proto
+// generated code where LastScrape was time.Time (RFC3339 string).
+func (t *ActiveTarget) UnmarshalJSON(data []byte) error {
+	type Alias ActiveTarget
+	aux := &struct {
+		*Alias
+		LastScrape time.Time `json:"lastScrape"`
+	}{
+		Alias: (*Alias)(t),
 	}
-
-	t.DiscoveredLabels = result
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+	if !aux.LastScrape.IsZero() {
+		t.LastScrape = timestamppb.New(aux.LastScrape)
+	}
+	return nil
 }
 
-func (t *DroppedTarget) SetDiscoveredLabels(ls labels.Labels) {
-	var result labelpb.ZLabelSet
-
-	if !ls.IsEmpty() {
-		result = labelpb.ZLabelSet{Labels: labelpb.ZLabelsFromPromLabels(ls)}
+func (t *ActiveTarget) SetLabels(ls labelpb.Labels) {
+	if len(ls) == 0 {
+		t.Labels = nil
+		return
 	}
+	t.Labels = &labelpb.LabelSet{Labels: ls}
+}
 
-	t.DiscoveredLabels = result
+func (t *ActiveTarget) SetDiscoveredLabels(ls labelpb.Labels) {
+	if len(ls) == 0 {
+		t.DiscoveredLabels = nil
+		return
+	}
+	t.DiscoveredLabels = &labelpb.LabelSet{Labels: ls}
+}
+
+func (t *DroppedTarget) SetDiscoveredLabels(ls labelpb.Labels) {
+	if len(ls) == 0 {
+		t.DiscoveredLabels = nil
+		return
+	}
+	t.DiscoveredLabels = &labelpb.LabelSet{Labels: ls}
 }

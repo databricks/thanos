@@ -55,13 +55,13 @@ type Client interface {
 	storepb.StoreClient
 
 	// LabelSets that each apply to some data exposed by the backing store.
-	LabelSets() []labels.Labels
+	LabelSets() []labelpb.Labels
 
 	// TimeRange returns minimum and maximum time range of data in the store.
 	TimeRange() (mint int64, maxt int64)
 
 	// TSDBInfos returns metadata about each TSDB backed by the client.
-	TSDBInfos() []infopb.TSDBInfo
+	TSDBInfos() []*infopb.TSDBInfo
 
 	// SupportsSharding returns true if sharding is supported by the underlying store.
 	SupportsSharding() bool
@@ -92,10 +92,12 @@ type Client interface {
 
 // ProxyStore implements the store API that proxies request to all given underlying stores.
 type ProxyStore struct {
+	storepb.UnimplementedStoreServer
+
 	logger         log.Logger
 	stores         func() []Client
 	component      component.StoreAPI
-	selectorLabels labels.Labels
+	selectorLabels labelpb.Labels
 	buffers        sync.Pool
 
 	responseTimeout                   time.Duration
@@ -272,7 +274,7 @@ func NewProxyStore(
 	reg prometheus.Registerer,
 	stores func() []Client,
 	component component.StoreAPI,
-	selectorLabels labels.Labels,
+	selectorLabels labelpb.Labels,
 	responseTimeout time.Duration,
 	retrievalStrategy RetrievalStrategy,
 	options ...ProxyStoreOption,
@@ -306,21 +308,21 @@ func NewProxyStore(
 	return s
 }
 
-func (s *ProxyStore) LabelSet() []labelpb.ZLabelSet {
+func (s *ProxyStore) LabelSet() []*labelpb.LabelSet {
 	stores := s.stores()
 	if len(stores) == 0 {
-		return []labelpb.ZLabelSet{}
+		return []*labelpb.LabelSet{}
 	}
 
-	mergedLabelSets := make(map[uint64]labelpb.ZLabelSet, len(stores))
+	mergedLabelSets := make(map[uint64]*labelpb.LabelSet, len(stores))
 	for _, st := range stores {
 		for _, lset := range st.LabelSets() {
 			mergedLabelSet := labelpb.ExtendSortedLabels(lset, s.selectorLabels)
-			mergedLabelSets[mergedLabelSet.Hash()] = labelpb.ZLabelSet{Labels: labelpb.ZLabelsFromPromLabels(mergedLabelSet)}
+			mergedLabelSets[mergedLabelSet.Hash()] = &labelpb.LabelSet{Labels: mergedLabelSet}
 		}
 	}
 
-	labelSets := make([]labelpb.ZLabelSet, 0, len(mergedLabelSets))
+	labelSets := make([]*labelpb.LabelSet, 0, len(mergedLabelSets))
 	for _, v := range mergedLabelSets {
 		labelSets = append(labelSets, v)
 	}
@@ -329,9 +331,8 @@ func (s *ProxyStore) LabelSet() []labelpb.ZLabelSet {
 	// selector-labels represents. If no label-sets are announced by the
 	// store-proxy's discovered stores, then we still want to enforce
 	// announcing this subset by announcing the selector as the label-set.
-	selectorLabels := labelpb.ZLabelsFromPromLabels(s.selectorLabels)
-	if len(labelSets) == 0 && len(selectorLabels) > 0 {
-		labelSets = append(labelSets, labelpb.ZLabelSet{Labels: selectorLabels})
+	if len(labelSets) == 0 && len(s.selectorLabels) > 0 {
+		labelSets = append(labelSets, &labelpb.LabelSet{Labels: s.selectorLabels})
 	}
 
 	return labelSets
@@ -357,8 +358,8 @@ func (s *ProxyStore) TimeRange() (int64, int64) {
 	return minTime, maxTime
 }
 
-func (s *ProxyStore) TSDBInfos() []infopb.TSDBInfo {
-	infos := make([]infopb.TSDBInfo, 0)
+func (s *ProxyStore) TSDBInfos() []*infopb.TSDBInfo {
+	infos := make([]*infopb.TSDBInfo, 0)
 	for _, st := range s.stores() {
 		matches, _ := s.tsdbSelector.MatchLabelSets(st.LabelSets()...)
 		if !matches {
@@ -459,7 +460,7 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 
 	var (
 		stores         []Client
-		storeLabelSets []labels.Labels
+		storeLabelSets []labelpb.Labels
 	)
 	// groupReplicaStores[groupKey][replicaKey] = number of stores with the groupKey and replicaKey
 	groupReplicaStores := make(map[string]map[string]int)
@@ -906,7 +907,7 @@ func (s *ProxyStore) LabelValues(ctx context.Context, originalRequest *storepb.L
 
 func storeInfo(st Client) (storeID string, storeAddr string, isLocalStore bool) {
 	storeAddr, isLocalStore = st.Addr()
-	storeID = labelpb.PromLabelSetsToString(st.LabelSets())
+	storeID = labelpb.LabelSetsToString(st.LabelSets())
 	if storeID == "" {
 		storeID = "Store Gateway"
 	}
@@ -916,7 +917,7 @@ func storeInfo(st Client) (storeID string, storeAddr string, isLocalStore bool) 
 // TODO: consider moving the following functions into something like "pkg/pruneutils" since it is also used for exemplars.
 
 func fullExternalLabelsString(st Client) string {
-	return labelpb.PromLabelSetsToStringN(st.LabelSets(), 100000)
+	return labelpb.LabelSetsToStringN(st.LabelSets(), 100000)
 }
 
 func (s *ProxyStore) filterByExclusiveExternalLabels(stores []Client, matchers []*labels.Matcher) ([]Client, []string) {
@@ -965,10 +966,10 @@ func (s *ProxyStore) filterByExclusiveExternalLabels(stores []Client, matchers [
 	return matchedStores, storeDebugMsgs
 }
 
-func (s *ProxyStore) matchingStores(ctx context.Context, minTime, maxTime int64, matchers []*labels.Matcher) ([]Client, []labels.Labels, []string) {
+func (s *ProxyStore) matchingStores(ctx context.Context, minTime, maxTime int64, matchers []*labels.Matcher) ([]Client, []labelpb.Labels, []string) {
 	var (
 		stores         []Client
-		storeLabelSets []labels.Labels
+		storeLabelSets []labelpb.Labels
 		storeDebugMsgs []string
 	)
 	totalStores := 0
@@ -1052,7 +1053,7 @@ func storeMatchDebugMetadata(s Client, debugLogging bool, storeDebugMatchers [][
 
 	match := false
 	for _, sm := range storeDebugMatchers {
-		match = match || LabelSetsMatch(sm, labels.FromStrings("__address__", addr))
+		match = match || LabelSetsMatch(sm, labelpb.FromStrings("__address__", addr))
 	}
 	if !match {
 		const s string = "__address__ does not match debug store metadata matchers"
@@ -1065,7 +1066,7 @@ func storeMatchDebugMetadata(s Client, debugLogging bool, storeDebugMatchers [][
 }
 
 // LabelSetsMatch returns false if all label-set do not match the matchers (aka: OR is between all label-sets).
-func LabelSetsMatch(matchers []*labels.Matcher, lset ...labels.Labels) bool {
+func LabelSetsMatch(matchers []*labels.Matcher, lset ...labelpb.Labels) bool {
 	if len(lset) == 0 {
 		return true
 	}

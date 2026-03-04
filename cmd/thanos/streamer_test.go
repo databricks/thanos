@@ -37,7 +37,7 @@ func TestConvertToSeriesReq(t *testing.T) {
 
 	expectedReq := &storepb.SeriesRequest{
 		Aggregates: []storepb.Aggr{storepb.Aggr_RAW},
-		Matchers: []storepb.LabelMatcher{
+		Matchers: []*storepb.LabelMatcher{
 			{Name: "instance", Value: "localhost:9090", Type: storepb.LabelMatcher_EQ},
 			{Name: "__name__", Value: "cpu_usage", Type: storepb.LabelMatcher_EQ},
 		},

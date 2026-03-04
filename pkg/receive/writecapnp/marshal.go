@@ -12,7 +12,7 @@ import (
 	"github.com/thanos-io/thanos/pkg/store/storepb/prompb"
 )
 
-func Marshal(tenant string, tsreq []prompb.TimeSeries) ([]byte, error) {
+func Marshal(tenant string, tsreq []*prompb.TimeSeries) ([]byte, error) {
 	wr, err := Build(tenant, tsreq)
 	if err != nil {
 		return nil, err
@@ -21,7 +21,7 @@ func Marshal(tenant string, tsreq []prompb.TimeSeries) ([]byte, error) {
 	return wr.Message().Marshal()
 }
 
-func MarshalPacked(tenant string, tsreq []prompb.TimeSeries) ([]byte, error) {
+func MarshalPacked(tenant string, tsreq []*prompb.TimeSeries) ([]byte, error) {
 	wr, err := Build(tenant, tsreq)
 	if err != nil {
 		return nil, err
@@ -30,7 +30,7 @@ func MarshalPacked(tenant string, tsreq []prompb.TimeSeries) ([]byte, error) {
 	return wr.Message().MarshalPacked()
 }
 
-func Build(tenant string, tsreq []prompb.TimeSeries) (WriteRequest, error) {
+func Build(tenant string, tsreq []*prompb.TimeSeries) (WriteRequest, error) {
 	arena := capnp.SingleSegment(nil)
 	_, seg, err := capnp.NewMessage(arena)
 	if err != nil {
@@ -46,7 +46,7 @@ func Build(tenant string, tsreq []prompb.TimeSeries) (WriteRequest, error) {
 	return wr, nil
 }
 
-func BuildInto(wr WriteRequest, tenant string, tsreq []prompb.TimeSeries) error {
+func BuildInto(wr WriteRequest, tenant string, tsreq []*prompb.TimeSeries) error {
 	if err := wr.SetTenant(tenant); err != nil {
 		return errors.Wrap(err, "set tenant")
 	}
@@ -102,7 +102,7 @@ func marshalSymbols(builder *symbolsBuilder, symbols Symbols) error {
 	return symbols.SetData(data)
 }
 
-func marshalLabels(lbls Label_List, pbLbls []labelpb.ZLabel, symbols *symbolsBuilder) error {
+func marshalLabels(lbls Label_List, pbLbls labelpb.Labels, symbols *symbolsBuilder) error {
 	for i, pbLbl := range pbLbls {
 		lbl := lbls.At(i)
 		lbl.SetName(symbols.addEntry(pbLbl.Name))
@@ -111,7 +111,7 @@ func marshalLabels(lbls Label_List, pbLbls []labelpb.ZLabel, symbols *symbolsBui
 	return nil
 }
 
-func marshalSamples(ts TimeSeries, pbSamples []prompb.Sample) error {
+func marshalSamples(ts TimeSeries, pbSamples []*prompb.Sample) error {
 	samples, err := ts.NewSamples(int32(len(pbSamples)))
 	if err != nil {
 		return err
@@ -125,7 +125,7 @@ func marshalSamples(ts TimeSeries, pbSamples []prompb.Sample) error {
 	return nil
 }
 
-func marshalHistograms(ts TimeSeries, pbHistograms []prompb.Histogram) error {
+func marshalHistograms(ts TimeSeries, pbHistograms []*prompb.Histogram) error {
 	if len(pbHistograms) == 0 {
 		return nil
 	}
@@ -141,7 +141,7 @@ func marshalHistograms(ts TimeSeries, pbHistograms []prompb.Histogram) error {
 	return nil
 }
 
-func marshalHistogram(histogram Histogram, h prompb.Histogram) error {
+func marshalHistogram(histogram Histogram, h *prompb.Histogram) error {
 	histogram.SetResetHint(Histogram_ResetHint(h.ResetHint))
 	switch h.Count.(type) {
 	case *prompb.Histogram_CountInt:
@@ -205,7 +205,7 @@ func marshalHistogram(histogram Histogram, h prompb.Histogram) error {
 	return nil
 }
 
-func marshalSpans(spans BucketSpan_List, pbSpans []prompb.BucketSpan) error {
+func marshalSpans(spans BucketSpan_List, pbSpans []*prompb.BucketSpan) error {
 	for j, s := range pbSpans {
 		span := spans.At(j)
 		span.SetOffset(s.Offset)
@@ -214,7 +214,7 @@ func marshalSpans(spans BucketSpan_List, pbSpans []prompb.BucketSpan) error {
 	return nil
 }
 
-func marshalExemplars(ts TimeSeries, pbExemplars []prompb.Exemplar, symbols *symbolsBuilder) error {
+func marshalExemplars(ts TimeSeries, pbExemplars []*prompb.Exemplar, symbols *symbolsBuilder) error {
 	if len(pbExemplars) == 0 {
 		return nil
 	}

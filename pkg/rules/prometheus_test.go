@@ -12,10 +12,10 @@ import (
 	"testing"
 
 	"github.com/go-kit/log"
-	"github.com/prometheus/prometheus/model/labels"
 
 	"github.com/efficientgo/core/testutil"
 	"github.com/thanos-io/thanos/pkg/promclient"
+	"github.com/thanos-io/thanos/pkg/store/labelpb"
 	"github.com/thanos-io/thanos/pkg/testutil/e2eutil"
 )
 
@@ -42,8 +42,8 @@ rule_files:
 	u, err := url.Parse(fmt.Sprintf("http://%s", p.Addr()))
 	testutil.Ok(t, err)
 
-	promRules := NewPrometheus(u, promclient.NewDefaultClient(), func() labels.Labels {
-		return labels.FromStrings("replica", "test1")
+	promRules := NewPrometheus(u, promclient.NewDefaultClient(), func() labelpb.Labels {
+		return labelpb.FromStrings("replica", "test1")
 	})
 	testRulesAgainstExamples(t, filepath.Join(root, "examples/alerts"), promRules, true)
 }

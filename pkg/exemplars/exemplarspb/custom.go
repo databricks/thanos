@@ -17,13 +17,13 @@ import (
 // ExemplarStore wraps the ExemplarsClient and contains the info of external labels.
 type ExemplarStore struct {
 	ExemplarsClient
-	LabelSets []labels.Labels
+	LabelSets []labelpb.Labels
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
 func (m *Exemplar) UnmarshalJSON(b []byte) error {
 	v := struct {
-		Labels    labelpb.ZLabelSet
+		Labels    *labelpb.LabelSet
 		TimeStamp model.Time
 		Value     model.SampleValue
 	}{}
@@ -45,7 +45,7 @@ func (m *Exemplar) MarshalJSON() ([]byte, error) {
 		TimeStamp model.Time        `json:"timestamp"`
 		Value     model.SampleValue `json:"value"`
 	}{
-		Labels:    labelpb.ZLabelsToPromLabels(m.Labels.Labels),
+		Labels:    m.GetLabels().PromLabels(),
 		TimeStamp: model.Time(m.Ts),
 		Value:     model.SampleValue(m.Value),
 	}
@@ -70,17 +70,7 @@ func NewWarningExemplarsResponse(warning error) *ExemplarsResponse {
 
 // Compare only compares the series labels of two exemplar data.
 func (s1 *ExemplarData) Compare(s2 *ExemplarData) int {
-	return labels.Compare(s1.SeriesLabels.PromLabels(), s2.SeriesLabels.PromLabels())
-}
-
-func (s *ExemplarData) SetSeriesLabels(ls labels.Labels) {
-	var result labelpb.ZLabelSet
-
-	if !ls.IsEmpty() {
-		result = labelpb.ZLabelSet{Labels: labelpb.ZLabelsFromPromLabels(ls)}
-	}
-
-	s.SeriesLabels = result
+	return labelpb.Compare(s1.SeriesLabels.GetLabels(), s2.SeriesLabels.GetLabels())
 }
 
 // Compare is used for sorting and comparing exemplars. Start from timestamp, then labels, finally values.
@@ -92,7 +82,7 @@ func (e1 *Exemplar) Compare(e2 *Exemplar) int {
 		return 1
 	}
 
-	if d := labels.Compare(e1.Labels.PromLabels(), e2.Labels.PromLabels()); d != 0 {
+	if d := labelpb.Compare(e1.Labels.GetLabels(), e2.Labels.GetLabels()); d != 0 {
 		return d
 	}
 	return big.NewFloat(e1.Value).Cmp(big.NewFloat(e2.Value))
@@ -101,11 +91,14 @@ func (e1 *Exemplar) Compare(e2 *Exemplar) int {
 func ExemplarsFromPromExemplars(exemplars []exemplar.Exemplar) []*Exemplar {
 	ex := make([]*Exemplar, 0, len(exemplars))
 	for _, e := range exemplars {
-		ex = append(ex, &Exemplar{
-			Labels: labelpb.ZLabelSet{Labels: labelpb.ZLabelsFromPromLabels(e.Labels)},
-			Value:  e.Value,
-			Ts:     e.Ts,
-		})
+		r := &Exemplar{
+			Value: e.Value,
+			Ts:    e.Ts,
+		}
+		if len(e.Labels) > 0 {
+			r.Labels = &labelpb.LabelSet{Labels: labelpb.FromPromLabels(e.Labels)}
+		}
+		ex = append(ex, r)
 	}
 	return ex
 }

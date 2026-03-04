@@ -31,9 +31,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/common/route"
-	"github.com/prometheus/prometheus/model/relabel"
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/tsdb"
+	thanosrelabel "github.com/thanos-io/thanos/pkg/relabel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/exp/slices"
@@ -56,6 +56,7 @@ import (
 	"github.com/thanos-io/thanos/pkg/store/storepb/prompb"
 	"github.com/thanos-io/thanos/pkg/tenancy"
 	"github.com/thanos-io/thanos/pkg/tracing"
+	"github.com/thanos-io/thanos/pkg/vtproto"
 )
 
 const (
@@ -102,8 +103,8 @@ var (
 	errRequestTooLarge = errors.New("write request too large")
 )
 
-// zlabelsGet avoids ZLabels -> PromLabels conversion in hot paths.
-func zlabelsGet(lbls []labelpb.ZLabel, name string) (string, bool) {
+// labelsGet returns the value for a label name from a Labels slice without conversion.
+func labelsGet(lbls labelpb.Labels, name string) (string, bool) {
 	for _, l := range lbls {
 		if l.Name == name {
 			return l.Value, true
@@ -151,6 +152,8 @@ type Options struct {
 
 // Handler serves a Prometheus remote write receiving HTTP endpoint.
 type Handler struct {
+	storepb.UnimplementedWriteableStoreServer
+
 	logger               log.Logger
 	writer               *Writer
 	router               *route.Router
@@ -181,7 +184,6 @@ type Handler struct {
 
 	compressedBufPool   *syncutil.Pool[*bytes.Buffer]
 	decompressedBufPool *syncutil.Pool[*[]byte]
-	writeRequestPool    *syncutil.Pool[*prompb.WriteRequest]
 }
 
 func NewHandler(logger log.Logger, o *Options) *Handler {
@@ -339,6 +341,7 @@ func NewHandler(logger log.Logger, o *Options) *Handler {
 				return true // return buffer to the pool.
 			}
 			return false // discard the buffer that is too large.
+<<<<<<< HEAD
 		}).WithDisabled(o.PoolingDisabled).
 			Build(),
 		writeRequestPool: syncutil.NewPool(func() *prompb.WriteRequest {
@@ -356,6 +359,9 @@ func NewHandler(logger log.Logger, o *Options) *Handler {
 			return true
 		}).WithDisabled(o.PoolingDisabled).
 			Build(),
+=======
+		}).WithDisabled(o.PoolingDisabled).Build(),
+>>>>>>> a7014ec4 (Migrate to vtproto and add string interning)
 	}
 
 	h.forwardRequests.WithLabelValues(labelSuccess)
@@ -467,7 +473,7 @@ func getSortedStringSliceDiff(slice1, slice2 []Endpoint) []Endpoint {
 		slice2Items[s2] = struct{}{}
 	}
 
-	var difference = make([]Endpoint, 0)
+	var difference = make([]Endpoint, 0, len(slice1Items))
 	for s1 := range slice1Items {
 		_, s2Contains := slice2Items[s1]
 		if s2Contains {
@@ -553,7 +559,7 @@ func (h *Handler) getStats(r *http.Request, statsByLabelName string) ([]statusap
 // getTenantForStorage returns the tenant to use when writing a time series to TSDB.
 // This is the actual tenant ID used for storage, unlike tenantKeyForDistribution which
 // may include prefixes for hashring distribution purposes.
-func (h *Handler) getTenantForStorage(tenantHTTP string, ts prompb.TimeSeries) string {
+func (h *Handler) getTenantForStorage(tenantHTTP string, ts *prompb.TimeSeries) string {
 	// If TenantAttributor is configured, the logic is identical to tenantKeyForDistribution.
 	if h.options.TenantAttributor != nil {
 		return h.tenantKeyForDistribution(tenantHTTP, ts)
@@ -562,7 +568,7 @@ func (h *Handler) getTenantForStorage(tenantHTTP string, ts prompb.TimeSeries) s
 	// Legacy behavior: use splitTenantLabelName if configured.
 	tenant := tenantHTTP
 	if h.splitTenantLabelName != "" {
-		if tnt, ok := zlabelsGet(ts.Labels, h.splitTenantLabelName); ok && tnt != "" {
+		if tnt, ok := labelsGet(ts.Labels, h.splitTenantLabelName); ok && tnt != "" {
 			tenant = tnt
 		}
 	}
@@ -576,13 +582,12 @@ func (h *Handler) getTenantForStorage(tenantHTTP string, ts prompb.TimeSeries) s
 // - If verify-attribution is true, use the HTTP tenant for actual routing.
 // - If verify-attribution is false and HTTP header is provided (tenant != default), use the HTTP tenant.
 // - If verify-attribution is false and HTTP header is not provided, do attribution from labels.
-func (h *Handler) tenantKeyForDistribution(tenantHTTP string, ts prompb.TimeSeries) string {
+func (h *Handler) tenantKeyForDistribution(tenantHTTP string, ts *prompb.TimeSeries) string {
 	// If TenantAttributor is configured, use rule-based tenant attribution.
 	if h.options.TenantAttributor != nil {
 		// In verify mode: attribution for metrics only, use HTTP tenant for actual routing.
 		if h.options.TenantAttributor.IsVerifyMode() {
-			lbls := labelpb.ZLabelsToPromLabels(ts.Labels)
-			attributedTenant := h.options.TenantAttributor.GetTenantFromLabels(lbls)
+			attributedTenant := h.options.TenantAttributor.GetTenantFromLabels(ts.Labels)
 			h.options.TenantAttributor.RecordVerification(attributedTenant, tenantHTTP)
 			// Track what tenant would be attributed (for monitoring attribution rules)
 			h.tenantAttributedTotal.WithLabelValues(attributedTenant, "label_rules").Inc()
@@ -595,11 +600,15 @@ func (h *Handler) tenantKeyForDistribution(tenantHTTP string, ts prompb.TimeSeri
 			return tenantHTTP
 		}
 
+<<<<<<< HEAD
 		// No HTTP header provided: do attribution from labels.
 		lbls := labelpb.ZLabelsToPromLabels(ts.Labels)
 		attributedTenant := h.options.TenantAttributor.GetTenantFromLabels(lbls)
 		h.tenantAttributedTotal.WithLabelValues(attributedTenant, "label_rules").Inc()
 		return attributedTenant
+=======
+		return h.options.TenantAttributor.GetTenantFromLabels(ts.Labels)
+>>>>>>> a7014ec4 (Migrate to vtproto and add string interning)
 	}
 
 	// Legacy behavior: use splitTenantLabelName if configured.
@@ -607,7 +616,7 @@ func (h *Handler) tenantKeyForDistribution(tenantHTTP string, ts prompb.TimeSeri
 	if h.splitTenantLabelName == "" {
 		return tenant
 	}
-	if v, ok := zlabelsGet(ts.Labels, h.splitTenantLabelName); ok && v != "" {
+	if v, ok := labelsGet(ts.Labels, h.splitTenantLabelName); ok && v != "" {
 		return h.splitTenantLabelName + ":" + v
 	}
 	return h.options.DefaultTenantID
@@ -643,8 +652,11 @@ func (h *Handler) Run() error {
 	return h.httpSrv.Serve(listener)
 }
 
-// replica encapsulates the replica number of a request and if the request is
-// already replicated.
+// replica describes the replication intent of a write request.
+// When 'replicated' is false, the request has not yet been replicated and must be
+// fanned out to replicas 0 through ReplicationFactor-1.
+// When replicated is true, the request has already been assigned to a specific
+// replica and n identifies which one. No further fan-out is needed.
 type replica struct {
 	n          uint64
 	replicated bool
@@ -656,9 +668,17 @@ type endpointReplica struct {
 	replica  uint64
 }
 
+// distributionKey identifies a unique (endpoint, replica, tenant) write
+// destination, replacing the previous nested map[endpointReplica]map[string]trackedSeries.
+type distributionKey struct {
+	er     endpointReplica
+	tenant string
+	local  bool
+}
+
 type trackedSeries struct {
 	seriesIDs  []int
-	timeSeries []prompb.TimeSeries
+	timeSeries []*prompb.TimeSeries
 }
 
 type writeResponse struct {
@@ -677,7 +697,7 @@ func newWriteResponse(seriesIDs []int, err error, er endpointReplica, tenant str
 	}
 }
 
-func secondsSinceFirstSample(toMS int64, ts prompb.TimeSeries) float64 {
+func secondsSinceFirstSample(toMS int64, ts *prompb.TimeSeries) float64 {
 	fromMS := toMS
 	if len(ts.Samples) > 0 {
 		fromMS = ts.Samples[0].Timestamp
@@ -685,7 +705,7 @@ func secondsSinceFirstSample(toMS int64, ts prompb.TimeSeries) float64 {
 	return float64(toMS-fromMS) / 1000
 }
 
-func isPreAgged(ts prompb.TimeSeries) bool {
+func isPreAgged(ts *prompb.TimeSeries) bool {
 	for _, l := range ts.Labels {
 		if l.Name == labelPreAgg && (l.Value == "true" || strings.HasPrefix(l.Value, "v")) {
 			return true
@@ -797,14 +817,20 @@ func (h *Handler) receiveHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// NOTE: Due to zero copy ZLabels, Labels used from WriteRequests keeps memory
-	// from the whole request. Ensure that we always copy those when we want to
-	// store them for longer time.
-	wreq, ret3 := h.writeRequestPool.Get()
-	defer ret3(wreq)
-	// Note: do not use proto.Unmarshal here, it will call Reset() which replaces the underlying
-	// struct entirely, so we ould effectively be pooling a pointer.
-	if err := wreq.Unmarshal(*reqBuf); err != nil {
+	wreq := prompb.WriteRequestFromVTPool()
+	wrefReturnWg := &sync.WaitGroup{}
+	wrefReturnWg.Add(1)
+	// Note: we have to essentially "reference count" the writeRequest usage
+	// because the fanoutForward function spawns background goroutines that still hold
+	// onto parts of the writeRequest struct. Thus, it is only safe to return the writeRequest
+	// to the pool after this AND that routine have finished.
+	go func() {
+		wrefReturnWg.Wait()
+		wreq.ReturnToVTPool()
+	}()
+	defer wrefReturnWg.Done()
+
+	if err := wreq.UnmarshalVT(*reqBuf); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -854,19 +880,8 @@ func (h *Handler) receiveHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Deep copy all label strings to detach them from pooled decode buffer.
-	// Required for correctness when pooled buffers are reused and for preventing
-	// retention of the whole request buffer via zero-copy label references.
-	for i := range wreq.Timeseries {
-		labelpb.ReAllocZLabelsStrings(&wreq.Timeseries[i].Labels, h.writer.opts.Intern)
-		// Also detach exemplar labels from the pooled buffer.
-		for j := range wreq.Timeseries[i].Exemplars {
-			labelpb.ReAllocZLabelsStrings(&wreq.Timeseries[i].Exemplars[j].Labels, h.writer.opts.Intern)
-		}
-	}
-
 	responseStatusCode := http.StatusOK
-	tenantStats, err := h.handleRequest(ctx, rep, tenantHTTP, wreq)
+	tenantStats, err := h.handleRequest(ctx, rep, tenantHTTP, wreq.Timeseries, wrefReturnWg)
 	if err != nil {
 		level.Debug(tLogger).Log("msg", "failed to handle request", "err", err.Error())
 		switch errors.Cause(err) {
@@ -903,17 +918,10 @@ func (h *Handler) receiveHTTP(w http.ResponseWriter, r *http.Request) {
 
 			// Log high latency requests (>3 minutes) with sampling (1 in 10000)
 			if lat > 180 && !isPreAgged && rand.Intn(10000) == 0 {
-
-				// Convert labels to string for logging
-				var labelPairs []string
-				for _, label := range ts.Labels {
-					labelPairs = append(labelPairs, fmt.Sprintf("%s=%s", label.Name, label.Value))
-				}
-
 				level.Warn(h.logger).Log(
 					"msg", "high e2e latency detected for non-rollup timeseries",
 					"latency_seconds", lat,
-					"labels", fmt.Sprintf("{%s}", strings.Join(labelPairs, ", ")),
+					"labels", labelpb.Labels(ts.Labels).String(),
 				)
 			}
 		}
@@ -928,7 +936,7 @@ type requestStats struct {
 
 type tenantRequestStats map[string]requestStats
 
-func (h *Handler) handleRequest(ctx context.Context, rep uint64, tenantHTTP string, wreq *prompb.WriteRequest) (tenantRequestStats, error) {
+func (h *Handler) handleRequest(ctx context.Context, rep uint64, tenantHTTP string, timeseries []*prompb.TimeSeries, wrefReturnWg *sync.WaitGroup) (tenantRequestStats, error) {
 	tLogger := log.With(h.logger, "tenantHTTP", tenantHTTP)
 
 	// This replica value is used to detect cycles in cyclic topologies.
@@ -957,7 +965,7 @@ func (h *Handler) handleRequest(ctx context.Context, rep uint64, tenantHTTP stri
 	// Forward any time series as necessary. All time series
 	// destined for the local node will be written to the receiver.
 	// Time series will be replicated as necessary.
-	return h.forward(ctx, tenantHTTP, r, wreq)
+	return h.forward(ctx, tenantHTTP, r, timeseries, wrefReturnWg)
 }
 
 // forward accepts a write request, batches its time series by
@@ -968,64 +976,34 @@ func (h *Handler) handleRequest(ctx context.Context, rep uint64, tenantHTTP stri
 // unless the request needs to be replicated.
 // The function only returns when all requests have finished
 // or the context is canceled.
-func (h *Handler) forward(ctx context.Context, tenantHTTP string, r replica, wreq *prompb.WriteRequest) (tenantRequestStats, error) {
+func (h *Handler) forward(ctx context.Context, tenantHTTP string, r replica, timeseries []*prompb.TimeSeries, wrefReturnWg *sync.WaitGroup) (tenantRequestStats, error) {
 	span, ctx := tracing.StartSpan(ctx, "receive_fanout_forward")
 	defer span.Finish()
 
-	var replicas []uint64
-	if r.replicated {
-		replicas = []uint64{r.n}
-	} else {
-		for rn := uint64(0); rn < h.options.ReplicationFactor; rn++ {
-			replicas = append(replicas, rn)
+	return h.fanoutForward(ctx, tenantHTTP, r, timeseries, wrefReturnWg)
+}
+
+func (h *Handler) gatherWriteStats(rf int, writes map[distributionKey]*trackedSeries) tenantRequestStats {
+	stats := make(tenantRequestStats, len(writes))
+
+	for key, series := range writes {
+		samples := 0
+		for _, ts := range series.timeSeries {
+			samples += len(ts.Samples)
 		}
-	}
 
-	params := remoteWriteParams{
-		tenant:            tenantHTTP,
-		writeRequest:      wreq,
-		replicas:          replicas,
-		alreadyReplicated: r.replicated,
-	}
-
-	return h.fanoutForward(ctx, params)
-}
-
-type remoteWriteParams struct {
-	tenant            string
-	writeRequest      *prompb.WriteRequest
-	replicas          []uint64
-	alreadyReplicated bool
-}
-
-func (h *Handler) gatherWriteStats(rf int, writes ...map[endpointReplica]map[string]trackedSeries) tenantRequestStats {
-	var stats tenantRequestStats = make(tenantRequestStats)
-
-	for _, write := range writes {
-		for er := range write {
-			for tenant, series := range write[er] {
-				samples := 0
-
-				for _, ts := range series.timeSeries {
-					samples += len(ts.Samples)
-				}
-
-				if st, ok := stats[tenant]; ok {
-					st.timeseries += len(series.timeSeries)
-					st.totalSamples += samples
-
-					stats[tenant] = st
-				} else {
-					stats[tenant] = requestStats{
-						timeseries:   len(series.timeSeries),
-						totalSamples: samples,
-					}
-				}
+		if st, ok := stats[key.tenant]; ok {
+			st.timeseries += len(series.timeSeries)
+			st.totalSamples += samples
+			stats[key.tenant] = st
+		} else {
+			stats[key.tenant] = requestStats{
+				timeseries:   len(series.timeSeries),
+				totalSamples: samples,
 			}
 		}
 	}
 
-	// adjust counters by the replication factor
 	for tenant, st := range stats {
 		st.timeseries /= rf
 		st.totalSamples /= rf
@@ -1035,7 +1013,7 @@ func (h *Handler) gatherWriteStats(rf int, writes ...map[endpointReplica]map[str
 	return stats
 }
 
-func (h *Handler) fanoutForward(ctx context.Context, params remoteWriteParams) (tenantRequestStats, error) {
+func (h *Handler) fanoutForward(ctx context.Context, tenant string, r replica, timeseries []*prompb.TimeSeries, wrefReturnWg *sync.WaitGroup) (tenantRequestStats, error) {
 	ctx, cancel := context.WithTimeout(tracing.CopyTraceContext(context.Background(), ctx), h.options.ForwardTimeout)
 
 	var writeErrors writeErrors
@@ -1050,38 +1028,37 @@ func (h *Handler) fanoutForward(ctx context.Context, params remoteWriteParams) (
 		}
 	}()
 
-	logTags := []interface{}{"tenant", params.tenant}
+	logTags := []interface{}{"tenant", tenant}
 	if id, ok := middleware.RequestIDFromContext(ctx); ok {
 		logTags = append(logTags, "request-id", id)
 	}
 	requestLogger := log.With(h.logger, logTags...)
 
-	localWrites, remoteWrites, err := h.distributeTimeseriesToReplicas(params.tenant, params.replicas, params.writeRequest.Timeseries)
+	writes, err := h.distributeTimeseriesToReplicas(tenant, r, timeseries)
 	if err != nil {
 		level.Error(requestLogger).Log("msg", "failed to distribute timeseries to replicas", "err", err)
 		return stats, err
 	}
 
-	stats = h.gatherWriteStats(len(params.replicas), localWrites, remoteWrites)
+	rf := int(h.options.ReplicationFactor)
+	if r.replicated {
+		rf = 1
+	}
+	stats = h.gatherWriteStats(rf, writes)
 
 	// Precompute seriesID -> tenantKey used by distributeTimeseriesToReplicas so we can
 	// attribute errorSeries correctly even when the responses channel closes.
-	seriesTenantKey := make([]string, len(params.writeRequest.Timeseries))
-	for i, ts := range params.writeRequest.Timeseries {
-		seriesTenantKey[i] = h.tenantKeyForDistribution(params.tenant, ts)
+	seriesTenantKey := make([]string, len(timeseries))
+	for i, ts := range timeseries {
+		seriesTenantKey[i] = h.tenantKeyForDistribution(tenant, ts)
 	}
 
-	// Prepare a buffered channel to receive the responses from the local and remote writes. Remote writes will all go
-	// asynchronously and with this capacity we will never block on writing to the channel.
-	maxBufferedResponses := len(localWrites)
-	for er := range remoteWrites {
-		maxBufferedResponses += len(remoteWrites[er])
-	}
-
-	responses := make(chan writeResponse, maxBufferedResponses)
+	responses := make(chan writeResponse, len(writes))
 	wg := sync.WaitGroup{}
-
-	h.sendWrites(ctx, &wg, params, localWrites, remoteWrites, responses)
+	if wrefReturnWg != nil {
+		wrefReturnWg.Add(1)
+	}
+	h.sendWrites(ctx, &wg, r.replicated, writes, responses)
 
 	go func() {
 		wg.Wait()
@@ -1097,15 +1074,18 @@ func (h *Handler) fanoutForward(ctx context.Context, params remoteWriteParams) (
 					level.Debug(requestLogger).Log("msg", "request failed, but not needed to achieve quorum", "err", resp.err)
 				}
 			}
+			if wrefReturnWg != nil {
+				wrefReturnWg.Done()
+			}
 		}()
 	}()
 
 	quorum := h.writeQuorum()
-	if params.alreadyReplicated {
+	if r.replicated {
 		quorum = 1
 	}
-	successes := make([]int, len(params.writeRequest.Timeseries))
-	seriesErrs := newReplicationErrors(quorum, len(params.writeRequest.Timeseries))
+	successes := make([]int, len(timeseries))
+	seriesErrs := newReplicationErrors(quorum, len(timeseries))
 	for {
 		select {
 		case <-ctx.Done():
@@ -1146,79 +1126,92 @@ func (h *Handler) fanoutForward(ctx context.Context, params remoteWriteParams) (
 }
 
 // distributeTimeseriesToReplicas distributes the given timeseries from the tenant to different endpoints in a manner
-// that achieves the replication factor indicated by replicas.
-// The first return value are the series that should be written to the local node. The second return value are the
-// series that should be written to remote nodes.
+// that achieves the replication factor.
+// When r.replicated is true, only the single replica r.n is used.
+// Otherwise, replicas 0 through ReplicationFactor-1 are used.
+// The returned map is keyed by (endpointReplica, tenant, local) so that callers
+// can distinguish local vs remote writes without a nested map.
 func (h *Handler) distributeTimeseriesToReplicas(
 	tenantHTTP string,
-	replicas []uint64,
-	timeseries []prompb.TimeSeries,
-) (map[endpointReplica]map[string]trackedSeries, map[endpointReplica]map[string]trackedSeries, error) {
+	r replica,
+	timeseries []*prompb.TimeSeries,
+) (map[distributionKey]*trackedSeries, error) {
 	h.mtx.RLock()
 	defer h.mtx.RUnlock()
-	remoteWrites := make(map[endpointReplica]map[string]trackedSeries)
-	localWrites := make(map[endpointReplica]map[string]trackedSeries)
+
+	var replicaStart, replicaEnd uint64
+	if r.replicated {
+		replicaStart, replicaEnd = r.n, r.n+1
+	} else {
+		replicaStart, replicaEnd = 0, h.options.ReplicationFactor
+	}
+
+	writes := make(map[distributionKey]*trackedSeries)
 	for tsIndex, ts := range timeseries {
 		tenant := h.tenantKeyForDistribution(tenantHTTP, ts)
 
-		for _, rn := range replicas {
-			endpoint, err := h.hashring.GetN(tenant, &ts, rn)
+		for rn := replicaStart; rn < replicaEnd; rn++ {
+			endpoint, err := h.hashring.GetN(tenant, ts, rn)
 			if err != nil {
-				return nil, nil, err
+				return nil, err
 			}
-			endpointReplica := endpointReplica{endpoint: endpoint, replica: rn}
-			var writeDestination = remoteWrites
-			if endpoint.HasAddress(h.options.Endpoint) {
-				writeDestination = localWrites
+			key := distributionKey{
+				er:     endpointReplica{endpoint: endpoint, replica: rn},
+				tenant: tenant,
+				local:  endpoint.HasAddress(h.options.Endpoint),
 			}
-			writeableSeries, ok := writeDestination[endpointReplica]
-			if !ok {
-				writeableSeries = make(map[string]trackedSeries, 1)
-				writeDestination[endpointReplica] = writeableSeries
+			tracked := writes[key]
+			if tracked == nil {
+				tracked = &trackedSeries{}
+				writes[key] = tracked
 			}
-			tenantSeries := writeableSeries[tenant]
-
-			tenantSeries.timeSeries = append(tenantSeries.timeSeries, ts)
-			tenantSeries.seriesIDs = append(tenantSeries.seriesIDs, tsIndex)
-
-			writeDestination[endpointReplica][tenant] = tenantSeries
+			tracked.timeSeries = append(tracked.timeSeries, timeseries[tsIndex])
+			tracked.seriesIDs = append(tracked.seriesIDs, tsIndex)
 		}
 	}
-	if h.receiverMode == RouterOnly && len(localWrites) > 0 {
-		panic("router only mode should not have any local writes")
+
+	if h.receiverMode == RouterOnly {
+		for key := range writes {
+			if key.local {
+				panic("router only mode should not have any local writes")
+			}
+		}
 	}
-	if h.receiverMode == IngestorOnly && len(remoteWrites) > 0 {
-		panic("ingestor only mode should not have any remote writes")
+	if h.receiverMode == IngestorOnly {
+		for key := range writes {
+			if !key.local {
+				panic("ingestor only mode should not have any remote writes")
+			}
+		}
 	}
-	return localWrites, remoteWrites, nil
+	return writes, nil
 }
 
 // sendWrites sends the local and remote writes to execute concurrently, controlling them through the provided sync.WaitGroup.
 // The responses from the writes are sent to the responses channel.
+// TODO: this should probably just be a single loop and all should be done in a separate goroutine.
 func (h *Handler) sendWrites(
 	ctx context.Context,
 	wg *sync.WaitGroup,
-	params remoteWriteParams,
-	localWrites map[endpointReplica]map[string]trackedSeries,
-	remoteWrites map[endpointReplica]map[string]trackedSeries,
+	alreadyReplicated bool,
+	writes map[distributionKey]*trackedSeries,
 	responses chan writeResponse,
 ) {
 	// Do the writes to the local node first. This should be easy and fast.
-	for writeDestination := range localWrites {
-		func(writeDestination endpointReplica) {
-			for tenant, trackedSeries := range localWrites[writeDestination] {
-				h.sendLocalWrite(ctx, writeDestination, tenant, trackedSeries, responses)
-			}
-		}(writeDestination)
+	for key, series := range writes {
+		if !key.local {
+			continue
+		}
+		h.sendLocalWrite(ctx, key.er, key.tenant, series, responses)
 	}
 
 	// Do the writes to remote nodes. Run them all in parallel.
-	for writeDestination := range remoteWrites {
-		for tenant, trackedSeries := range remoteWrites[writeDestination] {
-			wg.Add(1)
-
-			h.sendRemoteWrite(ctx, tenant, writeDestination, trackedSeries, params.alreadyReplicated, responses, wg)
+	for key, series := range writes {
+		if key.local {
+			continue
 		}
+		wg.Add(1)
+		h.sendRemoteWrite(ctx, key.tenant, key.er, series, alreadyReplicated, responses, wg)
 	}
 }
 
@@ -1228,7 +1221,7 @@ func (h *Handler) sendLocalWrite(
 	ctx context.Context,
 	writeDestination endpointReplica,
 	tenantHTTP string,
-	trackedSeries trackedSeries,
+	trackedSeries *trackedSeries,
 	responses chan<- writeResponse,
 ) {
 	span, tracingCtx := tracing.StartSpan(ctx, "receive_local_tsdb_write")
@@ -1236,7 +1229,7 @@ func (h *Handler) sendLocalWrite(
 	span.SetTag("endpoint", writeDestination.endpoint)
 	span.SetTag("replica", writeDestination.replica)
 
-	tenantSeriesMapping := map[string][]prompb.TimeSeries{}
+	tenantSeriesMapping := make(map[string][]*prompb.TimeSeries, len(trackedSeries.timeSeries))
 	for _, ts := range trackedSeries.timeSeries {
 		tenant := h.getTenantForStorage(tenantHTTP, ts)
 		tenantSeriesMapping[tenant] = append(tenantSeriesMapping[tenant], ts)
@@ -1262,7 +1255,7 @@ func (h *Handler) sendRemoteWrite(
 	ctx context.Context,
 	tenant string,
 	endpointReplica endpointReplica,
-	trackedSeries trackedSeries,
+	trackedSeries *trackedSeries,
 	alreadyReplicated bool,
 	responses chan writeResponse,
 	wg *sync.WaitGroup,
@@ -1341,7 +1334,13 @@ func (h *Handler) RemoteWrite(ctx context.Context, r *storepb.WriteRequest) (*st
 	span, ctx := tracing.StartSpan(ctx, "receive_grpc")
 	defer span.Finish()
 
-	_, err := h.handleRequest(ctx, uint64(r.Replica), r.Tenant, &prompb.WriteRequest{Timeseries: r.Timeseries})
+	// The generated POOL_RETURN_REFCOUNT handler manages the storepb.WriteRequest pool
+	// lifecycle via a context-injected WaitGroup. We extract it here and pass it through
+	// the pipeline so that fanoutForward's drain goroutine can hold a reference, delaying
+	// pool return until all async work completes.
+	wg := vtproto.ReturnWGFromContext(ctx)
+
+	_, err := h.handleRequest(ctx, uint64(r.Replica), r.Tenant, r.Timeseries, wg)
 	if err != nil {
 		level.Debug(h.logger).Log("msg", "failed to handle request", "err", err)
 	}
@@ -1367,14 +1366,13 @@ func (h *Handler) relabel(wreq *prompb.WriteRequest) {
 	if len(relabelConfigs) == 0 {
 		return
 	}
-	timeSeries := make([]prompb.TimeSeries, 0, len(wreq.Timeseries))
+	timeSeries := make([]*prompb.TimeSeries, 0, len(wreq.Timeseries))
 	for _, ts := range wreq.Timeseries {
 		var keep bool
-		lbls, keep := relabel.Process(labelpb.ZLabelsToPromLabels(ts.Labels), relabelConfigs...)
+		ts.Labels, keep = thanosrelabel.Process(ts.Labels, relabelConfigs...)
 		if !keep {
 			continue
 		}
-		ts.Labels = labelpb.ZLabelsFromPromLabels(lbls)
 		timeSeries = append(timeSeries, ts)
 	}
 	wreq.Timeseries = timeSeries

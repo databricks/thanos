@@ -64,20 +64,20 @@ func TestTargetsAPI_Fanout(t *testing.T) {
 	targetAndAssert(t, ctx, q.Endpoint("http"), "", &targetspb.TargetDiscovery{
 		ActiveTargets: []*targetspb.ActiveTarget{
 			{
-				DiscoveredLabels: labelpb.ZLabelSet{Labels: []labelpb.ZLabel{
-					{Name: "__address__", Value: "localhost:9090"},
-					{Name: "__metrics_path__", Value: "/metrics"},
-					{Name: "__scheme__", Value: "http"},
-					{Name: "__scrape_interval__", Value: "1s"},
-					{Name: "__scrape_timeout__", Value: "1s"},
-					{Name: "job", Value: "myself"},
-					{Name: "prometheus", Value: "ha"},
-				}},
-				Labels: labelpb.ZLabelSet{Labels: []labelpb.ZLabel{
-					{Name: "instance", Value: "localhost:9090"},
-					{Name: "job", Value: "myself"},
-					{Name: "prometheus", Value: "ha"},
-				}},
+				DiscoveredLabels: labelpb.LabelSetFromStrings(
+					"__address__", "localhost:9090",
+					"__metrics_path__", "/metrics",
+					"__scheme__", "http",
+					"__scrape_interval__", "1s",
+					"__scrape_timeout__", "1s",
+					"job", "myself",
+					"prometheus", "ha",
+				),
+				Labels: labelpb.LabelSetFromStrings(
+					"instance", "localhost:9090",
+					"job", "myself",
+					"prometheus", "ha",
+				),
 				ScrapePool: "myself",
 				ScrapeUrl:  "http://localhost:9090/metrics",
 				Health:     targetspb.TargetHealth_UP,
@@ -85,15 +85,15 @@ func TestTargetsAPI_Fanout(t *testing.T) {
 		},
 		DroppedTargets: []*targetspb.DroppedTarget{
 			{
-				DiscoveredLabels: labelpb.ZLabelSet{Labels: []labelpb.ZLabel{
-					{Name: "__address__", Value: "localhost:80"},
-					{Name: "__metrics_path__", Value: "/metrics"},
-					{Name: "__scheme__", Value: "http"},
-					{Name: "__scrape_interval__", Value: "1s"},
-					{Name: "__scrape_timeout__", Value: "1s"},
-					{Name: "job", Value: "myself"},
-					{Name: "prometheus", Value: "ha"},
-				}},
+				DiscoveredLabels: labelpb.LabelSetFromStrings(
+					"__address__", "localhost:80",
+					"__metrics_path__", "/metrics",
+					"__scheme__", "http",
+					"__scrape_interval__", "1s",
+					"__scrape_timeout__", "1s",
+					"job", "myself",
+					"prometheus", "ha",
+				),
 			},
 		},
 	})
@@ -120,7 +120,7 @@ func targetAndAssert(t *testing.T, ctx context.Context, addr, state string, want
 		}
 
 		for it := range res.ActiveTargets {
-			res.ActiveTargets[it].LastScrape = time.Time{}
+			res.ActiveTargets[it].LastScrape = nil
 			res.ActiveTargets[it].LastScrapeDuration = 0
 			res.ActiveTargets[it].GlobalUrl = ""
 		}

@@ -1,0 +1,50 @@
+syntax = "proto3";
+package testpkg;
+
+option go_package = "github.com/thanos-io/thanos/pkg/vtproto/gen/test/testdata";
+
+import "github.com/planetscale/vtprotobuf/vtproto/ext.proto";
+import "vtpool.proto";
+
+message DeferRequest {
+  option (vtproto.mempool) = true;
+  option (vtpool.pool_return) = POOL_RETURN_DEFER;
+  string name = 1;
+}
+
+message CallerRequest {
+  option (vtproto.mempool) = true;
+  option (vtpool.pool_return) = POOL_RETURN_CALLER;
+  string name = 1;
+}
+
+message RefcountRequest {
+  option (vtproto.mempool) = true;
+  option (vtpool.pool_return) = POOL_RETURN_REFCOUNT;
+  string name = 1;
+}
+
+// Has mempool but no pool_return -- should NOT get a pool-aware handler.
+message NoOptionRequest {
+  option (vtproto.mempool) = true;
+  string name = 1;
+}
+
+// Has neither mempool nor pool_return -- should be ignored entirely.
+message PlainRequest {
+  string name = 1;
+}
+
+message Response {
+  string result = 1;
+}
+
+service TestService {
+  rpc DeferMethod(DeferRequest) returns (Response);
+  rpc CallerMethod(CallerRequest) returns (Response);
+  rpc RefcountMethod(RefcountRequest) returns (Response);
+  rpc NoOptionMethod(NoOptionRequest) returns (Response);
+  rpc PlainMethod(PlainRequest) returns (Response);
+  rpc DeferStream(DeferRequest) returns (stream Response);
+  rpc CallerStream(CallerRequest) returns (stream Response);
+}

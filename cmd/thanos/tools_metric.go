@@ -73,7 +73,7 @@ func streamMetric(conf *rawMetricConfig, logger log.Logger) error {
 		return err
 	}
 	storeClient := storepb.NewStoreClient(conn)
-	labelMatchers := []storepb.LabelMatcher{
+	labelMatchers := []*storepb.LabelMatcher{
 		{Type: storepb.LabelMatcher_EQ, Name: "__name__", Value: conf.metric},
 	}
 	addMatcher := func(mtype storepb.LabelMatcher_Type, matcher string) {
@@ -82,7 +82,7 @@ func streamMetric(conf *rawMetricConfig, logger log.Logger) error {
 			level.Error(logger).Log("msg", "ignoring an invalid label matcher", "matcher", matcher)
 			return
 		}
-		labelMatchers = append(labelMatchers, storepb.LabelMatcher{
+		labelMatchers = append(labelMatchers, &storepb.LabelMatcher{
 			Type:  mtype,
 			Name:  parts[0],
 			Value: parts[1],

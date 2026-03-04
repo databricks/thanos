@@ -16,6 +16,7 @@ import (
 
 	"github.com/thanos-io/thanos/pkg/extpromql"
 	"github.com/thanos-io/thanos/pkg/rules/rulespb"
+	"github.com/thanos-io/thanos/pkg/store/labelpb"
 	"github.com/thanos-io/thanos/pkg/tracing"
 )
 
@@ -142,8 +143,7 @@ func filterRulesByMatchers(ruleGroups []*rulespb.RuleGroup, matcherSets [][]*lab
 		ruleCount := 0
 		for _, r := range g.Rules {
 			// Filter rules based on matcher.
-			rl := r.GetLabels()
-			if matches(matcherSets, rl) {
+			if matches(matcherSets, r.GetLabels()) {
 				g.Rules[ruleCount] = r
 				ruleCount++
 			}
@@ -162,25 +162,24 @@ func filterRulesByMatchers(ruleGroups []*rulespb.RuleGroup, matcherSets [][]*lab
 }
 
 // matches returns whether the non-templated labels satisfy all the matchers in matcherSets.
-func matches(matcherSets [][]*labels.Matcher, l labels.Labels) bool {
+func matches(matcherSets [][]*labels.Matcher, l labelpb.Labels) bool {
 	if len(matcherSets) == 0 {
 		return true
 	}
 
-	b := labels.NewBuilder(labels.EmptyLabels())
 	labelTemplate := template.New("label")
-	l.Range(func(label labels.Label) {
+	nonTemplated := make(labelpb.Labels, 0, len(l))
+	for _, label := range l {
 		t, err := labelTemplate.Parse(label.Value)
 		// Label value is non-templated if it is one node of type NodeText.
 		if err == nil && len(t.Root.Nodes) == 1 && t.Root.Nodes[0].Type() == parse.NodeText {
-			b.Set(label.Name, label.Value)
+			nonTemplated = append(nonTemplated, label)
 		}
-	})
-	nonTemplatedLabels := b.Labels()
+	}
 
 	for _, matchers := range matcherSets {
 		for _, m := range matchers {
-			if v := nonTemplatedLabels.Get(m.Name); !m.Matches(v) {
+			if v := nonTemplated.Get(m.Name); !m.Matches(v) {
 				return false
 			}
 		}
@@ -236,11 +235,14 @@ func dedupRules(rules []*rulespb.Rule, replicaLabels map[string]struct{}) []*rul
 }
 
 func removeReplicaLabels(r *rulespb.Rule, replicaLabels map[string]struct{}) {
-	b := labels.NewBuilder(r.GetLabels())
-	for k := range replicaLabels {
-		b.Del(k)
+	ls := r.GetLabels()
+	filtered := make(labelpb.Labels, 0, len(ls))
+	for _, l := range ls {
+		if _, ok := replicaLabels[l.Name]; !ok {
+			filtered = append(filtered, l)
+		}
 	}
-	r.SetLabels(b.Labels())
+	r.SetLabels(filtered)
 }
 
 func dedupGroups(groups []*rulespb.RuleGroup) []*rulespb.RuleGroup {

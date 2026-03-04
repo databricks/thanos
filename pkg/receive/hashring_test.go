@@ -25,15 +25,9 @@ func TestHashringGet(t *testing.T) {
 	t.Parallel()
 
 	ts := &prompb.TimeSeries{
-		Labels: []labelpb.ZLabel{
-			{
-				Name:  "foo",
-				Value: "bar",
-			},
-			{
-				Name:  "baz",
-				Value: "qux",
-			},
+		Labels: labelpb.Labels{
+			{Name: "foo", Value: "bar"},
+			{Name: "baz", Value: "qux"},
 		},
 	}
 
@@ -225,11 +219,8 @@ func TestKetamaHashringGet(t *testing.T) {
 	t.Parallel()
 
 	baseTS := &prompb.TimeSeries{
-		Labels: []labelpb.ZLabel{
-			{
-				Name:  "pod",
-				Value: "nginx",
-			},
+		Labels: labelpb.Labels{
+			{Name: "pod", Value: "nginx"},
 		},
 	}
 	tests := []struct {
@@ -282,11 +273,8 @@ func TestKetamaHashringGet(t *testing.T) {
 			name:      "base case with different timeseries",
 			endpoints: []Endpoint{{Address: "node-1"}, {Address: "node-2"}, {Address: "node-3"}},
 			ts: &prompb.TimeSeries{
-				Labels: []labelpb.ZLabel{
-					{
-						Name:  "pod",
-						Value: "thanos",
-					},
+				Labels: labelpb.Labels{
+					{Name: "pod", Value: "thanos"},
 				},
 			},
 			expectedNode: "node-3",
@@ -459,8 +447,8 @@ func TestKetamaHashringEvenAZSpread(t *testing.T) {
 
 	tenant := "default-tenant"
 	ts := &prompb.TimeSeries{
-		Labels:  labelpb.ZLabelsFromPromLabels(labels.FromStrings("foo", "bar")),
-		Samples: []prompb.Sample{{Value: 1, Timestamp: 0}},
+		Labels:  labelpb.FromStrings("foo", "bar"),
+		Samples: []*prompb.Sample{{Value: 1, Timestamp: 0}},
 	}
 
 	for _, tt := range []struct {
@@ -634,8 +622,8 @@ func TestKetamaHashringEvenNodeSpread(t *testing.T) {
 			nodeSpread := make(map[string]int)
 			for i := 0; i < int(tt.numSeries); i++ {
 				ts := &prompb.TimeSeries{
-					Labels:  labelpb.ZLabelsFromPromLabels(labels.FromStrings("foo", fmt.Sprintf("%d", i))),
-					Samples: []prompb.Sample{{Value: 1, Timestamp: 0}},
+					Labels:  labelpb.FromStrings("foo", fmt.Sprintf("%d", i)),
+					Samples: []*prompb.Sample{{Value: 1, Timestamp: 0}},
 				}
 				for j := 0; j < int(tt.replicas); j++ {
 					r, err := hashRing.GetN(tenant, ts, uint64(j))
@@ -803,11 +791,8 @@ func TestShuffleShardHashring(t *testing.T) {
 			// We'll sample multiple times to ensure consistency
 			for i := 0; i < 100; i++ {
 				ts := &prompb.TimeSeries{
-					Labels: []labelpb.ZLabel{
-						{
-							Name:  "iteration",
-							Value: fmt.Sprintf("%d", i),
-						},
+					Labels: labelpb.Labels{
+						{Name: "iteration", Value: fmt.Sprintf("%d", i)},
 					},
 				}
 
@@ -833,15 +818,9 @@ func TestShuffleShardHashring(t *testing.T) {
 
 				for i := 0; i < 10+trial; i++ {
 					ts := &prompb.TimeSeries{
-						Labels: []labelpb.ZLabel{
-							{
-								Name:  "iteration",
-								Value: fmt.Sprintf("%d", i),
-							},
-							{
-								Name:  "trial",
-								Value: fmt.Sprintf("%d", trial),
-							},
+						Labels: labelpb.Labels{
+							{Name: "iteration", Value: fmt.Sprintf("%d", i)},
+							{Name: "trial", Value: fmt.Sprintf("%d", trial)},
 						},
 					}
 
@@ -857,26 +836,23 @@ func TestShuffleShardHashring(t *testing.T) {
 	}
 }
 
-func makeSeries() []prompb.TimeSeries {
+func makeSeries() []*prompb.TimeSeries {
 	numSeries := 10000
-	series := make([]prompb.TimeSeries, numSeries)
+	series := make([]*prompb.TimeSeries, numSeries)
 	for i := 0; i < numSeries; i++ {
-		series[i] = prompb.TimeSeries{
-			Labels: []labelpb.ZLabel{
-				{
-					Name:  "pod",
-					Value: fmt.Sprintf("nginx-%d", i),
-				},
+		series[i] = &prompb.TimeSeries{
+			Labels: labelpb.Labels{
+				{Name: "pod", Value: fmt.Sprintf("nginx-%d", i)},
 			},
 		}
 	}
 	return series
 }
 
-func findSeries(initialAssignments map[string][]prompb.TimeSeries, node string, newSeries prompb.TimeSeries) bool {
+func findSeries(initialAssignments map[string][]*prompb.TimeSeries, node string, newSeries *prompb.TimeSeries) bool {
 	for _, oldSeries := range initialAssignments[node] {
-		l1 := labelpb.ZLabelsToPromLabels(newSeries.Labels)
-		l2 := labelpb.ZLabelsToPromLabels(oldSeries.Labels)
+		l1 := labelpb.ToPromLabels(newSeries.Labels)
+		l2 := labelpb.ToPromLabels(oldSeries.Labels)
 		if labels.Equal(l1, l2) {
 			return true
 		}
@@ -885,19 +861,19 @@ func findSeries(initialAssignments map[string][]prompb.TimeSeries, node string, 
 	return false
 }
 
-func assignSeries(series []prompb.TimeSeries, nodes []Endpoint) (map[string][]prompb.TimeSeries, error) {
+func assignSeries(series []*prompb.TimeSeries, nodes []Endpoint) (map[string][]*prompb.TimeSeries, error) {
 	return assignReplicatedSeries(series, nodes, 0)
 }
 
-func assignReplicatedSeries(series []prompb.TimeSeries, nodes []Endpoint, replicas uint64) (map[string][]prompb.TimeSeries, error) {
+func assignReplicatedSeries(series []*prompb.TimeSeries, nodes []Endpoint, replicas uint64) (map[string][]*prompb.TimeSeries, error) {
 	hashRing, err := newKetamaHashring(nodes, SectionsPerNode, replicas)
 	if err != nil {
 		return nil, err
 	}
-	assignments := make(map[string][]prompb.TimeSeries)
+	assignments := make(map[string][]*prompb.TimeSeries)
 	for i := uint64(0); i < replicas; i++ {
 		for _, ts := range series {
-			result, err := hashRing.GetN("tenant", &ts, i)
+			result, err := hashRing.GetN("tenant", ts, i)
 			if err != nil {
 				return nil, err
 			}
@@ -1021,7 +997,7 @@ func getTenantNodes(t *testing.T, ring *shuffleShardHashring, tenant string, sha
 	// Sample many time series to discover all nodes in the shard
 	for i := 0; i < 1000; i++ {
 		ts := &prompb.TimeSeries{
-			Labels: []labelpb.ZLabel{
+			Labels: labelpb.Labels{
 				{Name: "series", Value: fmt.Sprintf("%d", i)},
 			},
 		}
@@ -1065,6 +1041,7 @@ func TestGroupByAZ(t *testing.T) {
 	ep1c := Endpoint{Address: podDNS("pod", 1), AZ: "zone-c", Shard: 1}
 	duplicateEp0a := Endpoint{Address: podDNS("anotherpod", 0), AZ: "zone-a", Shard: 0} // Same shard (0) as ep0a in zone-a.
 
+<<<<<<< HEAD
 	testCases := map[string]struct {
 		inputEndpoints []Endpoint
 		expectedResult [][]Endpoint
@@ -1089,6 +1066,258 @@ func TestGroupByAZ(t *testing.T) {
 			expectedResult: [][]Endpoint{
 				{ep0a, ep1a},
 				{ep0b, ep1b},
+=======
+	// Create 3 AZs with 5 ordinals each (15 total endpoints)
+	endpoints := make([]Endpoint, 0, 15)
+	azs := []string{"az-a", "az-b", "az-c"}
+	for _, az := range azs {
+		for ord := 0; ord < 5; ord++ {
+			endpoints = append(endpoints, makeK8sEndpoint("pod-"+az, ord, az))
+		}
+	}
+
+	// Create aligned ketama base ring with RF=3 (one per AZ)
+	baseRing, err := newAlignedKetamaHashring(endpoints, SectionsPerNode, 3)
+	require.NoError(t, err)
+
+	// Create shuffle shard hashring with aligned ordinal sharding enabled
+	cfg := ShuffleShardingConfig{
+		ShardSize:              2, // Select 2 ordinals -> 6 endpoints (2 * 3 AZs)
+		AlignedOrdinalSharding: true,
+	}
+	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-aligned")
+	require.NoError(t, err)
+
+	// Get the tenant shard
+	tenant := "test-tenant"
+	shard, err := shardRing.getTenantShardAligned(tenant)
+	require.NoError(t, err)
+
+	// Verify we got the right number of nodes (2 ordinals * 3 AZs = 6)
+	nodes := shard.Nodes()
+	require.Len(t, nodes, 6, "expected 6 endpoints (2 ordinals * 3 AZs)")
+
+	// Extract ordinals from each AZ and verify they're the same
+	ordinalsByAZ := make(map[string][]int)
+	for _, node := range nodes {
+		ordinalsByAZ[node.AZ] = append(ordinalsByAZ[node.AZ], extractOrdinalFromAddress(t, node.Address))
+	}
+
+	// Verify each AZ has exactly 2 ordinals
+	require.Len(t, ordinalsByAZ, 3, "expected 3 AZs")
+	for az, ordinals := range ordinalsByAZ {
+		require.Len(t, ordinals, 2, "AZ %s should have 2 ordinals", az)
+	}
+
+	// Verify all AZs have the SAME ordinals (the key invariant)
+	var referenceOrdinals []int
+	for _, ordinals := range ordinalsByAZ {
+		if referenceOrdinals == nil {
+			referenceOrdinals = ordinals
+		} else {
+			require.ElementsMatch(t, referenceOrdinals, ordinals,
+				"all AZs should have the same ordinals for aligned ordinal sharding")
+		}
+	}
+
+	t.Logf("Selected ordinals: %v", referenceOrdinals)
+}
+
+func TestAlignedOrdinalShardingConsistency(t *testing.T) {
+	t.Parallel()
+
+	// Create 3 AZs with 5 ordinals each
+	endpoints := make([]Endpoint, 0, 15)
+	azs := []string{"az-a", "az-b", "az-c"}
+	for _, az := range azs {
+		for ord := 0; ord < 5; ord++ {
+			endpoints = append(endpoints, makeK8sEndpoint("pod-"+az, ord, az))
+		}
+	}
+
+	baseRing, err := newAlignedKetamaHashring(endpoints, SectionsPerNode, 3)
+	require.NoError(t, err)
+
+	cfg := ShuffleShardingConfig{
+		ShardSize:              2,
+		AlignedOrdinalSharding: true,
+	}
+	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-consistency")
+	require.NoError(t, err)
+
+	// Verify same tenant always gets same ordinals across multiple calls
+	tenant := "consistent-tenant"
+	var firstOrdinals []int
+
+	for trial := 0; trial < 10; trial++ {
+		shard, err := shardRing.getTenantShardAligned(tenant)
+		require.NoError(t, err)
+
+		currentOrdinals := extractOrdinalsFromShard(t, shard)
+		if firstOrdinals == nil {
+			firstOrdinals = currentOrdinals
+		} else {
+			require.Equal(t, firstOrdinals, currentOrdinals,
+				"same tenant should always get same ordinals")
+		}
+	}
+}
+
+func TestAlignedOrdinalShardingDifferentTenants(t *testing.T) {
+	t.Parallel()
+
+	// Create 3 AZs with 10 ordinals each to have enough spread
+	endpoints := make([]Endpoint, 0, 30)
+	azs := []string{"az-a", "az-b", "az-c"}
+	for _, az := range azs {
+		for ord := 0; ord < 10; ord++ {
+			endpoints = append(endpoints, makeK8sEndpoint("pod-"+az, ord, az))
+		}
+	}
+
+	baseRing, err := newAlignedKetamaHashring(endpoints, SectionsPerNode, 3)
+	require.NoError(t, err)
+
+	cfg := ShuffleShardingConfig{
+		ShardSize:              3, // Select 3 ordinals
+		AlignedOrdinalSharding: true,
+	}
+	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-diff-tenants")
+	require.NoError(t, err)
+
+	// Different tenants should (likely) get different ordinals
+	tenantOrdinals := make(map[string][]int)
+	numTenants := 20
+
+	for i := 0; i < numTenants; i++ {
+		tenant := fmt.Sprintf("tenant-%d", i)
+		shard, err := shardRing.getTenantShardAligned(tenant)
+		require.NoError(t, err)
+		tenantOrdinals[tenant] = extractOrdinalsFromShard(t, shard)
+	}
+
+	// Count unique ordinal sets
+	uniqueSets := make(map[string]int)
+	for _, ordinals := range tenantOrdinals {
+		key := fmt.Sprintf("%v", ordinals)
+		uniqueSets[key]++
+	}
+
+	// With 10 ordinals choosing 3, there are C(10,3)=120 possible combinations
+	// We expect multiple unique sets across 20 tenants
+	t.Logf("Unique ordinal sets: %d out of %d tenants", len(uniqueSets), numTenants)
+	require.Greater(t, len(uniqueSets), 1, "different tenants should get different ordinal sets")
+}
+
+func TestAlignedOrdinalShardingPreservesAlignment(t *testing.T) {
+	t.Parallel()
+
+	// Create 3 AZs with 5 ordinals each
+	endpoints := make([]Endpoint, 0, 15)
+	azs := []string{"az-a", "az-b", "az-c"}
+	for _, az := range azs {
+		for ord := 0; ord < 5; ord++ {
+			endpoints = append(endpoints, makeK8sEndpoint("pod-"+az, ord, az))
+		}
+	}
+
+	baseRing, err := newAlignedKetamaHashring(endpoints, SectionsPerNode, 3)
+	require.NoError(t, err)
+
+	cfg := ShuffleShardingConfig{
+		ShardSize:              2,
+		AlignedOrdinalSharding: true,
+	}
+	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-preserves")
+	require.NoError(t, err)
+
+	tenant := "alignment-test-tenant"
+
+	// Use GetN to get replicas and verify they're aligned (same ordinal across AZs)
+	for i := 0; i < 100; i++ {
+		ts := &prompb.TimeSeries{
+			Labels: labelpb.Labels{
+				{Name: "series", Value: fmt.Sprintf("series-%d", i)},
+			},
+		}
+
+		// Get all 3 replicas (RF=3)
+		var replicas []Endpoint
+		for n := uint64(0); n < 3; n++ {
+			ep, err := shardRing.GetN(tenant, ts, n)
+			require.NoError(t, err)
+			replicas = append(replicas, ep)
+		}
+
+		// Verify all 3 replicas have the same ordinal but different AZs
+		ordinals := make(map[int]struct{})
+		azsSeen := make(map[string]struct{})
+		for _, ep := range replicas {
+			ordinals[extractOrdinalFromAddress(t, ep.Address)] = struct{}{}
+			azsSeen[ep.AZ] = struct{}{}
+		}
+
+		require.Len(t, ordinals, 1, "all replicas should have the same ordinal for series %d", i)
+		require.Len(t, azsSeen, 3, "replicas should span all 3 AZs for series %d", i)
+	}
+}
+
+// TestAlignedOrdinalShardingDataDistribution verifies the key behavior:
+// - With shard_size=2, tenant gets 2 ordinals (e.g., ordinals 1 and 4)
+// - Series are distributed across both ordinals
+// - a-1, b-1, c-1 always receive the same series (aligned replicas for ordinal 1)
+// - a-4, b-4, c-4 always receive the same series (aligned replicas for ordinal 4)
+// - Series assigned to ordinal 1 are different from series assigned to ordinal 4.
+func TestAlignedOrdinalShardingDataDistribution(t *testing.T) {
+	t.Parallel()
+
+	// Create 3 AZs with 5 ordinals each
+	endpoints := make([]Endpoint, 0, 15)
+	azs := []string{"az-a", "az-b", "az-c"}
+	for _, az := range azs {
+		for ord := 0; ord < 5; ord++ {
+			endpoints = append(endpoints, makeK8sEndpoint("pod-"+az, ord, az))
+		}
+	}
+
+	baseRing, err := newAlignedKetamaHashring(endpoints, SectionsPerNode, 3)
+	require.NoError(t, err)
+
+	cfg := ShuffleShardingConfig{
+		ShardSize:              2, // Select 2 ordinals
+		AlignedOrdinalSharding: true,
+	}
+	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-distribution")
+	require.NoError(t, err)
+
+	tenant := "distribution-test-tenant"
+
+	// First, get the tenant's selected ordinals
+	shard, err := shardRing.getTenantShardAligned(tenant)
+	require.NoError(t, err)
+	selectedOrdinals := extractOrdinalsFromShard(t, shard)
+	require.Len(t, selectedOrdinals, 2, "tenant should have exactly 2 ordinals")
+	t.Logf("Tenant's selected ordinals: %v", selectedOrdinals)
+
+	// Track which series go to which ordinal
+	// Key: ordinal, Value: set of series indices
+	seriesByOrdinal := make(map[int]map[int]struct{})
+	for _, ord := range selectedOrdinals {
+		seriesByOrdinal[ord] = make(map[int]struct{})
+	}
+
+	// Track which endpoints receive which series
+	// Key: endpoint address, Value: set of series indices
+	seriesByEndpoint := make(map[string]map[int]struct{})
+
+	// Generate many series and track their distribution
+	numSeries := 1000
+	for i := 0; i < numSeries; i++ {
+		ts := &prompb.TimeSeries{
+			Labels: labelpb.Labels{
+				{Name: "series", Value: fmt.Sprintf("series-%d", i)},
+				{Name: "__name__", Value: "test_metric"},
+>>>>>>> a7014ec4 (Migrate to vtproto and add string interning)
 			},
 			expectError: false,
 		},

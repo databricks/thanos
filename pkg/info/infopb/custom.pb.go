@@ -3,14 +3,12 @@ package infopb
 import (
 	"math"
 
-	"github.com/prometheus/prometheus/model/labels"
-
 	"github.com/thanos-io/thanos/pkg/store/labelpb"
 )
 
-func NewTSDBInfo(mint, maxt int64, lbls []labelpb.ZLabel) TSDBInfo {
-	return TSDBInfo{
-		Labels: labelpb.ZLabelSet{
+func NewTSDBInfo(mint, maxt int64, lbls labelpb.Labels) *TSDBInfo {
+	return &TSDBInfo{
+		Labels: &labelpb.LabelSet{
 			Labels: lbls,
 		},
 		MinTime: mint,
@@ -18,7 +16,7 @@ func NewTSDBInfo(mint, maxt int64, lbls []labelpb.ZLabel) TSDBInfo {
 	}
 }
 
-type TSDBInfos []TSDBInfo
+type TSDBInfos []*TSDBInfo
 
 func (infos TSDBInfos) MaxT() int64 {
 	var maxt int64 = math.MinInt64
@@ -30,11 +28,10 @@ func (infos TSDBInfos) MaxT() int64 {
 	return maxt
 }
 
-func (infos TSDBInfos) LabelSets() []labels.Labels {
-	lsets := make([]labels.Labels, 0, len(infos))
-	for _, info := range infos {
-		lsets = append(lsets, labelpb.ZLabelsToPromLabels(info.Labels.Labels))
-
+func (infos TSDBInfos) LabelSets() []labelpb.Labels {
+	lsets := make([]labelpb.Labels, len(infos))
+	for i, info := range infos {
+		lsets[i] = info.GetLabels().GetLabels()
 	}
 	return lsets
 }

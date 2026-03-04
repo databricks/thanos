@@ -8,6 +8,7 @@ package main
 
 import (
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -17,7 +18,7 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/prometheus/common/model"
-	"github.com/prometheus/prometheus/model/labels"
+	"github.com/thanos-io/thanos/pkg/store/labelpb"
 
 	"github.com/thanos-io/thanos/pkg/extkingpin"
 	"github.com/thanos-io/thanos/pkg/shipper"
@@ -268,24 +269,24 @@ func (ac *alertMgrConfig) registerFlag(cmd extflag.FlagClause) *alertMgrConfig {
 	return ac
 }
 
-func parseFlagLabels(s []string) (labels.Labels, error) {
-	var lset labels.ScratchBuilder
+func parseFlagLabels(s []string) (labelpb.Labels, error) {
+	lset := labelpb.Labels{}
 	for _, l := range s {
 		parts := strings.SplitN(l, "=", 2)
 		if len(parts) != 2 {
-			return labels.EmptyLabels(), errors.Errorf("unrecognized label %q", l)
+			return nil, errors.Errorf("unrecognized label %q", l)
 		}
 		if !model.LabelName.IsValid(model.LabelName(parts[0])) {
-			return labels.EmptyLabels(), errors.Errorf("unsupported format for label %s", l)
+			return nil, errors.Errorf("unsupported format for label %s", l)
 		}
 		val, err := strconv.Unquote(parts[1])
 		if err != nil {
-			return labels.EmptyLabels(), errors.Wrap(err, "unquote label value")
+			return nil, errors.Wrap(err, "unquote label value")
 		}
-		lset.Add(parts[0], val)
+		lset = append(lset, &labelpb.Label{Name: parts[0], Value: val})
 	}
-	lset.Sort()
-	return lset.Labels(), nil
+	sort.Sort(lset)
+	return lset, nil
 }
 
 type goMemLimitConfig struct {
