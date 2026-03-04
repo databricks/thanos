@@ -341,27 +341,8 @@ func NewHandler(logger log.Logger, o *Options) *Handler {
 				return true // return buffer to the pool.
 			}
 			return false // discard the buffer that is too large.
-<<<<<<< HEAD
 		}).WithDisabled(o.PoolingDisabled).
 			Build(),
-		writeRequestPool: syncutil.NewPool(func() *prompb.WriteRequest {
-			return &prompb.WriteRequest{}
-		}).WithReset(func(wreq *prompb.WriteRequest) bool {
-			// Keep the memory allocated for the slice, but clear the contents.
-			// If we call *prompb.WriteRequest.Reset() on the WriteRequest,
-			// it will replace the reference with a new struct, so we would
-			// effectively be pooling a pointer.
-			// Note: The drawback of this approach is that if the underlying
-			// proto changes (e.g. new fields are added), we need to update
-			// this code to clear the new fields.
-			wreq.Metadata = wreq.Metadata[:0]
-			wreq.Timeseries = wreq.Timeseries[:0]
-			return true
-		}).WithDisabled(o.PoolingDisabled).
-			Build(),
-=======
-		}).WithDisabled(o.PoolingDisabled).Build(),
->>>>>>> a7014ec4 (Migrate to vtproto and add string interning)
 	}
 
 	h.forwardRequests.WithLabelValues(labelSuccess)
@@ -600,15 +581,10 @@ func (h *Handler) tenantKeyForDistribution(tenantHTTP string, ts *prompb.TimeSer
 			return tenantHTTP
 		}
 
-<<<<<<< HEAD
 		// No HTTP header provided: do attribution from labels.
-		lbls := labelpb.ZLabelsToPromLabels(ts.Labels)
-		attributedTenant := h.options.TenantAttributor.GetTenantFromLabels(lbls)
+		attributedTenant := h.options.TenantAttributor.GetTenantFromLabels(ts.Labels)
 		h.tenantAttributedTotal.WithLabelValues(attributedTenant, "label_rules").Inc()
 		return attributedTenant
-=======
-		return h.options.TenantAttributor.GetTenantFromLabels(ts.Labels)
->>>>>>> a7014ec4 (Migrate to vtproto and add string interning)
 	}
 
 	// Legacy behavior: use splitTenantLabelName if configured.
