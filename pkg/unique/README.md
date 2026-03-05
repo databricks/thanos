@@ -40,6 +40,27 @@ values are reused constantly, the interned set reaches a bounded steady
 state and this is acceptable. Do not use this variant if your interned
 key space is unbounded.
 
+**How bad is the leak in practice?** Interning happens during protobuf
+unmarshal of metric `Label` name/value pairs -- things like `__name__`,
+`job`, `instance`, `pod`. The highest-churn values are instance and pod
+identifiers (~50 bytes each). Trace IDs, request IDs, etc. are not a
+concern -- they would only appear if someone explicitly added them as
+metric labels, which is a cardinality anti-pattern that would break TSDB
+long before the intern pool matters.
+
+Assuming a large system with 10,000 instances turning over daily, each
+producing ~5 unique churning label values at ~66 bytes per interned entry
+(50 bytes content + 16 bytes Go string header):
+
+```
+Daily leak:    10,000 × 5 × 66 bytes  ≈   3 MB/day
+Weekly leak:                           ≈  23 MB
+Monthly leak:                          ≈ 100 MB
+```
+
+For a receiver process typically using 4-16 GB, this is 1-2% of working
+memory per month -- and redeployed well before it accumulates.
+
 ```
 go build -tags fast_intern_nogc ./...
 go test  -tags fast_intern_nogc ./pkg/unique/
