@@ -1,8 +1,7 @@
 # pkg/unique
 
 String interning backed by [xsync.Map](https://github.com/puzpuzpuz/xsync)
-with finalizer-based cleanup, built as a higher-throughput alternative to
-Go's `unique.Make[string]`.
+built as a higher-throughput alternative to Go's `unique.Make[string]`.
 
 ## Why not `unique.Make`?
 
@@ -11,33 +10,69 @@ Under concurrent workloads typical of the receive path (many goroutines
 unmarshalling protobuf labels in parallel), the mutex contention becomes
 a bottleneck -- particularly on the write (miss) path.
 
-This package uses xsync.Map (Cache-Line Hash Table) where read operations
-are obstruction-free with no writes to shared memory. At steady-state hit
-rates the read path is on par with `unique.Make`, while the write path
-under contention is significantly faster.
+This package uses xsync.Map, a [Cache-Line Hash Table](https://github.com/LPD-EPFL/CLHT)
+where read operations are obstruction-free with no writes to shared memory.
+This is the same concurrent map design used by
+[puzpuzpuz/xsync](https://github.com/puzpuzpuz/xsync). Cleanup of unused
+entries follows the `uintptr` + `runtime.SetFinalizer` pattern from
+[go4.org/intern](https://pkg.go.dev/go4.org/intern), where pointers are
+hidden from the GC so that finalizers fire when no live `Handle` references
+remain.
 
-Entries are cleaned up via `runtime.SetFinalizer` when no `Handle`
-references remain, following the same pattern as `go4.org/intern`. This
-avoids the per-access GC coordination cost of `weak.Pointer.Value()`.
+## Build variants
+
+There are two implementations, selected at compile time via build tag:
+
+### Default (finalizer-based cleanup)
+
+Entries are automatically reclaimed when no `Handle` references remain.
+This is the safe default for general use.
+
+### `fast_intern_nogc` (no cleanup)
+
+Build with `-tags fast_intern_nogc` to use a simpler implementation where
+interned strings are never freed. The `Handle` type is a plain string with
+no pointer indirection, making the hot-path lookup cheaper.
+
+This variant will leak memory for strings that are interned and then never
+seen again. In the context of a metric system where the same labels and
+values are reused constantly, the interned set reaches a bounded steady
+state and this is acceptable. Do not use this variant if your interned
+key space is unbounded.
+
+```
+go build -tags fast_intern_nogc ./...
+go test  -tags fast_intern_nogc ./pkg/unique/
+```
 
 ## API
 
 - `Make(s string) Handle` -- intern a string, return a Handle
-- `MakeFromBytes(b []byte) Handle` -- intern from a byte slice with
-  zero-allocation on cache hit (intended for protobuf unmarshal paths)
 - `Handle.Value() string` -- get the interned string
 
 ## Benchmarks
 
-Concurrent throughput (32 cores), 100 known keys, batch of 100 lookups
-per iteration:
+Concurrent throughput (32 cores), 10,000 known keys (unsafe.String-backed,
+simulating protobuf unmarshal), batch of 10,000 lookups per iteration:
+
+### Default (finalizer) vs stdlib
 
 ```
-BenchmarkIntern_Concurrent/xsync_finalizer/hit99-32     13965890    423.3 ns/op     24 B/op    2 allocs/op
-BenchmarkIntern_Concurrent/xsync_finalizer/hit50-32      1724382     3471 ns/op   1369 B/op  109 allocs/op
-BenchmarkIntern_Concurrent/stdlib_unique/hit99-32        16620832    541.1 ns/op     65 B/op    3 allocs/op
-BenchmarkIntern_Concurrent/stdlib_unique/hit50-32         1066116    5584 ns/op   1617 B/op  119 allocs/op
+BenchmarkIntern_Concurrent/xsync_finalizer/hit99.99-32     172182     27430 ns/op       39 B/op      2 allocs/op
+BenchmarkIntern_Concurrent/xsync_finalizer/hit99-32         87534     50415 ns/op     2704 B/op    225 allocs/op
+BenchmarkIntern_Concurrent/xsync_finalizer/hit50-32          5779    575061 ns/op   150252 B/op  11740 allocs/op
+BenchmarkIntern_Concurrent/stdlib_unique/hit99.99-32         90100     41133 ns/op       22 B/op      2 allocs/op
+BenchmarkIntern_Concurrent/stdlib_unique/hit99-32            50424     79038 ns/op     2758 B/op    232 allocs/op
+BenchmarkIntern_Concurrent/stdlib_unique/hit50-32             1602   1918517 ns/op   155432 B/op  12202 allocs/op
 ```
 
-At 99% hit rate (steady state), ~22% faster with fewer allocations.
-At 50% hit rate (burst of new series), ~38% faster due to lock-free stores.
+### `fast_intern_nogc` vs stdlib
+
+```
+BenchmarkIntern_Concurrent/xsync_nogc/hit99.99-32          235810     16473 ns/op       19 B/op      2 allocs/op
+BenchmarkIntern_Concurrent/xsync_nogc/hit99-32             188784     23952 ns/op     2610 B/op    206 allocs/op
+BenchmarkIntern_Concurrent/xsync_nogc/hit50-32              22046    154803 ns/op   142594 B/op  10906 allocs/op
+BenchmarkIntern_Concurrent/stdlib_unique/hit99.99-32         90100     41133 ns/op       22 B/op      2 allocs/op
+BenchmarkIntern_Concurrent/stdlib_unique/hit99-32            50424     79038 ns/op     2758 B/op    232 allocs/op
+BenchmarkIntern_Concurrent/stdlib_unique/hit50-32             1602   1918517 ns/op   155432 B/op  12202 allocs/op
+```

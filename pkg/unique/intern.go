@@ -1,3 +1,5 @@
+//go:build !fast_intern_nogc
+
 // Package unique provides string interning backed by a lock-free concurrent
 // map (xsync.MapOf) with finalizer-based cleanup. It is intended as a
 // higher-throughput alternative to Go's unique.Make[string] for workloads
@@ -8,8 +10,8 @@
 //   - Reads are obstruction-free (CLHT -- no mutex, no atomic writes to shared memory).
 //   - Entries are cleaned up via runtime.SetFinalizer when no Handle references remain.
 //   - Zero per-read GC coordination (unlike weak.Pointer.Value).
-//   - MakeFromBytes provides a zero-allocation fast path for cache hits when
-//     the source data is a byte slice (typical of protobuf unmarshal).
+//   - The hit path uses CAS rather than Store for the resurrection flag, avoiding
+//     cache-line dirtying when the flag is already set (steady-state hot path).
 package unique
 
 import (
@@ -51,23 +53,22 @@ type fValue struct {
 
 // Make returns a Handle to the canonical interned copy of s.
 //
-// The map stores uintptr values (invisible to the GC) so the finalizer
-// on fValue can fire when no Handles remain. On the read path this is
-// a lock-free xsync.Map load followed by an unsafe pointer conversion
-// with no GC coordination.
-// Make returns a Handle to the canonical interned copy of s.
-//
 // Safe to call with unsafe strings (e.g., from unsafe.String over a
 // protobuf byte buffer). On cache hit, the input is never retained.
 // On miss, a proper copy is made before storing, so the caller's
 // backing memory is never held by the intern table.
 //
-// On hit: zero allocations.
+// On hit: zero allocations (CAS avoids cache-line writes when
+// resurrection flag is already set).
 // On miss: one string copy + one fValue allocation.
 func Make(s string) Handle {
 	if raw, ok := pool.Load(s); ok {
 		v := uintptrToFValue(raw)
-		v.resurrected.Store(true)
+		// CAS rather than Store: at steady state the flag is already true
+		// (set by a previous hit), so CAS is a read-only no-op that avoids
+		// dirtying the cache line. Only the first hit after a finalizer
+		// cycle (which CAS'd true→false) will actually write.
+		v.resurrected.CompareAndSwap(false, true)
 		return Handle{val: v}
 	}
 	// Slow path: copy the string to detach from any unsafe backing memory,
@@ -80,7 +81,7 @@ func Make(s string) Handle {
 	})
 	v := uintptrToFValue(raw)
 	if loaded {
-		v.resurrected.Store(true)
+		v.resurrected.CompareAndSwap(false, true)
 	}
 	return Handle{val: v}
 }
