@@ -1,3 +1,6 @@
+// Copyright (c) The Thanos Authors.
+// Licensed under the Apache License 2.0.
+
 //go:build !fast_intern_nogc
 
 // Package unique provides string interning backed by a lock-free concurrent

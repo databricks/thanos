@@ -1,3 +1,6 @@
+// Copyright (c) The Thanos Authors.
+// Licensed under the Apache License 2.0.
+
 // protoc-gen-go-grpc-vtpool is a protoc plugin that generates pool-aware
 // gRPC server handler functions for messages that have both vtprotobuf's
 // mempool option and a vtpool.pool_return option set. It produces a

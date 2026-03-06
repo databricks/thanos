@@ -1,3 +1,6 @@
+// Copyright (c) The Thanos Authors.
+// Licensed under the Apache License 2.0.
+
 // Package vtproto registers the vtprotobuf gRPC codec so that all gRPC
 // marshal/unmarshal operations use the generated MarshalVT/UnmarshalVT
 // methods when available, falling back to standard proto for messages
