@@ -40,11 +40,11 @@ values are reused constantly, the interned set reaches a bounded steady
 state and this is acceptable. Do not use this variant if your interned
 key space is unbounded.
 
-**How bad is the leak in practice?** Interning happens during protobuf
-unmarshal of metric `Label` name/value pairs -- things like `__name__`,
-`job`, `instance`, `pod`. The highest-churn values are instance and pod
-identifiers (~50 bytes each). Trace IDs, request IDs, etc. are not a
-concern -- they would only appear if someone explicitly added them as
+**How bad is the leak in practice?** (Some back-of-napkin math):
+Interning happens during protobuf unmarshal of metric `Label` name/value pairs --
+things like `__name__`, `job`, `instance`, `pod`. The highest-churn values
+are instance and pod identifiers (~50 bytes each). Trace IDs, request IDs, etc.
+are not a concern -- they would only appear if someone explicitly added them as
 metric labels, which is a cardinality anti-pattern that would break TSDB
 long before the intern pool matters.
 
