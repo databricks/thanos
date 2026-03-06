@@ -209,8 +209,6 @@ func testMulitTSDBSeries(t *testing.T, m *MultiTSDB) {
 		testutil.Assert(t, len(ss) == 2)
 
 		for _, s := range ss {
-			s := s
-
 			switch isFoo := strings.Contains(s.String(), "foo"); isFoo {
 			case true:
 				g.Go(func() error {

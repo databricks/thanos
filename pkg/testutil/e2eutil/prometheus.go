@@ -572,13 +572,14 @@ func createBlock(
 
 				for _, lset := range batch {
 					var err error
-					if sampleType == chunkenc.ValFloat {
+					switch sampleType {
+					case chunkenc.ValFloat:
 						randMutex.Lock()
 						_, err = app.Append(0, lset, t, r.Float64())
 						randMutex.Unlock()
-					} else if sampleType == chunkenc.ValHistogram {
+					case chunkenc.ValHistogram:
 						_, err = app.AppendHistogram(0, lset, t, &histogramSample, nil)
-					} else if sampleType == chunkenc.ValFloatHistogram {
+					case chunkenc.ValFloatHistogram:
 						_, err = app.AppendHistogram(0, lset, t, nil, &floatHistogramSample)
 					}
 					if err != nil {

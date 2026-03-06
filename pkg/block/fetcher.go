@@ -821,7 +821,7 @@ func (f *LabelShardedMetaFilter) Filter(_ context.Context, metas map[ulid.ULID]*
 	for id, m := range metas {
 		b.Reset(labels.EmptyLabels())
 		b.Set(BlockIDLabel, id.String())
-		b.Set(BlockLevelLabel, strconv.Itoa(m.BlockMeta.Compaction.Level))
+		b.Set(BlockLevelLabel, strconv.Itoa(m.Compaction.Level))
 
 		for k, v := range m.Thanos.Labels {
 			b.Set(k, v)

@@ -163,7 +163,7 @@ func UntilNextDownsampling(m *metadata.Meta) (time.Duration, error) {
 func (s *Syncer) SyncMetas(ctx context.Context) error {
 	s.metrics.SyncMetas.Inc()
 	defer measureFuncDuration(s.metrics.SyncMetasDuration, time.Now())
-	var cancel func() = func() {}
+	var cancel = func() {}
 	if s.syncMetasTimeout > 0 {
 		ctx, cancel = context.WithTimeout(ctx, s.syncMetasTimeout)
 	}
@@ -514,7 +514,7 @@ func (cg *Group) deleteFromGroup(target map[ulid.ULID]struct{}) {
 	defer cg.mtx.Unlock()
 	var newGroupMeta []*metadata.Meta
 	for _, meta := range cg.metasByMinTime {
-		if _, found := target[meta.BlockMeta.ULID]; !found {
+		if _, found := target[meta.ULID]; !found {
 			newGroupMeta = append(newGroupMeta, meta)
 		}
 	}
@@ -680,7 +680,7 @@ func (ps *CompactionProgressCalculator) ProgressCalculate(ctx context.Context, g
 			metas := make([]*tsdb.BlockMeta, 0, len(plan))
 			for _, p := range plan {
 				metas = append(metas, &p.BlockMeta)
-				toRemove[p.BlockMeta.ULID] = struct{}{}
+				toRemove[p.ULID] = struct{}{}
 			}
 			g.deleteFromGroup(toRemove)
 
@@ -700,12 +700,12 @@ func (ps *CompactionProgressCalculator) ProgressCalculate(ctx context.Context, g
 		groups = tmpGroups
 	}
 
-	ps.CompactProgressMetrics.NumberOfCompactionRuns.Set(0)
-	ps.CompactProgressMetrics.NumberOfCompactionBlocks.Set(0)
+	ps.NumberOfCompactionRuns.Set(0)
+	ps.NumberOfCompactionBlocks.Set(0)
 
 	for key, iters := range groupCompactions {
-		ps.CompactProgressMetrics.NumberOfCompactionRuns.Add(float64(iters))
-		ps.CompactProgressMetrics.NumberOfCompactionBlocks.Add(float64(groupBlocks[key]))
+		ps.NumberOfCompactionRuns.Add(float64(iters))
+		ps.NumberOfCompactionBlocks.Add(float64(groupBlocks[key]))
 	}
 
 	return nil
@@ -819,9 +819,9 @@ func (ds *DownsampleProgressCalculator) ProgressCalculate(ctx context.Context, g
 		}
 	}
 
-	ds.DownsampleProgressMetrics.NumberOfBlocksDownsampled.Set(0)
+	ds.NumberOfBlocksDownsampled.Set(0)
 	for _, blocks := range groupBlocks {
-		ds.DownsampleProgressMetrics.NumberOfBlocksDownsampled.Add(float64(blocks))
+		ds.NumberOfBlocksDownsampled.Add(float64(blocks))
 	}
 
 	return nil
@@ -889,9 +889,9 @@ func (rs *RetentionProgressCalculator) ProgressCalculate(ctx context.Context, gr
 		}
 	}
 
-	rs.RetentionProgressMetrics.NumberOfBlocksToDelete.Set(0)
+	rs.NumberOfBlocksToDelete.Set(0)
 	for _, blocks := range groupBlocks {
-		rs.RetentionProgressMetrics.NumberOfBlocksToDelete.Add(float64(blocks))
+		rs.NumberOfBlocksToDelete.Add(float64(blocks))
 	}
 
 	return nil

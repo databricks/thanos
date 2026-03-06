@@ -1848,7 +1848,6 @@ func (s *BucketStore) LabelNames(ctx context.Context, req *storepb.LabelNamesReq
 	var logger = s.requestLoggerFunc(ctx, s.logger)
 
 	for _, b := range s.blocks {
-		b := b
 		gctx := gctx
 
 		if !b.overlapsClosedInterval(req.Start, req.End) {
@@ -2070,8 +2069,6 @@ func (s *BucketStore) LabelValues(ctx context.Context, req *storepb.LabelValuesR
 	var stats = &queryStats{}
 
 	for _, b := range s.blocks {
-		b := b
-
 		if !b.overlapsClosedInterval(req.Start, req.End) {
 			continue
 		}
@@ -2826,7 +2823,6 @@ func checkNilPosting(name, value string, p index.Postings) index.Postings {
 func matchersToPostingGroups(ctx context.Context, lvalsFn func(name string) ([]string, error), ms []*labels.Matcher) ([]*postingGroup, error) {
 	matchersMap := make(map[string]map[string]*labels.Matcher)
 	for _, m := range ms {
-		m := m
 		if _, ok := matchersMap[m.Name]; !ok {
 			matchersMap[m.Name] = make(map[string]*labels.Matcher)
 		}
@@ -3622,7 +3618,6 @@ func (r *bucketChunkReader) load(ctx context.Context, res []seriesEntry, aggrs [
 
 		for _, p := range parts {
 			seq := seq
-			p := p
 			indices := pIdxs[p.ElemRng[0]:p.ElemRng[1]]
 			g.Go(func() error {
 				return r.loadChunks(ctx, res, aggrs, seq, p, indices, calculateChunkChecksum, bytesLimiter, tenant)
@@ -3694,7 +3689,7 @@ func (r *bucketChunkReader) loadChunks(ctx context.Context, res []seriesEntry, a
 		n, err = io.ReadFull(bufReader, cb)
 		readOffset += n
 		// Unexpected EOF for last chunk could be a valid case. Any other errors are definitely real.
-		if err != nil && !(errors.Is(err, io.ErrUnexpectedEOF) && i == len(pIdxs)-1) {
+		if err != nil && (!errors.Is(err, io.ErrUnexpectedEOF) || i != len(pIdxs)-1) {
 			return errors.Wrapf(err, "read range for seq %d offset %x", seq, pIdx.offset)
 		}
 

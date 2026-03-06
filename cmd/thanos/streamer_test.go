@@ -18,19 +18,18 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/thanos-io/thanos/pkg/store/storepb"
-	"github.com/thanos-io/thanos/pkg/streamer"
 	streamer_pkg "github.com/thanos-io/thanos/pkg/streamer"
 	"google.golang.org/grpc"
 )
 
 func TestConvertToSeriesReq(t *testing.T) {
-	streamerReq := &streamer.StreamerRequest{
+	streamerReq := &streamer_pkg.StreamerRequest{
 		RequestId:        "test_request",
 		StartTimestampMs: 1672531200000,
 		EndTimestampMs:   1672534800000,
 		SkipChunks:       false,
-		LabelMatchers: []streamer.LabelMatcher{
-			{Name: "instance", Value: "localhost:9090", Type: streamer.LabelMatcher_EQ},
+		LabelMatchers: []streamer_pkg.LabelMatcher{
+			{Name: "instance", Value: "localhost:9090", Type: streamer_pkg.LabelMatcher_EQ},
 		},
 		Metric: "cpu_usage",
 	}

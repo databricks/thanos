@@ -236,9 +236,10 @@ func WithBlockedMetricPatterns(patterns []string) ProxyStoreOption {
 			pattern := input[1:]
 
 			// Exact match patterns ('e') are blocked unconditionally
-			if typeChar == 'e' {
+			switch typeChar {
+			case 'e':
 				s.unconditionalBlockedMetrics[pattern] = struct{}{}
-			} else if typeChar == 'p' {
+			case 'p':
 				// Prefix patterns are blocked conditionally (only if insufficient filters)
 				s.blockedMetricPrefixes.Insert(pattern, pattern)
 			}
@@ -595,8 +596,6 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 	}()
 
 	for _, st := range stores {
-		st := st
-
 		respSet, err := newAsyncRespSet(ctx, st, r, s.responseTimeout, s.retrievalStrategy, &s.buffers, r.ShardInfo, reqLogger, s.metrics.emptyStreamResponses, s.lazyRetrievalMaxBufferedResponses)
 		if err != nil {
 			// Check if this is a timeout-related error and capture gRPC error code
@@ -754,8 +753,6 @@ func (s *ProxyStore) LabelNames(ctx context.Context, originalRequest *storepb.La
 		g, gctx  = errgroup.WithContext(ctx)
 	)
 	for _, st := range stores {
-		st := st
-
 		storeID, storeAddr, isLocalStore := storeInfo(st)
 		g.Go(func() error {
 			span, spanCtx := tracing.StartSpan(gctx, "proxy.label_names", tracing.Tags{
@@ -858,8 +855,6 @@ func (s *ProxyStore) LabelValues(ctx context.Context, originalRequest *storepb.L
 		g, gctx  = errgroup.WithContext(ctx)
 	)
 	for _, st := range stores {
-		st := st
-
 		storeID, storeAddr, isLocalStore := storeInfo(st)
 		g.Go(func() error {
 			span, spanCtx := tracing.StartSpan(gctx, "proxy.label_values", tracing.Tags{

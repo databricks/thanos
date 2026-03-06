@@ -17,8 +17,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/thanos-io/thanos/pkg/extkingpin"
-	"github.com/thanos-io/thanos/pkg/streamer"
-
 	streamer_pkg "github.com/thanos-io/thanos/pkg/streamer"
 )
 
@@ -71,7 +69,7 @@ func runStreamerTool(conf *streamerToolConfig, logger log.Logger) error {
 
 	nowMs := time.Now().Unix() * 1000
 	startMs := nowMs - int64(conf.hoursAgo)*3600*1000
-	request := &streamer.StreamerRequest{
+	request := &streamer_pkg.StreamerRequest{
 		RequestId:        conf.metric,
 		StartTimestampMs: startMs,
 		EndTimestampMs:   startMs + 2*3600*1000,

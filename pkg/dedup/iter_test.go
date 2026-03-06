@@ -615,7 +615,6 @@ func TestDedupSeriesIterator_NativeHistograms(t *testing.T) {
 	}
 
 	for i, c := range casesMixed {
-		c := c
 		t.Run(fmt.Sprintf("mixed-%d", i), func(t *testing.T) {
 			t.Parallel()
 			it := newDedupSeriesIterator(

@@ -1559,9 +1559,10 @@ func benchBucketSeries(t testutil.TB, sampleType chunkenc.ValueType, skipChunk, 
 			expectedSamples = 1
 		}
 		seriesCut := int(p * float64(numOfBlocks*seriesPerBlock))
-		if seriesCut == 0 {
+		switch seriesCut {
+		case 0:
 			seriesCut = 1
-		} else if seriesCut == 1 {
+		case 1:
 			seriesCut = expectedSamples / samplesPerSeriesPerBlock
 		}
 
@@ -3526,7 +3527,7 @@ func TestExpandedPostingsRace(t *testing.T) {
 		testutil.Ok(t, err)
 
 		m.Thanos = thanosMeta
-		m.BlockMeta.ULID = ul
+		m.ULID = ul
 
 		e2eutil.Copy(t, filepath.Join(tmpDir, blockID.String()), filepath.Join(tmpDir, ul.String()))
 		testutil.Ok(t, m.WriteToDir(log.NewLogfmtLogger(os.Stderr), filepath.Join(tmpDir, ul.String())))
@@ -3561,10 +3562,7 @@ func TestExpandedPostingsRace(t *testing.T) {
 	previousRefs := make(map[int][]storage.SeriesRef)
 	dummyCounter := promauto.With(prometheus.NewRegistry()).NewCounter(prometheus.CounterOpts{Name: "test"})
 
-	for {
-		if tm.Err() != nil {
-			break
-		}
+	for tm.Err() == nil {
 
 		m := []*labels.Matcher{
 			labels.MustNewMatcher(labels.MatchEqual, "foo", "bar"),
