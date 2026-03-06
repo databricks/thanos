@@ -13,7 +13,7 @@ func TestMake_Deduplication(t *testing.T) {
 	Clear()
 
 	a := Make("hello")
-	b := Make("hel" + "lo") // distinct allocation, same content
+	b := Make("hell" + "o") // distinct allocation, same content
 
 	require.Equal(t, a.Value(), b.Value())
 	require.Equal(t, a, b, "handles for the same string must be equal")

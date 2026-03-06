@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc/encoding"
 	_ "google.golang.org/grpc/encoding/proto"
 	"google.golang.org/grpc/mem"
+	"google.golang.org/protobuf/proto"
 )
 
 const codecName = "proto"
@@ -37,7 +38,17 @@ type codecV2 struct{}
 func (codecV2) Marshal(v any) (mem.BufferSlice, error) {
 	vt, ok := v.(vtMarshal)
 	if !ok {
-		return nil, fmt.Errorf("vtproto codec: failed to marshal, message is %T (missing MarshalToSizedBufferVT)", v)
+		// Fall back to standard proto marshal for non-VT types
+		// (e.g. gRPC health checks, echo, reflection).
+		pm, ok := v.(proto.Message)
+		if !ok {
+			return nil, fmt.Errorf("vtproto codec: failed to marshal, message is %T (not a proto.Message)", v)
+		}
+		buf, err := proto.Marshal(pm)
+		if err != nil {
+			return nil, err
+		}
+		return mem.BufferSlice{mem.SliceBuffer(buf)}, nil
 	}
 
 	size := vt.SizeVT()
@@ -62,16 +73,22 @@ func (codecV2) Marshal(v any) (mem.BufferSlice, error) {
 }
 
 func (codecV2) Unmarshal(data mem.BufferSlice, v any) error {
-	vt, ok := v.(vtUnmarshal)
-	if !ok {
-		return fmt.Errorf("vtproto codec: failed to unmarshal, message is %T (missing UnmarshalVT)", v)
-	}
-
 	// MaterializeToBuffer avoids a copy when data is already a single
 	// contiguous buffer (common case for unary RPCs). When it does need
 	// to merge chunks, it pulls from gRPC's buffer pool.
 	buf := data.MaterializeToBuffer(mem.DefaultBufferPool())
 	defer buf.Free()
+
+	vt, ok := v.(vtUnmarshal)
+	if !ok {
+		// Fall back to standard proto unmarshal for non-VT types.
+		pm, ok := v.(proto.Message)
+		if !ok {
+			return fmt.Errorf("vtproto codec: failed to unmarshal, message is %T (not a proto.Message)", v)
+		}
+		return proto.Unmarshal(buf.ReadOnlyData(), pm)
+	}
+
 	return vt.UnmarshalVT(buf.ReadOnlyData())
 }
 

@@ -235,3 +235,27 @@ func TestHashWithoutLabels(t *testing.T) {
 		})
 	}
 }
+
+func TestHashDeterministic(t *testing.T) {
+	cases := [][]string{
+		{"__name__", "test"},
+		{"a", "1", "b", "2"},
+		{"__name__", "http_requests_total", "method", "GET", "status", "200"},
+		{}, // empty
+	}
+
+	for _, ss := range cases {
+		pb := FromStrings(ss...)
+		// Same input must always produce the same hash.
+		testutil.Equals(t, pb.Hash(), pb.Hash(),
+			"hash must be deterministic for labels %v", ss)
+	}
+
+	// Large label set that exceeds the 1024-byte fast path.
+	var large []string
+	for i := 0; i < 100; i++ {
+		large = append(large, fmt.Sprintf("key_%03d", i), strings.Repeat("v", 20))
+	}
+	pb := FromStrings(large...)
+	testutil.Equals(t, pb.Hash(), pb.Hash(), "hash must be deterministic for large label set")
+}

@@ -17,8 +17,9 @@ package unique
 import (
 	"runtime"
 	"strings"
-	"sync/atomic"
 	"unsafe"
+
+	"go.uber.org/atomic"
 
 	"github.com/puzpuzpuz/xsync/v3"
 )

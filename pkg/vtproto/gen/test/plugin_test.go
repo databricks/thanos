@@ -306,16 +306,16 @@ func unifiedDiff(a, b string) string {
 		maxLen = len(bLines)
 	}
 	for i := 0; i < maxLen; i++ {
-		aLine, bLine := "", ""
+		lineA, lineB := "", ""
 		if i < len(aLines) {
-			aLine = aLines[i]
+			lineA = aLines[i]
 		}
 		if i < len(bLines) {
-			bLine = bLines[i]
+			lineB = bLines[i]
 		}
-		if aLine != bLine {
-			diff.WriteString("- " + aLine + "\n")
-			diff.WriteString("+ " + bLine + "\n")
+		if lineA != lineB {
+			diff.WriteString("- " + lineA + "\n")
+			diff.WriteString("+ " + lineB + "\n")
 		}
 	}
 	return diff.String()

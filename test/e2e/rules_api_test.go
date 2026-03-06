@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"sort"
 	"testing"
 	"time"
@@ -16,8 +15,11 @@ import (
 	"github.com/efficientgo/e2e"
 	e2emon "github.com/efficientgo/e2e/monitoring"
 	"github.com/go-kit/log"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/rules"
+	"google.golang.org/protobuf/testing/protocmp"
 
 	"github.com/efficientgo/core/testutil"
 	"github.com/thanos-io/thanos/pkg/clientconfig"
@@ -202,8 +204,8 @@ func ruleAndAssert(t *testing.T, ctx context.Context, addr, typ string, want []*
 			}
 		}
 
-		if !reflect.DeepEqual(want, res) {
-			return errors.Errorf("unexpected result\nwant %v\ngot: %v", want, res)
+		if diff := cmp.Diff(want, res, protocmp.Transform(), cmpopts.EquateEmpty()); diff != "" {
+			return errors.Errorf("unexpected result (-want +got):\n%s", diff)
 		}
 
 		return nil

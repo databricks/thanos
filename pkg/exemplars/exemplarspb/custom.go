@@ -95,7 +95,7 @@ func ExemplarsFromPromExemplars(exemplars []exemplar.Exemplar) []*Exemplar {
 			Value: e.Value,
 			Ts:    e.Ts,
 		}
-		if len(e.Labels) > 0 {
+		if e.Labels.Len() > 0 {
 			r.Labels = &labelpb.LabelSet{Labels: labelpb.FromPromLabels(e.Labels)}
 		}
 		ex = append(ex, r)

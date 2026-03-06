@@ -1949,7 +1949,7 @@ func startIngestor(logger log.Logger, serverAddress string, delay time.Duration)
 // VTProto introduced, with my basic optimizations, no pooling, etc.
 // BenchmarkReceiveHTTPLargeBody/c:0.0MB_uc:0.0MB-32                 200000              5918 ns/op           5.75 MB/s        3592 B/op         55 allocs/op
 // BenchmarkReceiveHTTPLargeBody/c:0.0MB_uc:0.0MB#01-32              200000            499428 ns/op          24.66 MB/s      397838 B/op       5479 allocs/op
-// VTPproto intorduced, WITHOUT my extra optimizations:
+// VTProto introduced, WITHOUT my extra optimizations:
 // BenchmarkReceiveHTTPLargeBody/c:0.0MB_uc:0.0MB-32                 200000              6396 ns/op           5.32 MB/s        4034 B/op         58 allocs/op
 // BenchmarkReceiveHTTPLargeBody/c:0.0MB_uc:0.0MB#01-32              200000            503491 ns/op          24.46 MB/s      392868 B/op       5479 allocs/op
 // VTProto introduced, with extra extra optimizzations, and pooling:

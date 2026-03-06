@@ -47,31 +47,9 @@ func (m *Label) Compare(other *Label) int {
 	return strings.Compare(m.Value, other.Value)
 }
 
-// Hash is a free function that hashes a []*Label without requiring a type cast.
-func Hash(ls []*Label) uint64 {
-	b := make([]byte, 0, 1024)
-	for i, v := range ls {
-		if len(b)+len(v.Name)+len(v.Value)+2 >= cap(b) {
-			h := xxhash.New()
-			_, _ = h.Write(b)
-			for _, v := range ls[i:] {
-				_, _ = h.WriteString(v.Name)
-				_, _ = h.Write(labelSeps)
-				_, _ = h.WriteString(v.Value)
-				_, _ = h.Write(labelSeps)
-			}
-			return h.Sum64()
-		}
-		b = append(b, v.Name...)
-		b = append(b, labelSep)
-		b = append(b, v.Value...)
-		b = append(b, labelSep)
-	}
-	return xxhash.Sum64(b)
-}
-
 // Hash returns a hash value for the label set.
 // Uses the same xxhash algorithm as Prometheus for compatibility.
+// The encoding varies by build tag to match Prometheus (see labels_hash*.go).
 func (ls Labels) Hash() uint64 { return Hash(ls) }
 
 // HashWithoutLabels returns a hash value for all labels except those matching
@@ -121,33 +99,6 @@ func (ls Labels) DeepCopy() Labels {
 		res[i] = l.CloneVT()
 	}
 	return res
-}
-
-// DeepCopyPooled returns a new Labels where each *Label is obtained from
-// the vtproto pool rather than freshly allocated. String references are
-// shared (not byte-copied), preserving vtproto string interning.
-//
-// The caller is responsible for returning the labels via Labels.ReturnLabelsToPool
-// when they are no longer needed.
-func (ls Labels) DeepCopyPooled() Labels {
-	if ls == nil {
-		return nil
-	}
-	res := make(Labels, len(ls))
-	for i, l := range ls {
-		pooled := LabelFromVTPool()
-		pooled.Name = l.Name
-		pooled.Value = l.Value
-		res[i] = pooled
-	}
-	return res
-}
-
-// ReturnLabelsToPool returns every *Label in the set to the vtproto pool.
-func (ls Labels) ReturnToVTPool() {
-	for _, l := range ls {
-		l.ReturnToVTPool()
-	}
 }
 
 // FindValue returns the value for the label with the given name
@@ -273,11 +224,12 @@ func (ls Labels) DropMetricName() Labels {
 // ToPromLabels converts a slice of *Label to prometheus/model/labels.Labels.
 // This must ONLY be used at the boundary of Prometheus PromQL or Prometheus TSDB.
 func ToPromLabels(ls []*Label) labels.Labels {
-	result := make(labels.Labels, len(ls))
-	for i, l := range ls {
-		result[i] = labels.Label{Name: l.Name, Value: l.Value}
+	b := labels.NewScratchBuilder(len(ls))
+	for _, l := range ls {
+		b.Add(l.Name, l.Value)
 	}
-	return result
+	b.Sort()
+	return b.Labels()
 }
 
 // PromLabels converts a LabelSet to prometheus/model/labels.Labels.
@@ -290,10 +242,10 @@ func (m *LabelSet) PromLabels() labels.Labels {
 // FromPromLabels converts prometheus/model/labels.Labels to labelpb.Labels.
 // This must ONLY be used at the boundary of Prometheus PromQL or Prometheus TSDB.
 func FromPromLabels(ls labels.Labels) Labels {
-	result := make(Labels, len(ls))
-	for i, l := range ls {
-		result[i] = &Label{Name: l.Name, Value: l.Value}
-	}
+	result := make(Labels, 0, ls.Len())
+	ls.Range(func(l labels.Label) {
+		result = append(result, &Label{Name: l.Name, Value: l.Value})
+	})
 	return result
 }
 
@@ -470,7 +422,7 @@ func RmLabels(lset Labels, remove map[string]struct{}) Labels {
 }
 
 // RmLabelsInPlace filters lset in place, removing labels that are in the remove set.
-// in the remove set. It re-uses the underlying array and returns the
+// in the remove set. It reuses the underlying array and returns the
 // shortened slice. The caller must not use the original slice header after
 // this call — always reassign: lset = RmLabelsInPlace(lset, remove).
 func RmLabelsInPlace(lset Labels, remove map[string]struct{}) Labels {
