@@ -285,10 +285,9 @@ format: go-format shell-format
 
 .PHONY: go-format
 go-format: ## Formats Go code including imports.
-go-format: $(GOIMPORTS)
+go-format: $(GOLANGCI_LINT)
 	@echo ">> formatting go code"
-	@gofmt -s -w $(FILES_TO_FMT)
-	@$(GOIMPORTS) -w $(FILES_TO_FMT)
+	@$(GOLANGCI_LINT) fmt
 
 .PHONY: proto
 proto: ## Generates Go files from Thanos proto files.
@@ -413,6 +412,13 @@ lint-local: ## Runs Go linters locally without clean work tree checks.
 lint-local: check-git deps $(GOLANGCI_LINT)
 	@echo ">> linting all of the Go files GOGC=${GOGC}"
 	@$(GOLANGCI_LINT) run
+
+
+.PHONY: lint-fix
+lint-fix: ## Runs Go linters and auto-fixes issues where possible.
+lint-fix: check-git deps $(GOLANGCI_LINT)
+	@echo ">> linting and fixing Go files GOGC=${GOGC}"
+	@$(GOLANGCI_LINT) run --fix
 
 .PHONY: shell-lint
 shell-lint: ## Runs static analysis against our shell scripts.
