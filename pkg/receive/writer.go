@@ -78,7 +78,7 @@ func NewWriter(logger log.Logger, multiTSDB TenantStorage, opts *WriterOptions, 
 			Subsystem: "receive",
 			Name:      "writer_commit_duration_seconds",
 			Help:      "Duration of TSDB commit calls in seconds.",
-			Buckets:   prometheus.DefBuckets,
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 16),
 		}),
 	}
 }
