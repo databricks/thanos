@@ -626,8 +626,11 @@ func (h *Handler) Run() error {
 	return h.httpSrv.Serve(listener)
 }
 
-// replica encapsulates the replica number of a request and if the request is
-// already replicated.
+// replica describes the replication intent of a write request.
+// When 'replicated' is false, the request has not yet been replicated and must be
+// fanned out to replicas 0 through ReplicationFactor-1.
+// When replicated is true, the request has already been assigned to a specific
+// replica and n identifies which one. No further fan-out is needed.
 type replica struct {
 	n          uint64
 	replicated bool
@@ -639,6 +642,8 @@ type endpointReplica struct {
 	replica  uint64
 }
 
+// distributionKey identifies a unique (endpoint, replica, tenant) write
+// destination, replacing the previous nested map[endpointReplica]map[string]trackedSeries.
 type distributionKey struct {
 	er     endpointReplica
 	tenant string
@@ -1100,8 +1105,11 @@ func (h *Handler) fanoutForward(ctx context.Context, tenant string, r replica, t
 }
 
 // distributeTimeseriesToReplicas distributes the given timeseries from the tenant to different endpoints in a manner
-// that achieves the replication factor. The returned map is keyed by distributionKey which includes the endpoint,
-// replica, tenant, and whether the write is local.
+// that achieves the replication factor.
+// When r.replicated is true, only the single replica r.n is used.
+// Otherwise, replicas 0 through ReplicationFactor-1 are used.
+// The returned map is keyed by (endpointReplica, tenant, local) so that callers
+// can distinguish local vs remote writes without a nested map.
 func (h *Handler) distributeTimeseriesToReplicas(
 	tenantHTTP string,
 	r replica,
