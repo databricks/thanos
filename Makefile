@@ -408,6 +408,12 @@ go-lint: check-git deps $(GOLANGCI_LINT)
 	@$(MAKE) proto
 	$(call require_clean_work_tree,'detected files without copyright, run make lint and commit changes')
 
+.PHONY: lint-local
+lint-local: ## Runs Go linters locally without clean work tree checks.
+lint-local: check-git deps $(GOLANGCI_LINT)
+	@echo ">> linting all of the Go files GOGC=${GOGC}"
+	@$(GOLANGCI_LINT) run
+
 .PHONY: shell-lint
 shell-lint: ## Runs static analysis against our shell scripts.
 shell-lint: $(SHELLCHECK)
