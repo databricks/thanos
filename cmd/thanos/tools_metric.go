@@ -64,7 +64,7 @@ func registerStreamMetric(app extkingpin.AppClause) {
 func streamMetric(conf *rawMetricConfig, logger log.Logger) error {
 	nowMs := time.Now().Unix() * 1000
 	startMs := nowMs - int64(conf.hoursAgo)*3600*1000
-	conn, err := grpc.Dial(
+	conn, err := grpc.NewClient(
 		conf.storeAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)

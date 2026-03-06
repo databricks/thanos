@@ -410,7 +410,7 @@ func checkExemplarsResponse(t *testing.T, expected, data []*exemplarspb.Exemplar
 		thanostestutil.ProtoEquals(t, expected[i].SeriesLabels, data[i].SeriesLabels)
 		testutil.Equals(t, len(expected[i].Exemplars), len(data[i].Exemplars))
 		for j := range data[i].Exemplars {
-			thanostestutil.ProtoEquals(t, *expected[i].Exemplars[j], *data[i].Exemplars[j])
+			thanostestutil.ProtoEquals(t, expected[i].Exemplars[j], data[i].Exemplars[j])
 		}
 	}
 }

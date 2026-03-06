@@ -82,7 +82,7 @@ func TestReadinessInterceptors(t *testing.T) {
 	// Wait for server to start
 	time.Sleep(100 * time.Millisecond)
 
-	conn, err := grpc.Dial(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	testutil.Ok(t, err)
 	defer conn.Close()
 

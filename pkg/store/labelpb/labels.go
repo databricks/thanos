@@ -198,7 +198,7 @@ func (ls Labels) Range(f func(l *Label)) {
 }
 
 // Validate calls f on each label. If f returns a non-nil error, that
-// error is returned immediately, cancelling the iteration.
+// error is returned immediately, canceling the iteration.
 func (ls Labels) Validate(f func(l *Label) error) error {
 	for _, l := range ls {
 		if err := f(l); err != nil {

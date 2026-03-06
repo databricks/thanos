@@ -1954,7 +1954,7 @@ func startIngestor(logger log.Logger, serverAddress string, delay time.Duration)
 // BenchmarkReceiveHTTPLargeBody/c:0.0MB_uc:0.0MB#01-32              200000            503491 ns/op          24.46 MB/s      392868 B/op       5479 allocs/op
 // VTProto introduced, with extra extra optimizzations, and pooling:
 // BenchmarkReceiveHTTPLargeBody/c:0.0MB_uc:0.0MB-32                 200000              6383 ns/op           5.33 MB/s        3232 B/op         50 allocs/op
-// BenchmarkReceiveHTTPLargeBody/c:0.0MB_uc:0.0MB#01-32              200000            367150 ns/op          33.54 MB/s      187918 B/op       2376 allocs/op
+// BenchmarkReceiveHTTPLargeBody/c:0.0MB_uc:0.0MB#01-32              200000            367150 ns/op          33.54 MB/s      187918 B/op       2376 allocs/op.
 func BenchmarkReceiveHTTPLargeBody(b *testing.B) {
 	tests := []struct {
 		namePrefix       string

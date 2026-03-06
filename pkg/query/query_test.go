@@ -136,7 +136,7 @@ func (s *selectStore) Series(r *storepb.SeriesRequest, srv storepb.Store_SeriesS
 	matchers := make([]*storepb.LabelMatcher, 0, len(r.Matchers))
 	matchers = append(matchers, r.Matchers...)
 
-	req := *r
+	req := r.CloneVT()
 	req.Matchers = matchers
-	return s.StoreServer.Series(&req, srv)
+	return s.StoreServer.Series(req, srv)
 }

@@ -92,7 +92,7 @@ func setupBenchCluster(b *testing.B, numNodes int, rf uint64) *benchCluster {
 		servers[i] = grpc.NewServer()
 		storepb.RegisterWriteableStoreServer(servers[i], handlers[i])
 		lis := listeners[i]
-		go servers[i].Serve(lis)
+		go func() { _ = servers[i].Serve(lis) }()
 	}
 
 	hashring, err := NewMultiHashring(AlgorithmHashmod, rf, []HashringConfig{{

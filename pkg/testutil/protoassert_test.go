@@ -17,7 +17,7 @@ func TestProtoEquals_SingleMessage(t *testing.T) {
 
 func TestProtoEquals_IgnoresInternalFields(t *testing.T) {
 	a := &labelpb.Label{Name: "foo", Value: "bar"}
-	// Force internal proto state to diverge by serialising and deserialising.
+	// Force internal proto state to diverge by serializing and deserializing.
 	data, err := a.MarshalVT()
 	if err != nil {
 		t.Fatal(err)
