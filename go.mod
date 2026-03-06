@@ -1,6 +1,8 @@
 module github.com/thanos-io/thanos
 
-go 1.24
+go 1.23.0
+
+toolchain go1.23.11
 
 require (
 	cloud.google.com/go/storage v1.43.0 // indirect
@@ -122,7 +124,7 @@ require (
 	github.com/onsi/gomega v1.34.0
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10
 	github.com/prometheus-community/prom-label-proxy v0.8.1-0.20240127162815-c1195f9aabc0
-	github.com/puzpuzpuz/xsync/v4 v4.4.0
+	github.com/puzpuzpuz/xsync/v3 v3.5.1
 	github.com/seiflotfy/cuckoofilter v0.0.0-20240715131351-a2f2c23f1771
 	github.com/srikrsna/protoc-gen-gotag v1.0.2
 	go.opentelemetry.io/contrib/propagators/autoprop v0.54.0

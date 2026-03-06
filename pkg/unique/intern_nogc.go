@@ -16,11 +16,11 @@ package unique
 import (
 	"strings"
 
-	"github.com/puzpuzpuz/xsync/v4"
+	"github.com/puzpuzpuz/xsync/v3"
 )
 
 // pool is the shared intern table. Entries are never removed.
-var pool = xsync.NewMap[string, string]()
+var pool = xsync.NewMapOf[string, string]()
 
 // Handle is a reference to a canonically interned string.
 // It wraps the canonical string directly -- no pointer chase.
@@ -47,8 +47,8 @@ func Make(s string) Handle {
 	}
 
 	owned := strings.Clone(s)
-	v, _ := pool.LoadOrCompute(owned, func() (string, bool) {
-		return owned, false
+	v, _ := pool.LoadOrCompute(owned, func() string {
+		return owned
 	})
 	return Handle{s: v}
 }

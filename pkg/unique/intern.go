@@ -20,13 +20,13 @@ import (
 	"sync/atomic"
 	"unsafe"
 
-	"github.com/puzpuzpuz/xsync/v4"
+	"github.com/puzpuzpuz/xsync/v3"
 )
 
 // pool stores uintptr (invisible to GC) keyed by string. Cleanup
 // happens via runtime.SetFinalizer on the fValue, which removes
 // the map entry when no strong references remain.
-var pool = xsync.NewMap[string, uintptr]()
+var pool = xsync.NewMapOf[string, uintptr]()
 
 // Handle is a reference to a canonically interned string. As long as at
 // least one Handle for a given string value exists, the entry remains in
@@ -74,10 +74,10 @@ func Make(s string) Handle {
 	// Slow path: copy the string to detach from any unsafe backing memory,
 	// then atomically insert.
 	owned := strings.Clone(s)
-	raw, loaded := pool.LoadOrCompute(owned, func() (uintptr, bool) {
+	raw, loaded := pool.LoadOrCompute(owned, func() uintptr {
 		v := &fValue{s: owned}
 		runtime.SetFinalizer(v, finalizerCleanup)
-		return fValueToUintptr(v), false
+		return fValueToUintptr(v)
 	})
 	v := uintptrToFValue(raw)
 	if loaded {
