@@ -1859,9 +1859,9 @@ func TestDistributeSeries(t *testing.T) {
 	hr := &hashringSeenTenants{Hashring: hashring}
 	h.Hashring(hr)
 
-	_, remote, err := h.distributeTimeseriesToReplicas(
+	writes, err := h.distributeTimeseriesToReplicas(
 		"foo",
-		[]uint64{0},
+		replica{n: 0, replicated: true},
 		[]prompb.TimeSeries{
 			{
 				Labels: labelpb.ZLabelsFromPromLabels(labels.FromStrings("a", "b", tenantIDLabelName, "bar")),
@@ -1872,12 +1872,23 @@ func TestDistributeSeries(t *testing.T) {
 		},
 	)
 	require.NoError(t, err)
-	require.Len(t, remote, 1)
-	require.Len(t, remote[endpointReplica{endpoint: endpoint, replica: 0}][tenantIDLabelName+":bar"].timeSeries, 1)
-	require.Len(t, remote[endpointReplica{endpoint: endpoint, replica: 0}][tenantIDLabelName+":boo"].timeSeries, 1)
 
-	require.Equal(t, 2, labelpb.ZLabelsToPromLabels(remote[endpointReplica{endpoint: endpoint, replica: 0}][tenantIDLabelName+":bar"].timeSeries[0].Labels).Len())
-	require.Equal(t, 2, labelpb.ZLabelsToPromLabels(remote[endpointReplica{endpoint: endpoint, replica: 0}][tenantIDLabelName+":boo"].timeSeries[0].Labels).Len())
+	// With a single endpoint and replica, we expect 2 keys (one per tenant).
+	barKey := distributionKey{
+		er:     endpointReplica{endpoint: endpoint, replica: 0},
+		tenant: tenantIDLabelName + ":bar",
+	}
+	booKey := distributionKey{
+		er:     endpointReplica{endpoint: endpoint, replica: 0},
+		tenant: tenantIDLabelName + ":boo",
+	}
+	require.Contains(t, writes, barKey)
+	require.Contains(t, writes, booKey)
+	require.Len(t, writes[barKey].timeSeries, 1)
+	require.Len(t, writes[booKey].timeSeries, 1)
+
+	require.Equal(t, 2, labelpb.ZLabelsToPromLabels(writes[barKey].timeSeries[0].Labels).Len())
+	require.Equal(t, 2, labelpb.ZLabelsToPromLabels(writes[booKey].timeSeries[0].Labels).Len())
 
 	require.Equal(t, map[string]struct{}{tenantIDLabelName + ":bar": {}, tenantIDLabelName + ":boo": {}}, hr.seenTenants)
 }
