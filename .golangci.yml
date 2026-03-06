@@ -10,12 +10,50 @@ output:
 linters:
   enable:
     - copyloopvar
+    - depguard
+    - forbidigo
     - goconst
     - godot
     - misspell
     - promlinter
     - unparam
   settings:
+    depguard:
+      # TODO(bwplotka): Add Printf, DefaultRegisterer, NewGaugeFunc and MustRegister
+      # once exceptions are accepted. Add fmt.Errorf → github.com/pkg/errors.Errorf
+      # once https://github.com/fatih/faillint/issues/10 is addressed.
+      rules:
+        main:
+          deny:
+            - pkg: github.com/prometheus/tsdb
+              desc: "use github.com/prometheus/prometheus/tsdb instead"
+            - pkg: github.com/prometheus/prometheus/pkg/testutils
+              desc: "use github.com/thanos-io/thanos/pkg/testutil instead"
+            - pkg: sync/atomic
+              desc: "use go.uber.org/atomic instead"
+            - pkg: github.com/cortexproject/cortex
+              desc: "use github.com/thanos-io/thanos/internal/cortex instead"
+            - pkg: io/ioutil
+              desc: "deprecated: use io and os packages instead"
+            - pkg: github.com/NYTimes/gziphandler
+              desc: "use github.com/klauspost/compress/gzhttp instead"
+    forbidigo:
+      exclude-godoc-examples: true
+      analyze-types: true
+      forbid:
+        - pattern: '^fmt\.Print(|ln)$'
+          msg: "use a logger instead"
+        - pattern: '^fmt\.Sprint$'
+          msg: "use a logger instead"
+        - pattern: '^prometheus\.(DefaultGatherer|DefBuckets|NewUntypedFunc|UntypedFunc)$'
+          pkg: '^github\.com/prometheus/client_golang/prometheus$'
+          msg: "banned prometheus function"
+        - pattern: '^prometheus\.(NewCounter|NewCounterVec|NewGauge|NewGaugeVec|NewGaugeFunc|NewHistorgram|NewHistogramVec|NewSummary|NewSummaryVec)$'
+          pkg: '^github\.com/prometheus/client_golang/prometheus$'
+          msg: "use promauto equivalent instead"
+        - pattern: '^parser\.(ParseExpr|ParseMetricSelector)$'
+          pkg: '^github\.com/prometheus/prometheus/promql/parser$'
+          msg: "use github.com/thanos-io/thanos/pkg/extpromql instead"
     errcheck:
       exclude-functions:
         - (github.com/go-kit/log.Logger).Log
@@ -57,12 +95,16 @@ linters:
       - linters:
           - unparam
         path: test/e2e/compatibility_test\.go
+      # fmt.Print/Println/Sprint are allowed in tests.
+      - linters:
+          - forbidigo
+        path: _test\.go
     paths:
       - vendor
       - internal/cortex
       - third_party$
       - builtin$
-      - examples
+      - ^examples/
 formatters:
   enable:
     - gofmt
@@ -74,4 +116,4 @@ formatters:
       - internal/cortex
       - third_party$
       - builtin$
-      - examples
+      - ^examples/
