@@ -20,7 +20,7 @@ import (
 //
 // The probe performs the following operations:
 //   - Writes a fixed payload to a file in the data directory
-//   - Calls fsync to flush data to disk (bypassing OS page cache)
+//   - Calls fsync to flush data to disk
 //   - Measures and records the duration
 //   - Tracks "stuck" writes that have not yet completed
 type DiskProbe struct {
