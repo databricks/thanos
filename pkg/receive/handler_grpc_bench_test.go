@@ -77,7 +77,7 @@ func setupBenchCluster(b *testing.B, numNodes int, rf uint64) *benchCluster {
 			ReplicaHeader:       DefaultReplicaHeader,
 			ReplicationFactor:   rf,
 			ForwardTimeout:      5 * time.Minute,
-			Writer:              NewWriter(log.NewNopLogger(), newFakeTenantAppendable(appendable), &WriterOptions{}),
+			Writer:              NewWriter(log.NewNopLogger(), newFakeTenantAppendable(appendable), &WriterOptions{}, prometheus.NewRegistry()),
 			Limiter:             limiter,
 			Endpoint:            addresses[i],
 			ReplicationProtocol: ProtobufReplication,
