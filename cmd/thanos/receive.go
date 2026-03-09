@@ -574,13 +574,13 @@ func runReceive(
 		})
 	}
 
-	// Start the disk probe if configured.
-	if probeInterval := time.Duration(*conf.diskProbeInterval); probeInterval > 0 {
-		level.Info(logger).Log("msg", "setting up disk I/O probe", "interval", probeInterval, "write_size", conf.diskProbeWriteSize)
+	// Start the disk probe — writes 1KB + fsync to the TSDB data directory once per 5 seconds
+	// to measure actual disk I/O latency.
+	{
 		diskProbe := receive.NewDiskProbe(log.With(logger, "component", "disk-probe"), receive.DiskProbeOptions{
 			Dir:       conf.dataDir,
-			Interval:  probeInterval,
-			WriteSize: conf.diskProbeWriteSize,
+			Interval:  5 * time.Second,
+			WriteSize: 1024,
 		}, reg)
 		stop := make(chan struct{})
 		g.Add(func() error {
@@ -1064,10 +1064,6 @@ type receiveConfig struct {
 	poolingEnabled           bool
 	maxPooledCompressedCap   int
 	maxPooledDecompressedCap int
-
-	// Disk probe configuration.
-	diskProbeInterval  *model.Duration
-	diskProbeWriteSize int
 }
 
 func (rc *receiveConfig) registerFlag(cmd extkingpin.FlagClause) {
@@ -1285,13 +1281,6 @@ func (rc *receiveConfig) registerFlag(cmd extkingpin.FlagClause) {
 		Default(fmt.Sprintf("%d", receive.DefaultMaxPooledDecompressedCap)).
 		IntVar(&rc.maxPooledDecompressedCap)
 
-	rc.diskProbeInterval = extkingpin.ModelDuration(cmd.Flag("receive.disk-probe-interval",
-		"Interval between synthetic disk write probes. The probe writes a small payload to the TSDB data directory "+
-			"and calls fsync to measure actual disk I/O latency. Set to 0s to disable.").
-		Default("0s"))
-	cmd.Flag("receive.disk-probe-write-size",
-		"Number of bytes written per disk probe operation.").
-		Default("1024").IntVar(&rc.diskProbeWriteSize)
 }
 
 // determineMode returns the ReceiverMode that this receiver is configured to run in.

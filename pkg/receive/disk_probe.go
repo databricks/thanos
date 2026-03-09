@@ -118,6 +118,13 @@ func (p *DiskProbe) Run(stop <-chan struct{}) {
 			wg.Wait()
 			return
 		case <-ticker.C:
+			p.mu.Lock()
+			stuck := p.writing
+			p.mu.Unlock()
+			if stuck {
+				level.Debug(p.logger).Log("msg", "skipping disk probe, previous write still in-flight")
+				continue
+			}
 			p.probe(probePath)
 		}
 	}
