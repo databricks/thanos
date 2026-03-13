@@ -483,7 +483,7 @@ func newShuffleShardHashring(baseRing Hashring, shuffleShardingConfig ShuffleSha
 		maxNodesInAZ = max(maxNodesInAZ, count)
 	}
 
-	if shuffleShardingConfig.ShardSize > maxNodesInAZ {
+	if !shuffleShardingConfig.ShardSize.IsPercent && shuffleShardingConfig.ShardSize.Value > maxNodesInAZ {
 		level.Warn(l).Log(
 			"msg", "Shard size is larger than the maximum number of nodes in any AZ; some tenants might get all not working nodes if that AZ goes down",
 			"shard_size", shuffleShardingConfig.ShardSize,
@@ -492,7 +492,7 @@ func newShuffleShardHashring(baseRing Hashring, shuffleShardingConfig ShuffleSha
 	}
 
 	for _, override := range shuffleShardingConfig.Overrides {
-		if override.ShardSize < maxNodesInAZ {
+		if override.ShardSize.IsPercent || override.ShardSize.Value < maxNodesInAZ {
 			continue
 		}
 		level.Warn(l).Log(
@@ -528,7 +528,7 @@ func (s *shuffleShardHashring) dedupedNodes() []Endpoint {
 }
 
 // getShardSize returns the shard size for a specific tenant, taking into account any overrides.
-func (s *shuffleShardHashring) getShardSize(tenant string) int {
+func (s *shuffleShardHashring) getShardSize(tenant string) ShardSize {
 	for _, override := range s.shuffleShardingConfig.Overrides {
 		if override.TenantMatcherType == TenantMatcherTypeExact {
 			for _, t := range override.Tenants {
@@ -646,7 +646,11 @@ func (s *shuffleShardHashring) getTenantShard(tenant string) (*ketamaHashring, e
 		sort.Sort(sectionsByAZ[az])
 	}
 
-	ss := s.getShardSize(tenant)
+	shardSize := s.getShardSize(tenant)
+	if shardSize.IsPercent {
+		return nil, fmt.Errorf("percentage shard_size is not supported for ketama algorithm")
+	}
+	ss := shardSize.Value
 	var take int
 	if s.shuffleShardingConfig.ZoneAwarenessDisabled {
 		take = ss
@@ -867,15 +871,22 @@ func (s *shuffleShardHashring) getTenantShardRendezvous(tenant string) (Hashring
 		return nil, errors.Wrap(err, "failed to extract shard structure")
 	}
 
-	// shard_size is the total shard size; divide by numAZs to get per-AZ count.
-	totalShardSize := s.getShardSize(tenant)
+	// Determine per-AZ shard count based on shard size type.
+	shardSize := s.getShardSize(tenant)
 	numAZs := len(azShardMap)
-	perAZShards := totalShardSize / numAZs // floor
+	var perAZShards int
+	if shardSize.IsPercent {
+		// Percentage: resolve directly against per-AZ common shard count.
+		perAZShards = shardSize.ResolveCount(len(commonShards))
+	} else {
+		// Absolute: divide total by number of AZs.
+		perAZShards = shardSize.Value / numAZs // floor
+	}
 	if perAZShards == 0 {
-		return nil, fmt.Errorf("shard size %d too small for %d AZs", totalShardSize, numAZs)
+		return nil, fmt.Errorf("shard size %s too small for %d AZs", shardSize, numAZs)
 	}
 	if perAZShards > len(commonShards) {
-		return nil, fmt.Errorf("per-AZ shard count %d (from total %d / %d AZs) exceeds available common shards (%d)", perAZShards, totalShardSize, numAZs, len(commonShards))
+		return nil, fmt.Errorf("per-AZ shard count %d (from shard_size %s / %d AZs) exceeds available common shards (%d)", perAZShards, shardSize, numAZs, len(commonShards))
 	}
 
 	// Select shards using rendezvous hashing
@@ -978,7 +989,7 @@ func newHashring(algorithm HashringAlgorithm, endpoints []Endpoint, replicationF
 		if err != nil {
 			return nil, err
 		}
-		if shuffleShardingConfig.ShardSize > 0 {
+		if !shuffleShardingConfig.ShardSize.IsZero() {
 			return nil, fmt.Errorf("hashmod algorithm does not support shuffle sharding. Either use Ketama or remove shuffle sharding configuration")
 		}
 		return ringImpl, nil
@@ -987,9 +998,12 @@ func newHashring(algorithm HashringAlgorithm, endpoints []Endpoint, replicationF
 		if err != nil {
 			return nil, err
 		}
-		if shuffleShardingConfig.ShardSize > 0 {
-			if shuffleShardingConfig.ShardSize > len(endpoints) {
-				return nil, fmt.Errorf("shard size %d is larger than number of nodes in hashring %s (%d)", shuffleShardingConfig.ShardSize, hashring, len(endpoints))
+		if !shuffleShardingConfig.ShardSize.IsZero() {
+			if shuffleShardingConfig.ShardSize.IsPercent {
+				return nil, fmt.Errorf("percentage shard_size is not supported for ketama algorithm")
+			}
+			if shuffleShardingConfig.ShardSize.Value > len(endpoints) {
+				return nil, fmt.Errorf("shard size %d is larger than number of nodes in hashring %s (%d)", shuffleShardingConfig.ShardSize.Value, hashring, len(endpoints))
 			}
 			return newShuffleShardHashring(ringImpl, shuffleShardingConfig, replicationFactor, reg, hashring)
 		}
@@ -1000,9 +1014,15 @@ func newHashring(algorithm HashringAlgorithm, endpoints []Endpoint, replicationF
 			return nil, err
 		}
 		numShardsGauge.WithLabelValues(hashring).Set(float64(ringImpl.numShards))
-		if shuffleShardingConfig.ShardSize > 0 {
-			if shuffleShardingConfig.ShardSize > len(endpoints) {
-				return nil, fmt.Errorf("shard size %d is larger than number of nodes in hashring %s (%d)", shuffleShardingConfig.ShardSize, hashring, len(endpoints))
+		if !shuffleShardingConfig.ShardSize.IsZero() {
+			if shuffleShardingConfig.ShardSize.IsPercent {
+				if shuffleShardingConfig.ShardSize.Percent <= 0 || shuffleShardingConfig.ShardSize.Percent > 1.0 {
+					return nil, fmt.Errorf("shard_size percentage must be between 0%% and 100%%, got: %s", shuffleShardingConfig.ShardSize)
+				}
+			} else {
+				if shuffleShardingConfig.ShardSize.Value > len(endpoints) {
+					return nil, fmt.Errorf("shard size %d is larger than number of nodes in hashring %s (%d)", shuffleShardingConfig.ShardSize.Value, hashring, len(endpoints))
+				}
 			}
 			return newShuffleShardHashring(ringImpl, shuffleShardingConfig, replicationFactor, reg, hashring)
 		}
@@ -1012,7 +1032,7 @@ func newHashring(algorithm HashringAlgorithm, endpoints []Endpoint, replicationF
 		level.Warn(l).Log("msg", "Unrecognizable hashring algorithm. Fall back to hashmod algorithm.",
 			"hashring", hashring,
 			"tenants", tenants)
-		if shuffleShardingConfig.ShardSize > 0 {
+		if !shuffleShardingConfig.ShardSize.IsZero() {
 			return nil, fmt.Errorf("hashmod algorithm does not support shuffle sharding. Either use Ketama or remove shuffle sharding configuration")
 		}
 		return newSimpleHashring(endpoints)

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/pkg/errors"
+	"github.com/stretchr/testify/require"
 
 	"github.com/efficientgo/core/testutil"
 )
@@ -122,4 +123,170 @@ func TestUnmarshalEndpointSlice(t *testing.T) {
 			testutil.Equals(t, tcase.endpoints, endpoints)
 		})
 	}
+}
+
+func TestShardSizeUnmarshalJSON(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name      string
+		input     string
+		expected  ShardSize
+		expectErr bool
+	}{
+		{
+			name:     "integer value",
+			input:    `6`,
+			expected: ShardSize{Value: 6},
+		},
+		{
+			name:     "zero integer",
+			input:    `0`,
+			expected: ShardSize{Value: 0},
+		},
+		{
+			name:     "percentage string",
+			input:    `"50%"`,
+			expected: ShardSize{Percent: 0.5, IsPercent: true},
+		},
+		{
+			name:     "zero percentage",
+			input:    `"0%"`,
+			expected: ShardSize{Percent: 0, IsPercent: true},
+		},
+		{
+			name:     "100 percentage",
+			input:    `"100%"`,
+			expected: ShardSize{Percent: 1.0, IsPercent: true},
+		},
+		{
+			name:     "25 percentage",
+			input:    `"25%"`,
+			expected: ShardSize{Percent: 0.25, IsPercent: true},
+		},
+		{
+			name:      "invalid string without percent",
+			input:     `"50"`,
+			expectErr: true,
+		},
+		{
+			name:      "negative percentage",
+			input:     `"-10%"`,
+			expectErr: true,
+		},
+		{
+			name:      "over 100 percentage",
+			input:     `"150%"`,
+			expectErr: true,
+		},
+		{
+			name:      "invalid type",
+			input:     `true`,
+			expectErr: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var s ShardSize
+			err := json.Unmarshal([]byte(tc.input), &s)
+			if tc.expectErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.expected, s)
+		})
+	}
+}
+
+func TestShardSizeMarshalJSON(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name     string
+		input    ShardSize
+		expected string
+	}{
+		{
+			name:     "integer value",
+			input:    ShardSize{Value: 6},
+			expected: `6`,
+		},
+		{
+			name:     "zero value",
+			input:    ShardSize{},
+			expected: `0`,
+		},
+		{
+			name:     "percentage",
+			input:    ShardSize{Percent: 0.5, IsPercent: true},
+			expected: `"50%"`,
+		},
+		{
+			name:     "100 percentage",
+			input:    ShardSize{Percent: 1.0, IsPercent: true},
+			expected: `"100%"`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data, err := json.Marshal(tc.input)
+			require.NoError(t, err)
+			require.Equal(t, tc.expected, string(data))
+		})
+	}
+}
+
+func TestShardSizeIsZero(t *testing.T) {
+	t.Parallel()
+
+	require.True(t, ShardSize{}.IsZero())
+	require.True(t, ShardSize{Value: 0}.IsZero())
+	require.True(t, ShardSize{Percent: 0, IsPercent: true}.IsZero())
+	require.False(t, ShardSize{Value: 1}.IsZero())
+	require.False(t, ShardSize{Percent: 0.5, IsPercent: true}.IsZero())
+}
+
+func TestShardSizeResolveCount(t *testing.T) {
+	t.Parallel()
+
+	// Absolute value: returns Value directly regardless of total.
+	require.Equal(t, 6, ShardSize{Value: 6}.ResolveCount(100))
+	require.Equal(t, 6, ShardSize{Value: 6}.ResolveCount(4))
+
+	// Percentage: max(1, total * pct).
+	require.Equal(t, 2, ShardSize{Percent: 0.5, IsPercent: true}.ResolveCount(4))
+	require.Equal(t, 1, ShardSize{Percent: 0.25, IsPercent: true}.ResolveCount(4))
+	require.Equal(t, 4, ShardSize{Percent: 1.0, IsPercent: true}.ResolveCount(4))
+	// Very small percentage still returns at least 1.
+	require.Equal(t, 1, ShardSize{Percent: 0.01, IsPercent: true}.ResolveCount(4))
+}
+
+func TestShardSizeRoundTripJSON(t *testing.T) {
+	t.Parallel()
+
+	// Test that ShardSize round-trips through full config JSON parsing.
+	cfgJSON := `[{
+		"hashring": "test",
+		"endpoints": [{"address": "node1"}],
+		"shuffle_sharding_config": {
+			"shard_size": "50%",
+			"overrides": [
+				{"shard_size": 6, "tenants": ["t1"]},
+				{"shard_size": "25%", "tenants": ["t2"]}
+			]
+		}
+	}]`
+
+	configs, err := ParseConfig([]byte(cfgJSON))
+	require.NoError(t, err)
+	require.Len(t, configs, 1)
+
+	ssc := configs[0].ShuffleShardingConfig
+	require.True(t, ssc.ShardSize.IsPercent)
+	require.InDelta(t, 0.5, ssc.ShardSize.Percent, 0.001)
+
+	require.Len(t, ssc.Overrides, 2)
+	require.False(t, ssc.Overrides[0].ShardSize.IsPercent)
+	require.Equal(t, 6, ssc.Overrides[0].ShardSize.Value)
+	require.True(t, ssc.Overrides[1].ShardSize.IsPercent)
+	require.InDelta(t, 0.25, ssc.Overrides[1].ShardSize.Percent, 0.001)
 }
