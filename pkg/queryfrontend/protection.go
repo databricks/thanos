@@ -20,7 +20,7 @@ const (
 type ProtectionResult struct {
 	Triggered bool
 	RuleName  string
-	Action    string // "log" or "block"
+	Action    RuleAction
 }
 
 type protectionContextKey int
@@ -37,4 +37,16 @@ func WithProtectionResult(ctx context.Context, result *ProtectionResult) context
 func GetProtectionResult(ctx context.Context) *ProtectionResult {
 	result, _ := ctx.Value(protectionResultKey).(*ProtectionResult)
 	return result
+}
+
+// RuleActionToString converts a RuleAction to a string.
+func RuleActionToString(action RuleAction) string {
+	switch action {
+	case RuleActionLog:
+		return "RuleActionLog"
+	case RuleActionBlock:
+		return "RuleActionBlock"
+	default:
+		return "Unknown RuleAction"
+	}
 }
