@@ -336,7 +336,7 @@ func newTestHandlerHashring(
 		hashringAlgo = AlgorithmHashmod
 	}
 
-	hashring, err := NewMultiHashring(hashringAlgo, replicationFactor, cfg, prometheus.NewRegistry())
+	hashring, err := NewMultiHashring(hashringAlgo, replicationFactor, cfg, prometheus.NewRegistry(), "")
 	if err != nil {
 		return nil, nil, nil, err
 	}

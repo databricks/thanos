@@ -299,7 +299,7 @@ func TestRendezvousShuffleShardingBasic(t *testing.T) {
 	cfg := ShuffleShardingConfig{
 		ShardSize: ShardSize{Value: 6},
 	}
-	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-rendezvous")
+	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-rendezvous", "")
 	require.NoError(t, err)
 
 	tenant := "test-tenant"
@@ -350,7 +350,7 @@ func TestRendezvousShuffleShardingConsistency(t *testing.T) {
 	cfg := ShuffleShardingConfig{
 		ShardSize: ShardSize{Value: 6},
 	}
-	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-consistency")
+	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-consistency", "")
 	require.NoError(t, err)
 
 	tenant := "consistent-tenant"
@@ -386,7 +386,7 @@ func TestRendezvousShuffleShardingDifferentTenants(t *testing.T) {
 	cfg := ShuffleShardingConfig{
 		ShardSize: ShardSize{Value: 9},
 	}
-	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-diff-tenants")
+	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-diff-tenants", "")
 	require.NoError(t, err)
 
 	tenantShards := make(map[string][]int)
@@ -425,7 +425,7 @@ func TestRendezvousShuffleShardingPreservesAlignment(t *testing.T) {
 	cfg := ShuffleShardingConfig{
 		ShardSize: ShardSize{Value: 6},
 	}
-	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-preserves")
+	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-preserves", "")
 	require.NoError(t, err)
 
 	tenant := "alignment-test-tenant"
@@ -474,7 +474,7 @@ func TestRendezvousShuffleShardingDataDistribution(t *testing.T) {
 	cfg := ShuffleShardingConfig{
 		ShardSize: ShardSize{Value: 6},
 	}
-	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-distribution")
+	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-distribution", "")
 	require.NoError(t, err)
 
 	tenant := "distribution-test-tenant"
@@ -584,7 +584,7 @@ func TestRendezvousShuffleShardingValidation(t *testing.T) {
 	cfg := ShuffleShardingConfig{
 		ShardSize: ShardSize{Value: 30}, // 30 / 3 AZs = 10 per-AZ, but only 5 shards available
 	}
-	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-validation")
+	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-validation", "")
 	require.NoError(t, err)
 
 	_, err = shardRing.getTenantShardRendezvous("test-tenant")
@@ -611,7 +611,7 @@ func TestRendezvousShuffleShardingPercentage(t *testing.T) {
 		cfg := ShuffleShardingConfig{
 			ShardSize: ShardSize{Percent: 0.5, IsPercent: true},
 		}
-		shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-pct-50")
+		shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-pct-50", "")
 		require.NoError(t, err)
 
 		shard, err := shardRing.getTenantShardRendezvous("test-tenant")
@@ -646,7 +646,7 @@ func TestRendezvousShuffleShardingPercentage(t *testing.T) {
 		cfg := ShuffleShardingConfig{
 			ShardSize: ShardSize{Percent: 0.25, IsPercent: true},
 		}
-		shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-pct-25")
+		shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-pct-25", "")
 		require.NoError(t, err)
 
 		shard, err := shardRing.getTenantShardRendezvous("test-tenant")
@@ -670,7 +670,7 @@ func TestRendezvousShuffleShardingPercentage(t *testing.T) {
 		cfg := ShuffleShardingConfig{
 			ShardSize: ShardSize{Percent: 1.0, IsPercent: true},
 		}
-		shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-pct-100")
+		shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-pct-100", "")
 		require.NoError(t, err)
 
 		shard, err := shardRing.getTenantShardRendezvous("test-tenant")
@@ -692,7 +692,7 @@ func TestRendezvousShuffleShardingPercentage(t *testing.T) {
 				},
 			},
 		}
-		shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-pct-override")
+		shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-pct-override", "")
 		require.NoError(t, err)
 
 		// Default tenant gets 50%.
@@ -724,7 +724,7 @@ func TestRendezvousShuffleShardingPercentageConsistency(t *testing.T) {
 	cfg := ShuffleShardingConfig{
 		ShardSize: ShardSize{Percent: 0.5, IsPercent: true},
 	}
-	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-pct-consistency")
+	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-pct-consistency", "")
 	require.NoError(t, err)
 
 	tenant := "consistency-tenant"
@@ -764,7 +764,7 @@ func TestKetamaRejectsPercentageShardSize(t *testing.T) {
 		},
 	}
 
-	_, err := NewMultiHashring(AlgorithmKetama, 2, cfg, prometheus.NewRegistry())
+	_, err := NewMultiHashring(AlgorithmKetama, 2, cfg, prometheus.NewRegistry(), "")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "percentage shard_size is not supported for ketama algorithm")
 }
@@ -788,7 +788,7 @@ func TestRendezvousIntegerShardSizeBackwardCompatibility(t *testing.T) {
 	cfg := ShuffleShardingConfig{
 		ShardSize: ShardSize{Value: 6},
 	}
-	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-int-compat")
+	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-int-compat", "")
 	require.NoError(t, err)
 
 	shard, err := shardRing.getTenantShardRendezvous("test-tenant")
