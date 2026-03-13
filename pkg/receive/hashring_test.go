@@ -700,11 +700,11 @@ func TestShuffleShardHashring(t *testing.T) {
 			},
 			tenant: "tenant-1",
 			shuffleShardCfg: ShuffleShardingConfig{
-				ShardSize: 2,
+				ShardSize: ShardSize{Value: 2},
 				Overrides: []ShuffleShardingOverrideConfig{
 					{
 						Tenants:   []string{"special-tenant"},
-						ShardSize: 2,
+						ShardSize: ShardSize{Value: 2},
 					},
 				},
 			},
@@ -722,11 +722,11 @@ func TestShuffleShardHashring(t *testing.T) {
 			},
 			tenant: "prefix-tenant",
 			shuffleShardCfg: ShuffleShardingConfig{
-				ShardSize: 2,
+				ShardSize: ShardSize{Value: 2},
 				Overrides: []ShuffleShardingOverrideConfig{
 					{
 						Tenants:           []string{"prefix*"},
-						ShardSize:         3,
+						ShardSize:         ShardSize{Value: 3},
 						TenantMatcherType: TenantMatcherGlob,
 					},
 				},
@@ -745,11 +745,11 @@ func TestShuffleShardHashring(t *testing.T) {
 			tenant: "prefix-tenant",
 			err:    `shard size 20 is larger than number of nodes in AZ`,
 			shuffleShardCfg: ShuffleShardingConfig{
-				ShardSize: 2,
+				ShardSize: ShardSize{Value: 2},
 				Overrides: []ShuffleShardingOverrideConfig{
 					{
 						Tenants:           []string{"prefix*"},
-						ShardSize:         20,
+						ShardSize:         ShardSize{Value: 20},
 						TenantMatcherType: TenantMatcherGlob,
 					},
 				},
@@ -774,12 +774,12 @@ func TestShuffleShardHashring(t *testing.T) {
 			// shuffle. What matters is: (1) exactly 3 nodes are used, and (2) the
 			// selection is stable when scaling (tested in TestShuffleShardHashringStability).
 			shuffleShardCfg: ShuffleShardingConfig{
-				ShardSize:             1,
+				ShardSize:             ShardSize{Value: 1},
 				ZoneAwarenessDisabled: true,
 				Overrides: []ShuffleShardingOverrideConfig{
 					{
 						Tenants:           []string{"prefix*"},
-						ShardSize:         3,
+						ShardSize:         ShardSize{Value: 3},
 						TenantMatcherType: TenantMatcherGlob,
 					},
 				},
@@ -962,7 +962,7 @@ func TestShuffleShardHashringStability(t *testing.T) {
 			}
 
 			shuffleShardCfg := ShuffleShardingConfig{
-				ShardSize:             tc.shardSize,
+				ShardSize:             ShardSize{Value: tc.shardSize},
 				ZoneAwarenessDisabled: true,
 			}
 

@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -118,6 +119,87 @@ func (e *Endpoint) unmarshal(data []byte) error {
 	return nil
 }
 
+// ShardSize represents a shard size that can be either an absolute integer count
+// or a percentage of available shards. Percentages are only supported for the
+// rendezvous algorithm.
+type ShardSize struct {
+	Value     int     // absolute count (used when IsPercent=false)
+	Percent   float64 // 0.0-1.0 (used when IsPercent=true)
+	IsPercent bool
+}
+
+// IsZero returns true if neither an absolute value nor a percentage is set.
+func (s ShardSize) IsZero() bool {
+	if s.IsPercent {
+		return s.Percent == 0
+	}
+	return s.Value == 0
+}
+
+// ResolveCount resolves the shard size to an absolute count given a total.
+// For percentages, returns max(1, int(total * percent)).
+// For absolute values, returns the Value directly.
+func (s ShardSize) ResolveCount(total int) int {
+	if s.IsPercent {
+		return int(math.Max(1, float64(total)*s.Percent))
+	}
+	return s.Value
+}
+
+// String returns a human-readable representation of the shard size.
+func (s ShardSize) String() string {
+	if s.IsPercent {
+		return fmt.Sprintf("%.0f%%", s.Percent*100)
+	}
+	return fmt.Sprintf("%d", s.Value)
+}
+
+// UnmarshalJSON supports both integer (e.g. 6) and percentage string (e.g. "50%") formats.
+func (s *ShardSize) UnmarshalJSON(data []byte) error {
+	// Try integer first.
+	var intVal int
+	if err := json.Unmarshal(data, &intVal); err == nil {
+		s.Value = intVal
+		s.Percent = 0
+		s.IsPercent = false
+		return nil
+	}
+
+	// Try string (percentage format).
+	var strVal string
+	if err := json.Unmarshal(data, &strVal); err != nil {
+		return fmt.Errorf("shard_size must be an integer or a percentage string (e.g. \"50%%\"), got: %s", string(data))
+	}
+
+	strVal = strings.TrimSpace(strVal)
+	if !strings.HasSuffix(strVal, "%") {
+		return fmt.Errorf("shard_size string must end with '%%', got: %q", strVal)
+	}
+
+	numStr := strings.TrimSuffix(strVal, "%")
+	var pct float64
+	if _, err := fmt.Sscanf(numStr, "%f", &pct); err != nil {
+		return fmt.Errorf("invalid percentage value in shard_size: %q", strVal)
+	}
+
+	if pct < 0 || pct > 100 {
+		return fmt.Errorf("shard_size percentage must be between 0 and 100, got: %s", strVal)
+	}
+
+	s.Value = 0
+	s.Percent = pct / 100.0
+	s.IsPercent = true
+	return nil
+}
+
+// MarshalJSON serializes the shard size back to JSON.
+func (s ShardSize) MarshalJSON() ([]byte, error) {
+	if s.IsPercent {
+		return json.Marshal(fmt.Sprintf("%.0f%%", s.Percent*100))
+	}
+	return json.Marshal(s.Value)
+}
+
 // HashringConfig represents the configuration for a hashring
 // a receive node knows about.
 type HashringConfig struct {
@@ -132,14 +214,14 @@ type HashringConfig struct {
 }
 
 type ShuffleShardingOverrideConfig struct {
-	ShardSize         int           `json:"shard_size"`
+	ShardSize         ShardSize     `json:"shard_size"`
 	Tenants           []string      `json:"tenants,omitempty"`
 	TenantMatcherType tenantMatcher `json:"tenant_matcher_type,omitempty"`
 }
 
 type ShuffleShardingConfig struct {
-	ShardSize int `json:"shard_size"`
-	CacheSize int `json:"cache_size"`
+	ShardSize ShardSize `json:"shard_size"`
+	CacheSize int       `json:"cache_size"`
 	// ZoneAwarenessDisabled disables zone awareness. We still try to spread the load
 	// across the available zones, but we don't try to balance the shards across zones.
 	ZoneAwarenessDisabled bool                            `json:"zone_awareness_disabled"`

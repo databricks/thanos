@@ -297,7 +297,7 @@ func TestRendezvousShuffleShardingBasic(t *testing.T) {
 	require.NoError(t, err)
 
 	cfg := ShuffleShardingConfig{
-		ShardSize: 6,
+		ShardSize: ShardSize{Value: 6},
 	}
 	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-rendezvous")
 	require.NoError(t, err)
@@ -348,7 +348,7 @@ func TestRendezvousShuffleShardingConsistency(t *testing.T) {
 	require.NoError(t, err)
 
 	cfg := ShuffleShardingConfig{
-		ShardSize: 6,
+		ShardSize: ShardSize{Value: 6},
 	}
 	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-consistency")
 	require.NoError(t, err)
@@ -384,7 +384,7 @@ func TestRendezvousShuffleShardingDifferentTenants(t *testing.T) {
 	require.NoError(t, err)
 
 	cfg := ShuffleShardingConfig{
-		ShardSize: 9,
+		ShardSize: ShardSize{Value: 9},
 	}
 	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-diff-tenants")
 	require.NoError(t, err)
@@ -423,7 +423,7 @@ func TestRendezvousShuffleShardingPreservesAlignment(t *testing.T) {
 	require.NoError(t, err)
 
 	cfg := ShuffleShardingConfig{
-		ShardSize: 6,
+		ShardSize: ShardSize{Value: 6},
 	}
 	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-preserves")
 	require.NoError(t, err)
@@ -472,7 +472,7 @@ func TestRendezvousShuffleShardingDataDistribution(t *testing.T) {
 	require.NoError(t, err)
 
 	cfg := ShuffleShardingConfig{
-		ShardSize: 6,
+		ShardSize: ShardSize{Value: 6},
 	}
 	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-distribution")
 	require.NoError(t, err)
@@ -582,7 +582,7 @@ func TestRendezvousShuffleShardingValidation(t *testing.T) {
 	require.NoError(t, err)
 
 	cfg := ShuffleShardingConfig{
-		ShardSize: 30, // 30 / 3 AZs = 10 per-AZ, but only 5 shards available
+		ShardSize: ShardSize{Value: 30}, // 30 / 3 AZs = 10 per-AZ, but only 5 shards available
 	}
 	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-validation")
 	require.NoError(t, err)
@@ -590,4 +590,208 @@ func TestRendezvousShuffleShardingValidation(t *testing.T) {
 	_, err = shardRing.getTenantShardRendezvous("test-tenant")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "exceeds available common shards")
+}
+
+func TestRendezvousShuffleShardingPercentage(t *testing.T) {
+	t.Parallel()
+
+	// Create 3 AZs with 4 shards each (12 endpoints total, 4 common shards).
+	endpoints := make([]Endpoint, 0, 12)
+	azs := []string{"az-a", "az-b", "az-c"}
+	for _, az := range azs {
+		for ord := 0; ord < 4; ord++ {
+			endpoints = append(endpoints, makeK8sEndpoint("pod-"+az, ord, az))
+		}
+	}
+
+	baseRing, err := newRendezvousHashring(endpoints, 3)
+	require.NoError(t, err)
+
+	t.Run("50% of 4 shards = 2 per AZ", func(t *testing.T) {
+		cfg := ShuffleShardingConfig{
+			ShardSize: ShardSize{Percent: 0.5, IsPercent: true},
+		}
+		shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-pct-50")
+		require.NoError(t, err)
+
+		shard, err := shardRing.getTenantShardRendezvous("test-tenant")
+		require.NoError(t, err)
+
+		nodes := shard.Nodes()
+		// 2 shards per AZ * 3 AZs = 6 endpoints.
+		require.Len(t, nodes, 6, "expected 6 endpoints (2 shards * 3 AZs)")
+
+		shardsByAZ := make(map[string][]int)
+		for _, node := range nodes {
+			shardsByAZ[node.AZ] = append(shardsByAZ[node.AZ], extractShardFromAddress(t, node.Address))
+		}
+		require.Len(t, shardsByAZ, 3)
+		for az, shards := range shardsByAZ {
+			require.Len(t, shards, 2, "AZ %s should have 2 shards", az)
+		}
+
+		// All AZs should have the same shards.
+		var referenceShards []int
+		for _, shards := range shardsByAZ {
+			sort.Ints(shards)
+			if referenceShards == nil {
+				referenceShards = shards
+			} else {
+				require.Equal(t, referenceShards, shards)
+			}
+		}
+	})
+
+	t.Run("25% of 4 shards = 1 per AZ", func(t *testing.T) {
+		cfg := ShuffleShardingConfig{
+			ShardSize: ShardSize{Percent: 0.25, IsPercent: true},
+		}
+		shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-pct-25")
+		require.NoError(t, err)
+
+		shard, err := shardRing.getTenantShardRendezvous("test-tenant")
+		require.NoError(t, err)
+
+		nodes := shard.Nodes()
+		// 1 shard per AZ * 3 AZs = 3 endpoints.
+		require.Len(t, nodes, 3, "expected 3 endpoints (1 shard * 3 AZs)")
+
+		shardsByAZ := make(map[string][]int)
+		for _, node := range nodes {
+			shardsByAZ[node.AZ] = append(shardsByAZ[node.AZ], extractShardFromAddress(t, node.Address))
+		}
+		require.Len(t, shardsByAZ, 3)
+		for az, shards := range shardsByAZ {
+			require.Len(t, shards, 1, "AZ %s should have 1 shard", az)
+		}
+	})
+
+	t.Run("100% of 4 shards = 4 per AZ", func(t *testing.T) {
+		cfg := ShuffleShardingConfig{
+			ShardSize: ShardSize{Percent: 1.0, IsPercent: true},
+		}
+		shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-pct-100")
+		require.NoError(t, err)
+
+		shard, err := shardRing.getTenantShardRendezvous("test-tenant")
+		require.NoError(t, err)
+
+		nodes := shard.Nodes()
+		// 4 shards per AZ * 3 AZs = 12 endpoints (all of them).
+		require.Len(t, nodes, 12, "expected 12 endpoints (4 shards * 3 AZs)")
+	})
+
+	t.Run("percentage with override", func(t *testing.T) {
+		cfg := ShuffleShardingConfig{
+			ShardSize: ShardSize{Percent: 0.5, IsPercent: true},
+			Overrides: []ShuffleShardingOverrideConfig{
+				{
+					Tenants:           []string{"special-tenant"},
+					ShardSize:         ShardSize{Percent: 0.25, IsPercent: true},
+					TenantMatcherType: TenantMatcherTypeExact,
+				},
+			},
+		}
+		shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-pct-override")
+		require.NoError(t, err)
+
+		// Default tenant gets 50%.
+		shard, err := shardRing.getTenantShardRendezvous("default-tenant")
+		require.NoError(t, err)
+		require.Len(t, shard.Nodes(), 6) // 2 shards * 3 AZs
+
+		// Special tenant gets 25%.
+		shard, err = shardRing.getTenantShardRendezvous("special-tenant")
+		require.NoError(t, err)
+		require.Len(t, shard.Nodes(), 3) // 1 shard * 3 AZs
+	})
+}
+
+func TestRendezvousShuffleShardingPercentageConsistency(t *testing.T) {
+	t.Parallel()
+
+	endpoints := make([]Endpoint, 0, 30)
+	azs := []string{"az-a", "az-b", "az-c"}
+	for _, az := range azs {
+		for ord := 0; ord < 10; ord++ {
+			endpoints = append(endpoints, makeK8sEndpoint("pod-"+az, ord, az))
+		}
+	}
+
+	baseRing, err := newRendezvousHashring(endpoints, 3)
+	require.NoError(t, err)
+
+	cfg := ShuffleShardingConfig{
+		ShardSize: ShardSize{Percent: 0.5, IsPercent: true},
+	}
+	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-pct-consistency")
+	require.NoError(t, err)
+
+	tenant := "consistency-tenant"
+	var firstShards []int
+
+	for trial := 0; trial < 10; trial++ {
+		shard, err := shardRing.getTenantShardRendezvous(tenant)
+		require.NoError(t, err)
+		currentShards := extractShardsFromSubring(t, shard)
+		if firstShards == nil {
+			firstShards = currentShards
+		} else {
+			require.Equal(t, firstShards, currentShards, "same tenant should always get same shards")
+		}
+	}
+}
+
+func TestKetamaRejectsPercentageShardSize(t *testing.T) {
+	t.Parallel()
+
+	// Verify that ketama algorithm rejects percentage shard_size at config validation.
+	endpoints := []Endpoint{
+		{Address: "node-1", AZ: "az-1"},
+		{Address: "node-2", AZ: "az-1"},
+		{Address: "node-3", AZ: "az-2"},
+		{Address: "node-4", AZ: "az-2"},
+	}
+
+	cfg := []HashringConfig{
+		{
+			Hashring:  "test",
+			Endpoints: endpoints,
+			Algorithm: AlgorithmKetama,
+			ShuffleShardingConfig: ShuffleShardingConfig{
+				ShardSize: ShardSize{Percent: 0.5, IsPercent: true},
+			},
+		},
+	}
+
+	_, err := NewMultiHashring(AlgorithmKetama, 2, cfg, prometheus.NewRegistry())
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "percentage shard_size is not supported for ketama algorithm")
+}
+
+func TestRendezvousIntegerShardSizeBackwardCompatibility(t *testing.T) {
+	t.Parallel()
+
+	// Verify that integer shard_size still works the same way with rendezvous.
+	endpoints := make([]Endpoint, 0, 15)
+	azs := []string{"az-a", "az-b", "az-c"}
+	for _, az := range azs {
+		for ord := 0; ord < 5; ord++ {
+			endpoints = append(endpoints, makeK8sEndpoint("pod-"+az, ord, az))
+		}
+	}
+
+	baseRing, err := newRendezvousHashring(endpoints, 3)
+	require.NoError(t, err)
+
+	// shard_size=6 → 6/3 AZs = 2 shards per AZ → 6 endpoints total.
+	cfg := ShuffleShardingConfig{
+		ShardSize: ShardSize{Value: 6},
+	}
+	shardRing, err := newShuffleShardHashring(baseRing, cfg, 3, prometheus.NewRegistry(), "test-int-compat")
+	require.NoError(t, err)
+
+	shard, err := shardRing.getTenantShardRendezvous("test-tenant")
+	require.NoError(t, err)
+	require.Len(t, shard.Nodes(), 6, "expected 6 endpoints (2 shards per AZ * 3 AZs)")
 }
