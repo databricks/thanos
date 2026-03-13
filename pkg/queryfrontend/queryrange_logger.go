@@ -58,6 +58,10 @@ type MetricsRangeQueryLogging struct {
 	Shard                 string   `json:"shard"`                 // Pantheon shard name
 	// Store-matcher details
 	StoreMatchers []StoreMatcherSet `json:"storeMatchers"`
+	// Protection fields
+	ProtectionTriggered bool   `json:"protectionTriggered"` // Whether a protection rule was triggered
+	ProtectionRuleName  string `json:"protectionRuleName"`  // Name of the rule that triggered
+	ProtectionAction    string `json:"protectionAction"`    // Action taken: "log" or "block"
 }
 
 // RangeQueryLogConfig holds configuration for range query logging.
@@ -130,13 +134,13 @@ func (m *rangeQueryLoggingMiddleware) Do(ctx context.Context, r queryrange.Reque
 	// Calculate latency.
 	latencyMs := time.Since(startTime).Milliseconds()
 
-	// Log the range query.
-	m.logRangeQuery(rangeReq, resp, err, latencyMs)
+	// Log the range query, passing ctx so protection results can be read.
+	m.logRangeQuery(ctx, rangeReq, resp, err, latencyMs)
 
 	return resp, err
 }
 
-func (m *rangeQueryLoggingMiddleware) logRangeQuery(req *ThanosQueryRangeRequest, resp queryrange.Response, err error, latencyMs int64) {
+func (m *rangeQueryLoggingMiddleware) logRangeQuery(ctx context.Context, req *ThanosQueryRangeRequest, resp queryrange.Response, err error, latencyMs int64) {
 	success := err == nil
 	userInfo := ExtractUserInfoFromHeaders(req.Headers)
 
@@ -146,6 +150,15 @@ func (m *rangeQueryLoggingMiddleware) logRangeQuery(req *ThanosQueryRangeRequest
 	if success && resp != nil {
 		stats = GetResponseStats(resp)
 		metricNames = ExtractMetricNames(resp)
+	}
+
+	// Read protection result from context (written by protection middleware).
+	var protectionTriggered bool
+	var protectionRuleName, protectionAction string
+	if result := GetProtectionResult(ctx); result != nil {
+		protectionTriggered = result.Triggered
+		protectionRuleName = result.RuleName
+		protectionAction = result.Action
 	}
 
 	// Create the range query log entry.
@@ -188,6 +201,10 @@ func (m *rangeQueryLoggingMiddleware) logRangeQuery(req *ThanosQueryRangeRequest
 		Shard:                 os.Getenv("PANTHEON_SHARDNAME"),
 		// Store-matcher details
 		StoreMatchers: ConvertStoreMatchers(req.StoreMatchers),
+		// Protection fields
+		ProtectionTriggered: protectionTriggered,
+		ProtectionRuleName:  protectionRuleName,
+		ProtectionAction:    protectionAction,
 	}
 
 	// Log to file if available.
