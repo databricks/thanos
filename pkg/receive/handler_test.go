@@ -336,7 +336,11 @@ func newTestHandlerHashring(
 		hashringAlgo = AlgorithmHashmod
 	}
 
+<<<<<<< HEAD
 	hashring, err := NewMultiHashring(hashringAlgo, replicationFactor, cfg, prometheus.NewRegistry(), "", log.NewNopLogger())
+=======
+	hashring, err := NewMultiHashring(hashringAlgo, replicationFactor, cfg, prometheus.NewRegistry(), "")
+>>>>>>> e85e3001 (receive: Disable shuffle sharding for default tenant (#312))
 	if err != nil {
 		return nil, nil, nil, err
 	}
