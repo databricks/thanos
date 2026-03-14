@@ -201,7 +201,11 @@ func TestHashringGet(t *testing.T) {
 			tenant: "t2",
 		},
 	} {
-		hs, err := NewMultiHashring(AlgorithmHashmod, 3, tc.cfg, prometheus.NewRegistry(), "")
+		numShardsGauge := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "thanos_receive_hashring_shards",
+			Help: "Number of shards per hashring after groupByAZ alignment.",
+		}, []string{"hashring"})
+		hs, err := NewMultiHashring(AlgorithmHashmod, 3, tc.cfg, prometheus.NewRegistry(), numShardsGauge, "")
 		require.NoError(t, err)
 
 		h, err := hs.Get(tc.tenant, ts)
@@ -669,7 +673,11 @@ func TestInvalidAZHashringCfg(t *testing.T) {
 		},
 	} {
 		t.Run("", func(t *testing.T) {
-			_, err := NewMultiHashring(tt.algorithm, tt.replicas, tt.cfg, prometheus.NewRegistry(), "")
+			numShardsGauge := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+				Name: "thanos_receive_hashring_shards",
+				Help: "Number of shards per hashring after groupByAZ alignment.",
+			}, []string{"hashring"})
+			_, err := NewMultiHashring(tt.algorithm, tt.replicas, tt.cfg, prometheus.NewRegistry(), numShardsGauge, "")
 			require.EqualError(t, err, tt.expectedError)
 		})
 	}

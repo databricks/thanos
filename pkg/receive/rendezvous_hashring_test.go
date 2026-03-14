@@ -764,7 +764,11 @@ func TestKetamaRejectsPercentageShardSize(t *testing.T) {
 		},
 	}
 
-	_, err := NewMultiHashring(AlgorithmKetama, 2, cfg, prometheus.NewRegistry(), "")
+	numShardsGauge := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "thanos_receive_hashring_shards",
+		Help: "Number of shards per hashring after groupByAZ alignment.",
+	}, []string{"hashring"})
+	_, err := NewMultiHashring(AlgorithmKetama, 2, cfg, prometheus.NewRegistry(), numShardsGauge, "")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "percentage shard_size is not supported for ketama algorithm")
 }

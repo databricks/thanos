@@ -336,7 +336,11 @@ func newTestHandlerHashring(
 		hashringAlgo = AlgorithmHashmod
 	}
 
-	hashring, err := NewMultiHashring(hashringAlgo, replicationFactor, cfg, prometheus.NewRegistry(), "")
+	numShardsGauge := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "thanos_receive_hashring_shards",
+		Help: "Number of shards per hashring after groupByAZ alignment.",
+	}, []string{"hashring"})
+	hashring, err := NewMultiHashring(hashringAlgo, replicationFactor, cfg, prometheus.NewRegistry(), numShardsGauge, "")
 	if err != nil {
 		return nil, nil, nil, err
 	}

@@ -950,15 +950,10 @@ func (s *shuffleShardHashring) GetN(tenant string, ts *prompb.TimeSeries, n uint
 // groups.
 // Which hashring to use for a tenant is determined
 // by the tenants field of the hashring configuration.
-func NewMultiHashring(algorithm HashringAlgorithm, replicationFactor uint64, cfg []HashringConfig, reg prometheus.Registerer, defaultTenantID string) (Hashring, error) {
+func NewMultiHashring(algorithm HashringAlgorithm, replicationFactor uint64, cfg []HashringConfig, reg prometheus.Registerer, numShardsGauge *prometheus.GaugeVec, defaultTenantID string) (Hashring, error) {
 	m := &multiHashring{
 		cache: make(map[string]Hashring),
 	}
-
-	numShardsGauge := promauto.With(reg).NewGaugeVec(prometheus.GaugeOpts{
-		Name: "thanos_receive_hashring_shards",
-		Help: "Number of shards per hashring after groupByAZ alignment.",
-	}, []string{"hashring"})
 
 	for _, h := range cfg {
 		var hashring Hashring
