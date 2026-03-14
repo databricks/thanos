@@ -201,7 +201,7 @@ func TestHashringGet(t *testing.T) {
 			tenant: "t2",
 		},
 	} {
-		hs, err := NewMultiHashring(AlgorithmHashmod, 3, tc.cfg, prometheus.NewRegistry())
+		hs, err := NewMultiHashring(AlgorithmHashmod, 3, tc.cfg, prometheus.NewRegistry(), "")
 		require.NoError(t, err)
 
 		h, err := hs.Get(tc.tenant, ts)
@@ -669,7 +669,7 @@ func TestInvalidAZHashringCfg(t *testing.T) {
 		},
 	} {
 		t.Run("", func(t *testing.T) {
-			_, err := NewMultiHashring(tt.algorithm, tt.replicas, tt.cfg, prometheus.NewRegistry())
+			_, err := NewMultiHashring(tt.algorithm, tt.replicas, tt.cfg, prometheus.NewRegistry(), "")
 			require.EqualError(t, err, tt.expectedError)
 		})
 	}
@@ -794,7 +794,7 @@ func TestShuffleShardHashring(t *testing.T) {
 			require.NoError(t, err)
 
 			// Create the shuffle shard hashring
-			shardRing, err := newShuffleShardHashring(baseRing, tc.shuffleShardCfg, 2, prometheus.NewRegistry(), "test")
+			shardRing, err := newShuffleShardHashring(baseRing, tc.shuffleShardCfg, 2, prometheus.NewRegistry(), "test", "")
 			require.NoError(t, err)
 
 			// Test that the shuffle sharding is consistent
@@ -969,13 +969,13 @@ func TestShuffleShardHashringStability(t *testing.T) {
 			// Create initial hashring
 			initialBaseRing, err := newKetamaHashring(initialEndpoints, SectionsPerNode, 1)
 			require.NoError(t, err)
-			initialShardRing, err := newShuffleShardHashring(initialBaseRing, shuffleShardCfg, 1, prometheus.NewRegistry(), "test-initial")
+			initialShardRing, err := newShuffleShardHashring(initialBaseRing, shuffleShardCfg, 1, prometheus.NewRegistry(), "test-initial", "")
 			require.NoError(t, err)
 
 			// Create scaled hashring
 			scaledBaseRing, err := newKetamaHashring(scaledEndpoints, SectionsPerNode, 1)
 			require.NoError(t, err)
-			scaledShardRing, err := newShuffleShardHashring(scaledBaseRing, shuffleShardCfg, 1, prometheus.NewRegistry(), "test-scaled")
+			scaledShardRing, err := newShuffleShardHashring(scaledBaseRing, shuffleShardCfg, 1, prometheus.NewRegistry(), "test-scaled", "")
 			require.NoError(t, err)
 
 			totalDiffs := 0
@@ -1163,4 +1163,144 @@ func TestGroupByAZ(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestShuffleShardDefaultTenantBypass(t *testing.T) {
+	defaultTenant := "default-tenant"
+	regularTenant := "regular-tenant"
+
+	t.Run("ketama", func(t *testing.T) {
+		endpoints := make([]Endpoint, 10)
+		for i := range endpoints {
+			endpoints[i] = Endpoint{Address: fmt.Sprintf("node-%d", i)}
+		}
+		baseRing, err := newKetamaHashring(endpoints, SectionsPerNode, 2)
+		require.NoError(t, err)
+		shardRing, err := newShuffleShardHashring(baseRing, ShuffleShardingConfig{
+			ShardSize: ShardSize{Value: 3},
+		}, 2, prometheus.NewRegistry(), "test-ketama", defaultTenant)
+		require.NoError(t, err)
+
+		// Default tenant should use all 10 endpoints (base ring).
+		defaultNodes := make(map[string]struct{})
+		for i := 0; i < 1000; i++ {
+			ts := &prompb.TimeSeries{
+				Labels: []labelpb.ZLabel{
+					{Name: "series", Value: fmt.Sprintf("%d", i)},
+				},
+			}
+			ep, err := shardRing.GetN(defaultTenant, ts, 0)
+			require.NoError(t, err)
+			defaultNodes[ep.Address] = struct{}{}
+		}
+		require.Len(t, defaultNodes, 10,
+			"default tenant should use all 10 endpoints, got %d", len(defaultNodes))
+
+		// Regular tenant should be sharded to 3 endpoints.
+		regularNodes := make(map[string]struct{})
+		for i := 0; i < 1000; i++ {
+			ts := &prompb.TimeSeries{
+				Labels: []labelpb.ZLabel{
+					{Name: "series", Value: fmt.Sprintf("%d", i)},
+				},
+			}
+			ep, err := shardRing.GetN(regularTenant, ts, 0)
+			require.NoError(t, err)
+			regularNodes[ep.Address] = struct{}{}
+		}
+		require.Len(t, regularNodes, 3,
+			"regular tenant should use exactly 3 endpoints, got %d", len(regularNodes))
+
+		// Default tenant should not occupy LRU cache slot.
+		_, cached := shardRing.cache.Get(defaultTenant)
+		require.False(t, cached, "default tenant should not be in cache")
+	})
+
+	t.Run("rendezvous", func(t *testing.T) {
+		// Create 3 AZs with 4 shards each (replication factor = 3).
+		endpoints := make([]Endpoint, 0, 12)
+		azs := []string{"az-a", "az-b", "az-c"}
+		for _, az := range azs {
+			for ord := 0; ord < 4; ord++ {
+				endpoints = append(endpoints, Endpoint{
+					Address: fmt.Sprintf("node-%s-%d.svc.cluster.local:10901", az, ord),
+					AZ:      az,
+					Shard:   ord,
+				})
+			}
+		}
+
+		baseRing, err := newRendezvousHashring(endpoints, 3)
+		require.NoError(t, err)
+		shardRing, err := newShuffleShardHashring(baseRing, ShuffleShardingConfig{
+			ShardSize: ShardSize{Value: 6},
+		}, 3, prometheus.NewRegistry(), "test-rendezvous", defaultTenant)
+		require.NoError(t, err)
+
+		// Default tenant should reach all shards in the base ring (4 shards x 3 AZs = 12 endpoints).
+		defaultNodes := make(map[string]struct{})
+		for n := uint64(0); n < 3; n++ {
+			for i := 0; i < 1000; i++ {
+				ts := &prompb.TimeSeries{
+					Labels: []labelpb.ZLabel{
+						{Name: "series", Value: fmt.Sprintf("%d", i)},
+					},
+				}
+				ep, err := shardRing.GetN(defaultTenant, ts, n)
+				require.NoError(t, err)
+				defaultNodes[ep.Address] = struct{}{}
+			}
+		}
+		require.Len(t, defaultNodes, 12,
+			"default tenant should use all 12 endpoints, got %d", len(defaultNodes))
+
+		// Regular tenant should use a subset (2 shards x 3 AZs = 6 endpoints).
+		regularNodes := make(map[string]struct{})
+		for n := uint64(0); n < 3; n++ {
+			for i := 0; i < 1000; i++ {
+				ts := &prompb.TimeSeries{
+					Labels: []labelpb.ZLabel{
+						{Name: "series", Value: fmt.Sprintf("%d", i)},
+					},
+				}
+				ep, err := shardRing.GetN(regularTenant, ts, n)
+				require.NoError(t, err)
+				regularNodes[ep.Address] = struct{}{}
+			}
+		}
+		require.Len(t, regularNodes, 6,
+			"regular tenant should use exactly 6 endpoints (2 shards x 3 AZs), got %d", len(regularNodes))
+
+		// Default tenant should not occupy LRU cache slot.
+		_, cached := shardRing.cache.Get(defaultTenant)
+		require.False(t, cached, "default tenant should not be in cache")
+	})
+
+	// Empty defaultTenantID means no bypass.
+	t.Run("empty_default_tenant_id_no_bypass", func(t *testing.T) {
+		endpoints := make([]Endpoint, 10)
+		for i := range endpoints {
+			endpoints[i] = Endpoint{Address: fmt.Sprintf("node-%d", i)}
+		}
+		baseRing, err := newKetamaHashring(endpoints, SectionsPerNode, 2)
+		require.NoError(t, err)
+		shardRing, err := newShuffleShardHashring(baseRing, ShuffleShardingConfig{
+			ShardSize: ShardSize{Value: 3},
+		}, 2, prometheus.NewRegistry(), "test-no-bypass", "")
+		require.NoError(t, err)
+
+		nodes := make(map[string]struct{})
+		for i := 0; i < 1000; i++ {
+			ts := &prompb.TimeSeries{
+				Labels: []labelpb.ZLabel{
+					{Name: "series", Value: fmt.Sprintf("%d", i)},
+				},
+			}
+			ep, err := shardRing.GetN(defaultTenant, ts, 0)
+			require.NoError(t, err)
+			nodes[ep.Address] = struct{}{}
+		}
+		require.Len(t, nodes, 3,
+			"with empty defaultTenantID, 'default-tenant' should still be sharded to 3 endpoints")
+	})
 }
