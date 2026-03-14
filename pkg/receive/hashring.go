@@ -361,6 +361,8 @@ type shuffleShardHashring struct {
 
 	replicationFactor uint64
 
+	defaultTenantID string
+
 	nodes []Endpoint
 
 	// cache stores tenant-specific subrings. The value is Hashring to support both
@@ -421,7 +423,7 @@ func newShuffleShardCacheMetrics(reg prometheus.Registerer, hashringName string)
 }
 
 // newShuffleShardHashring creates a new shuffle sharding hashring wrapper.
-func newShuffleShardHashring(baseRing Hashring, shuffleShardingConfig ShuffleShardingConfig, replicationFactor uint64, reg prometheus.Registerer, name string) (*shuffleShardHashring, error) {
+func newShuffleShardHashring(baseRing Hashring, shuffleShardingConfig ShuffleShardingConfig, replicationFactor uint64, reg prometheus.Registerer, name string, defaultTenantID string) (*shuffleShardHashring, error) {
 	l := log.NewNopLogger()
 
 	level.Info(l).Log(
@@ -462,6 +464,7 @@ func newShuffleShardHashring(baseRing Hashring, shuffleShardingConfig ShuffleSha
 		baseRing:              baseRing,
 		shuffleShardingConfig: shuffleShardingConfig,
 		replicationFactor:     replicationFactor,
+		defaultTenantID:       defaultTenantID,
 		cache:                 cache,
 		metrics:               metrics,
 	}
@@ -582,6 +585,10 @@ func ShuffleShardSeed(identifier, zone string) int64 {
 }
 
 func (s *shuffleShardHashring) getTenantShardCached(tenant string) (Hashring, error) {
+	if s.defaultTenantID != "" && tenant == s.defaultTenantID {
+		return s.baseRing, nil
+	}
+
 	s.metrics.requestsTotal.Inc()
 
 	cached, ok := s.cache.Get(tenant)
@@ -943,7 +950,7 @@ func (s *shuffleShardHashring) GetN(tenant string, ts *prompb.TimeSeries, n uint
 // groups.
 // Which hashring to use for a tenant is determined
 // by the tenants field of the hashring configuration.
-func NewMultiHashring(algorithm HashringAlgorithm, replicationFactor uint64, cfg []HashringConfig, reg prometheus.Registerer) (Hashring, error) {
+func NewMultiHashring(algorithm HashringAlgorithm, replicationFactor uint64, cfg []HashringConfig, reg prometheus.Registerer, defaultTenantID string) (Hashring, error) {
 	m := &multiHashring{
 		cache: make(map[string]Hashring),
 	}
@@ -960,7 +967,7 @@ func NewMultiHashring(algorithm HashringAlgorithm, replicationFactor uint64, cfg
 		if h.Algorithm != "" {
 			activeAlgorithm = h.Algorithm
 		}
-		hashring, err = newHashring(activeAlgorithm, h.Endpoints, replicationFactor, h.Hashring, h.Tenants, h.ShuffleShardingConfig, reg, numShardsGauge)
+		hashring, err = newHashring(activeAlgorithm, h.Endpoints, replicationFactor, h.Hashring, h.Tenants, h.ShuffleShardingConfig, reg, numShardsGauge, defaultTenantID)
 		if err != nil {
 			return nil, err
 		}
@@ -981,7 +988,7 @@ func NewMultiHashring(algorithm HashringAlgorithm, replicationFactor uint64, cfg
 	return m, nil
 }
 
-func newHashring(algorithm HashringAlgorithm, endpoints []Endpoint, replicationFactor uint64, hashring string, tenants []string, shuffleShardingConfig ShuffleShardingConfig, reg prometheus.Registerer, numShardsGauge *prometheus.GaugeVec) (Hashring, error) {
+func newHashring(algorithm HashringAlgorithm, endpoints []Endpoint, replicationFactor uint64, hashring string, tenants []string, shuffleShardingConfig ShuffleShardingConfig, reg prometheus.Registerer, numShardsGauge *prometheus.GaugeVec, defaultTenantID string) (Hashring, error) {
 
 	switch algorithm {
 	case AlgorithmHashmod:
@@ -1005,7 +1012,7 @@ func newHashring(algorithm HashringAlgorithm, endpoints []Endpoint, replicationF
 			if shuffleShardingConfig.ShardSize.Value > len(endpoints) {
 				return nil, fmt.Errorf("shard size %d is larger than number of nodes in hashring %s (%d)", shuffleShardingConfig.ShardSize.Value, hashring, len(endpoints))
 			}
-			return newShuffleShardHashring(ringImpl, shuffleShardingConfig, replicationFactor, reg, hashring)
+			return newShuffleShardHashring(ringImpl, shuffleShardingConfig, replicationFactor, reg, hashring, defaultTenantID)
 		}
 		return ringImpl, nil
 	case AlgorithmRendezvous:
@@ -1024,7 +1031,7 @@ func newHashring(algorithm HashringAlgorithm, endpoints []Endpoint, replicationF
 					return nil, fmt.Errorf("shard size %d is larger than number of nodes in hashring %s (%d)", shuffleShardingConfig.ShardSize.Value, hashring, len(endpoints))
 				}
 			}
-			return newShuffleShardHashring(ringImpl, shuffleShardingConfig, replicationFactor, reg, hashring)
+			return newShuffleShardHashring(ringImpl, shuffleShardingConfig, replicationFactor, reg, hashring, defaultTenantID)
 		}
 		return ringImpl, nil
 	default:
