@@ -33,6 +33,7 @@ import (
 	"github.com/golang/snappy"
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/model/exemplar"
 	"github.com/prometheus/prometheus/model/histogram"
@@ -336,11 +337,12 @@ func newTestHandlerHashring(
 		hashringAlgo = AlgorithmHashmod
 	}
 
-	numShardsGauge := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+	reg := prometheus.NewRegistry()
+	numShardsGauge := promauto.With(reg).NewGaugeVec(prometheus.GaugeOpts{
 		Name: "thanos_receive_hashring_shards",
 		Help: "Number of shards per hashring after groupByAZ alignment.",
 	}, []string{"hashring"})
-	hashring, err := NewMultiHashring(hashringAlgo, replicationFactor, cfg, prometheus.NewRegistry(), numShardsGauge, "")
+	hashring, err := NewMultiHashring(hashringAlgo, replicationFactor, cfg, reg, numShardsGauge, "")
 	if err != nil {
 		return nil, nil, nil, err
 	}
