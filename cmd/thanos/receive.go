@@ -709,11 +709,6 @@ func setupHashring(g *run.Group,
 			defer close(hashringChangedChan)
 		}
 
-		numShardsGauge := promauto.With(reg).NewGaugeVec(prometheus.GaugeOpts{
-			Name: "thanos_receive_hashring_shards",
-			Help: "Number of shards per hashring after groupByAZ alignment.",
-		}, []string{"hashring"})
-
 		for {
 			select {
 			case c, ok := <-updates:
@@ -725,7 +720,7 @@ func setupHashring(g *run.Group,
 					webHandler.Hashring(receive.SingleNodeHashring(conf.endpoint))
 					level.Info(logger).Log("msg", "Empty hashring config. Set up single node hashring.")
 				} else {
-					h, err := receive.NewMultiHashring(algorithm, conf.replicationFactor, c, reg, numShardsGauge, conf.defaultTenantID)
+					h, err := receive.NewMultiHashring(algorithm, conf.replicationFactor, c, reg, conf.defaultTenantID)
 					if err != nil {
 						return errors.Wrap(err, "unable to create new hashring from config")
 					}

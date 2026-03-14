@@ -15,7 +15,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/prometheus/model/labels"
 
 	"github.com/thanos-io/thanos/pkg/store/labelpb"
@@ -202,12 +201,7 @@ func TestHashringGet(t *testing.T) {
 			tenant: "t2",
 		},
 	} {
-		reg := prometheus.NewRegistry()
-		numShardsGauge := promauto.With(reg).NewGaugeVec(prometheus.GaugeOpts{
-			Name: "thanos_receive_hashring_shards",
-			Help: "Number of shards per hashring after groupByAZ alignment.",
-		}, []string{"hashring"})
-		hs, err := NewMultiHashring(AlgorithmHashmod, 3, tc.cfg, reg, numShardsGauge, "")
+		hs, err := NewMultiHashring(AlgorithmHashmod, 3, tc.cfg, prometheus.NewRegistry(), "")
 		require.NoError(t, err)
 
 		h, err := hs.Get(tc.tenant, ts)
@@ -675,12 +669,7 @@ func TestInvalidAZHashringCfg(t *testing.T) {
 		},
 	} {
 		t.Run("", func(t *testing.T) {
-			reg := prometheus.NewRegistry()
-			numShardsGauge := promauto.With(reg).NewGaugeVec(prometheus.GaugeOpts{
-				Name: "thanos_receive_hashring_shards",
-				Help: "Number of shards per hashring after groupByAZ alignment.",
-			}, []string{"hashring"})
-			_, err := NewMultiHashring(tt.algorithm, tt.replicas, tt.cfg, reg, numShardsGauge, "")
+			_, err := NewMultiHashring(tt.algorithm, tt.replicas, tt.cfg, prometheus.NewRegistry(), "")
 			require.EqualError(t, err, tt.expectedError)
 		})
 	}

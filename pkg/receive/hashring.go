@@ -300,12 +300,17 @@ type multiHashring struct {
 	// and read from.
 	mu sync.RWMutex
 
-	nodes []Endpoint
+	nodes          []Endpoint
+	numShardsGauge *prometheus.GaugeVec
+	reg            prometheus.Registerer
 }
 
 func (s *multiHashring) Close() {
 	for _, h := range s.hashrings {
 		h.Close()
+	}
+	if s.numShardsGauge != nil {
+		s.reg.Unregister(s.numShardsGauge)
 	}
 }
 
@@ -950,9 +955,16 @@ func (s *shuffleShardHashring) GetN(tenant string, ts *prompb.TimeSeries, n uint
 // groups.
 // Which hashring to use for a tenant is determined
 // by the tenants field of the hashring configuration.
-func NewMultiHashring(algorithm HashringAlgorithm, replicationFactor uint64, cfg []HashringConfig, reg prometheus.Registerer, numShardsGauge *prometheus.GaugeVec, defaultTenantID string) (Hashring, error) {
+func NewMultiHashring(algorithm HashringAlgorithm, replicationFactor uint64, cfg []HashringConfig, reg prometheus.Registerer, defaultTenantID string) (Hashring, error) {
+	numShardsGauge := promauto.With(reg).NewGaugeVec(prometheus.GaugeOpts{
+		Name: "thanos_receive_hashring_shards",
+		Help: "Number of shards per hashring after groupByAZ alignment.",
+	}, []string{"hashring"})
+
 	m := &multiHashring{
-		cache: make(map[string]Hashring),
+		cache:          make(map[string]Hashring),
+		numShardsGauge: numShardsGauge,
+		reg:            reg,
 	}
 
 	for _, h := range cfg {

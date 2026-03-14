@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/stretchr/testify/require"
 
 	"github.com/thanos-io/thanos/pkg/store/labelpb"
@@ -765,12 +764,7 @@ func TestKetamaRejectsPercentageShardSize(t *testing.T) {
 		},
 	}
 
-	reg := prometheus.NewRegistry()
-	numShardsGauge := promauto.With(reg).NewGaugeVec(prometheus.GaugeOpts{
-		Name: "thanos_receive_hashring_shards",
-		Help: "Number of shards per hashring after groupByAZ alignment.",
-	}, []string{"hashring"})
-	_, err := NewMultiHashring(AlgorithmKetama, 2, cfg, reg, numShardsGauge, "")
+	_, err := NewMultiHashring(AlgorithmKetama, 2, cfg, prometheus.NewRegistry(), "")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "percentage shard_size is not supported for ketama algorithm")
 }
