@@ -6,9 +6,6 @@ package queryfrontend
 import (
 	"context"
 	"regexp"
-
-	"github.com/prometheus/prometheus/promql/parser"
-	"github.com/thanos-io/thanos/internal/cortex/querier/queryrange"
 )
 
 // RuleAction represents the action to take when a protection rule is triggered.
@@ -55,11 +52,9 @@ func RuleActionToString(action RuleAction) string {
 	}
 }
 
-// thanosQueryReq wraps a query request with parsed PromQL and actor information.
+// thanosQueryReq wraps a query request with actor information.
 type thanosQueryReq struct {
-	inner  queryrange.Request
-	parsed parser.Expr
-	actor  string
+	actor string
 }
 
 // Protection is the interface that all protection implementations must satisfy.
