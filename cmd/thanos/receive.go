@@ -720,7 +720,7 @@ func setupHashring(g *run.Group,
 					webHandler.Hashring(receive.SingleNodeHashring(conf.endpoint))
 					level.Info(logger).Log("msg", "Empty hashring config. Set up single node hashring.")
 				} else {
-					h, err := receive.NewMultiHashring(algorithm, conf.replicationFactor, c, reg, conf.defaultTenantID)
+					h, err := receive.NewMultiHashring(algorithm, conf.replicationFactor, c, reg, conf.defaultTenantID, logger)
 					if err != nil {
 						return errors.Wrap(err, "unable to create new hashring from config")
 					}
