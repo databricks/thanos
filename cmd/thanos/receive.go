@@ -574,6 +574,23 @@ func runReceive(
 		})
 	}
 
+	// Start the disk probe — writes 1KB + fsync to the TSDB data directory once per 5 seconds
+	// to measure actual disk I/O latency.
+	{
+		diskProbe := receive.NewDiskProbe(log.With(logger, "component", "disk-probe"), receive.DiskProbeOptions{
+			Dir:       conf.dataDir,
+			Interval:  5 * time.Second,
+			WriteSize: 1024,
+		}, reg)
+		stop := make(chan struct{})
+		g.Add(func() error {
+			diskProbe.Run(stop)
+			return nil
+		}, func(err error) {
+			close(stop)
+		})
+	}
+
 	if receiveMode == receive.IngestorOnly {
 		level.Debug(logger).Log("msg", "setting up periodic top metrics collection")
 		topMetricNumSeries := promauto.With(reg).NewGaugeVec(prometheus.GaugeOpts{
@@ -1263,6 +1280,7 @@ func (rc *receiveConfig) registerFlag(cmd extkingpin.FlagClause) {
 	cmd.Flag("receive.max-pooled-decompressed-cap", "Maximum capacity (bytes) of a decompressed buffer that will be returned to the pool. Buffers larger than this are discarded to prevent pool ballooning.").
 		Default(fmt.Sprintf("%d", receive.DefaultMaxPooledDecompressedCap)).
 		IntVar(&rc.maxPooledDecompressedCap)
+
 }
 
 // determineMode returns the ReceiverMode that this receiver is configured to run in.
