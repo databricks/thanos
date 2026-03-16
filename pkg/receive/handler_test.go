@@ -42,6 +42,7 @@ import (
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/tsdb"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/atomic"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/resolver"
@@ -1740,6 +1741,152 @@ func TestRelabel(t *testing.T) {
 			})
 
 			h.relabel(&tcase.writeRequest)
+			testutil.Equals(t, tcase.expectedWriteRequest, tcase.writeRequest)
+		})
+	}
+}
+
+func newBlocklistFilterWithRules(rules blocklistRules, logger log.Logger) *BlocklistFilter {
+	var ptr atomic.Pointer[blocklistRules]
+	ptr.Store(&rules)
+	return &BlocklistFilter{
+		rules:  &ptr,
+		logger: logger,
+	}
+}
+
+func TestBlocklistFilterIntegration(t *testing.T) {
+	t.Parallel()
+
+	for _, tcase := range []struct {
+		name                 string
+		blocklistConfig      string
+		writeRequest         prompb.WriteRequest
+		expectedWriteRequest prompb.WriteRequest
+		expectedDropped      int
+	}{
+		{
+			name:            "no blocklist rules",
+			blocklistConfig: "[]",
+			writeRequest: prompb.WriteRequest{
+				Timeseries: []prompb.TimeSeries{
+					{
+						Labels: []labelpb.ZLabel{
+							{Name: "__name__", Value: "test_metric"},
+							{Name: "foo", Value: "bar"},
+						},
+						Samples: []prompb.Sample{{Timestamp: 0, Value: 1}},
+					},
+				},
+			},
+			expectedWriteRequest: prompb.WriteRequest{
+				Timeseries: []prompb.TimeSeries{
+					{
+						Labels: []labelpb.ZLabel{
+							{Name: "__name__", Value: "test_metric"},
+							{Name: "foo", Value: "bar"},
+						},
+						Samples: []prompb.Sample{{Timestamp: 0, Value: 1}},
+					},
+				},
+			},
+			expectedDropped: 0,
+		},
+		{
+			name:            "blocklist drops matching series, keeps non-matching",
+			blocklistConfig: `["__name__:test_metric foo:bar"]`,
+			writeRequest: prompb.WriteRequest{
+				Timeseries: []prompb.TimeSeries{
+					{
+						Labels: []labelpb.ZLabel{
+							{Name: "__name__", Value: "test_metric"},
+							{Name: "foo", Value: "bar"},
+						},
+						Samples: []prompb.Sample{{Timestamp: 0, Value: 1}},
+					},
+					{
+						Labels: []labelpb.ZLabel{
+							{Name: "__name__", Value: "other_metric"},
+							{Name: "foo", Value: "baz"},
+						},
+						Samples: []prompb.Sample{{Timestamp: 0, Value: 2}},
+					},
+				},
+			},
+			expectedWriteRequest: prompb.WriteRequest{
+				Timeseries: []prompb.TimeSeries{
+					{
+						Labels: []labelpb.ZLabel{
+							{Name: "__name__", Value: "other_metric"},
+							{Name: "foo", Value: "baz"},
+						},
+						Samples: []prompb.Sample{{Timestamp: 0, Value: 2}},
+					},
+				},
+			},
+			expectedDropped: 1,
+		},
+		{
+			name:            "blocklist drops all series",
+			blocklistConfig: `["__name__:*"]`,
+			writeRequest: prompb.WriteRequest{
+				Timeseries: []prompb.TimeSeries{
+					{
+						Labels: []labelpb.ZLabel{
+							{Name: "__name__", Value: "test_metric"},
+						},
+						Samples: []prompb.Sample{{Timestamp: 0, Value: 1}},
+					},
+				},
+			},
+			expectedWriteRequest: prompb.WriteRequest{
+				Timeseries: []prompb.TimeSeries{},
+			},
+			expectedDropped: 1,
+		},
+		{
+			name:            "blocklist with negation pattern",
+			blocklistConfig: `["__name__:kube_pod_status_phase phase:!{Running,Succeeded}"]`,
+			writeRequest: prompb.WriteRequest{
+				Timeseries: []prompb.TimeSeries{
+					{
+						Labels: []labelpb.ZLabel{
+							{Name: "__name__", Value: "kube_pod_status_phase"},
+							{Name: "phase", Value: "Pending"},
+						},
+						Samples: []prompb.Sample{{Timestamp: 0, Value: 1}},
+					},
+					{
+						Labels: []labelpb.ZLabel{
+							{Name: "__name__", Value: "kube_pod_status_phase"},
+							{Name: "phase", Value: "Running"},
+						},
+						Samples: []prompb.Sample{{Timestamp: 0, Value: 1}},
+					},
+				},
+			},
+			expectedWriteRequest: prompb.WriteRequest{
+				Timeseries: []prompb.TimeSeries{
+					{
+						Labels: []labelpb.ZLabel{
+							{Name: "__name__", Value: "kube_pod_status_phase"},
+							{Name: "phase", Value: "Running"},
+						},
+						Samples: []prompb.Sample{{Timestamp: 0, Value: 1}},
+					},
+				},
+			},
+			expectedDropped: 1,
+		},
+	} {
+		t.Run(tcase.name, func(t *testing.T) {
+			rules, err := parseBlocklistConfig([]byte(tcase.blocklistConfig))
+			require.NoError(t, err)
+
+			bf := newBlocklistFilterWithRules(rules, log.NewNopLogger())
+			dropped := bf.FilterTimeSeries(&tcase.writeRequest)
+
+			testutil.Equals(t, tcase.expectedDropped, dropped)
 			testutil.Equals(t, tcase.expectedWriteRequest, tcase.writeRequest)
 		})
 	}

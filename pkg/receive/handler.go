@@ -136,6 +136,7 @@ type Options struct {
 	ForwardTimeout          time.Duration
 	MaxBackoff              time.Duration
 	Relabeller              *Relabeller
+	Blocklist               *BlocklistFilter
 	TSDBStats               TSDBStats
 	Limiter                 *Limiter
 	AsyncForwardWorkerCount uint
@@ -825,6 +826,19 @@ func (h *Handler) receiveHTTP(w http.ResponseWriter, r *http.Request) {
 		h.writeRejectedTotal.WithLabelValues("samples_limit", tenantHTTP).Inc()
 		http.Error(w, "too many samples", http.StatusRequestEntityTooLarge)
 		return
+	}
+
+	// Apply blocklist filter before relabeling so that relabel configs
+	// (used by the dynamic quota-blocker) still work on the remaining series.
+	if h.options.Blocklist != nil {
+		dropped := h.options.Blocklist.FilterTimeSeries(wreq)
+		if dropped > 0 {
+			level.Debug(tLogger).Log("msg", "blocklist filter dropped series", "dropped", dropped, "remaining", len(wreq.Timeseries))
+		}
+		if len(wreq.Timeseries) == 0 {
+			level.Debug(tLogger).Log("msg", "remote write request dropped entirely by blocklist filter.")
+			return
+		}
 	}
 
 	// Apply relabeling configs.
