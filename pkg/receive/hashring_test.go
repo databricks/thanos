@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/efficientgo/core/testutil"
+	"github.com/go-kit/log"
 	"github.com/stretchr/testify/require"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -201,7 +202,7 @@ func TestHashringGet(t *testing.T) {
 			tenant: "t2",
 		},
 	} {
-		hs, err := NewMultiHashring(AlgorithmHashmod, 3, tc.cfg, prometheus.NewRegistry(), "")
+		hs, err := NewMultiHashring(AlgorithmHashmod, 3, tc.cfg, prometheus.NewRegistry(), "", log.NewNopLogger())
 		require.NoError(t, err)
 
 		h, err := hs.Get(tc.tenant, ts)
@@ -669,7 +670,7 @@ func TestInvalidAZHashringCfg(t *testing.T) {
 		},
 	} {
 		t.Run("", func(t *testing.T) {
-			_, err := NewMultiHashring(tt.algorithm, tt.replicas, tt.cfg, prometheus.NewRegistry(), "")
+			_, err := NewMultiHashring(tt.algorithm, tt.replicas, tt.cfg, prometheus.NewRegistry(), "", log.NewNopLogger())
 			require.EqualError(t, err, tt.expectedError)
 		})
 	}
@@ -794,7 +795,7 @@ func TestShuffleShardHashring(t *testing.T) {
 			require.NoError(t, err)
 
 			// Create the shuffle shard hashring
-			shardRing, err := newShuffleShardHashring(baseRing, tc.shuffleShardCfg, 2, prometheus.NewRegistry(), "test", "")
+			shardRing, err := newShuffleShardHashring(baseRing, tc.shuffleShardCfg, 2, prometheus.NewRegistry(), "test", "", log.NewNopLogger())
 			require.NoError(t, err)
 
 			// Test that the shuffle sharding is consistent
@@ -969,13 +970,13 @@ func TestShuffleShardHashringStability(t *testing.T) {
 			// Create initial hashring
 			initialBaseRing, err := newKetamaHashring(initialEndpoints, SectionsPerNode, 1)
 			require.NoError(t, err)
-			initialShardRing, err := newShuffleShardHashring(initialBaseRing, shuffleShardCfg, 1, prometheus.NewRegistry(), "test-initial", "")
+			initialShardRing, err := newShuffleShardHashring(initialBaseRing, shuffleShardCfg, 1, prometheus.NewRegistry(), "test-initial", "", log.NewNopLogger())
 			require.NoError(t, err)
 
 			// Create scaled hashring
 			scaledBaseRing, err := newKetamaHashring(scaledEndpoints, SectionsPerNode, 1)
 			require.NoError(t, err)
-			scaledShardRing, err := newShuffleShardHashring(scaledBaseRing, shuffleShardCfg, 1, prometheus.NewRegistry(), "test-scaled", "")
+			scaledShardRing, err := newShuffleShardHashring(scaledBaseRing, shuffleShardCfg, 1, prometheus.NewRegistry(), "test-scaled", "", log.NewNopLogger())
 			require.NoError(t, err)
 
 			totalDiffs := 0
@@ -1178,7 +1179,7 @@ func TestShuffleShardDefaultTenantBypass(t *testing.T) {
 		require.NoError(t, err)
 		shardRing, err := newShuffleShardHashring(baseRing, ShuffleShardingConfig{
 			ShardSize: ShardSize{Value: 3},
-		}, 2, prometheus.NewRegistry(), "test-ketama", defaultTenant)
+		}, 2, prometheus.NewRegistry(), "test-ketama", defaultTenant, log.NewNopLogger())
 		require.NoError(t, err)
 
 		// Default tenant should use all 10 endpoints (base ring).
@@ -1234,7 +1235,7 @@ func TestShuffleShardDefaultTenantBypass(t *testing.T) {
 		require.NoError(t, err)
 		shardRing, err := newShuffleShardHashring(baseRing, ShuffleShardingConfig{
 			ShardSize: ShardSize{Value: 6},
-		}, 3, prometheus.NewRegistry(), "test-rendezvous", defaultTenant)
+		}, 3, prometheus.NewRegistry(), "test-rendezvous", defaultTenant, log.NewNopLogger())
 		require.NoError(t, err)
 
 		// Default tenant should reach all shards in the base ring (4 shards x 3 AZs = 12 endpoints).
@@ -1286,7 +1287,7 @@ func TestShuffleShardDefaultTenantBypass(t *testing.T) {
 		require.NoError(t, err)
 		shardRing, err := newShuffleShardHashring(baseRing, ShuffleShardingConfig{
 			ShardSize: ShardSize{Value: 3},
-		}, 2, prometheus.NewRegistry(), "test-no-bypass", "")
+		}, 2, prometheus.NewRegistry(), "test-no-bypass", "", log.NewNopLogger())
 		require.NoError(t, err)
 
 		nodes := make(map[string]struct{})

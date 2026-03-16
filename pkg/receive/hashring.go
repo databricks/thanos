@@ -423,25 +423,12 @@ func newShuffleShardCacheMetrics(reg prometheus.Registerer, hashringName string)
 }
 
 // newShuffleShardHashring creates a new shuffle sharding hashring wrapper.
-func newShuffleShardHashring(baseRing Hashring, shuffleShardingConfig ShuffleShardingConfig, replicationFactor uint64, reg prometheus.Registerer, name string, defaultTenantID string) (*shuffleShardHashring, error) {
-	l := log.NewNopLogger()
-
-	level.Info(l).Log(
+func newShuffleShardHashring(baseRing Hashring, shuffleShardingConfig ShuffleShardingConfig, replicationFactor uint64, reg prometheus.Registerer, name string, defaultTenantID string, logger log.Logger) (*shuffleShardHashring, error) {
+	level.Info(logger).Log(
 		"msg", "Creating shuffle sharding hashring",
 		"default_shard_size", shuffleShardingConfig.ShardSize,
 		"total_nodes", len(baseRing.Nodes()),
 	)
-
-	if len(shuffleShardingConfig.Overrides) > 0 {
-		for _, override := range shuffleShardingConfig.Overrides {
-			level.Info(l).Log(
-				"msg", "Tenant shard size override",
-				"tenants", override.Tenants,
-				"tenant_matcher_type", override.TenantMatcherType,
-				"shard_size", override.ShardSize,
-			)
-		}
-	}
 
 	const DefaultShuffleShardingCacheSize = 100
 
@@ -487,7 +474,7 @@ func newShuffleShardHashring(baseRing Hashring, shuffleShardingConfig ShuffleSha
 	}
 
 	if !shuffleShardingConfig.ShardSize.IsPercent && shuffleShardingConfig.ShardSize.Value > maxNodesInAZ {
-		level.Warn(l).Log(
+		level.Warn(logger).Log(
 			"msg", "Shard size is larger than the maximum number of nodes in any AZ; some tenants might get all not working nodes if that AZ goes down",
 			"shard_size", shuffleShardingConfig.ShardSize,
 			"max_nodes_in_az", maxNodesInAZ,
@@ -498,7 +485,7 @@ func newShuffleShardHashring(baseRing Hashring, shuffleShardingConfig ShuffleSha
 		if override.ShardSize.IsPercent || override.ShardSize.Value < maxNodesInAZ {
 			continue
 		}
-		level.Warn(l).Log(
+		level.Warn(logger).Log(
 			"msg", "Shard size is larger than the maximum number of nodes in any AZ; some tenants might get all not working nodes if that AZ goes down",
 			"max_nodes_in_az", maxNodesInAZ,
 			"shard_size", override.ShardSize,
@@ -506,7 +493,44 @@ func newShuffleShardHashring(baseRing Hashring, shuffleShardingConfig ShuffleSha
 			"tenant_matcher_type", override.TenantMatcherType,
 		)
 	}
+
+	// Log resolved per-AZ shard sizes for debugging.
+	logResolvedShardSizes(logger, ssh.nodes, shuffleShardingConfig, len(nodeCountByAZ))
+
 	return ssh, nil
+}
+
+// logResolvedShardSizes logs the actual resolved per-AZ shard sizes at hashring creation time.
+// Both percentage and absolute shard sizes are interpreted as total across all AZs,
+// then divided by numAZs to get the per-AZ count.
+func logResolvedShardSizes(logger log.Logger, nodes []Endpoint, cfg ShuffleShardingConfig, numAZs int) {
+	totalNodes := len(nodes)
+	perAZ := resolvePerAZShardSize(cfg.ShardSize, totalNodes, numAZs)
+	level.Info(logger).Log(
+		"msg", "Resolved default shard size",
+		"shard_size", cfg.ShardSize,
+		"total_nodes", totalNodes,
+		"num_azs", numAZs,
+		"resolved_per_az_shard_size", perAZ,
+	)
+
+	for _, override := range cfg.Overrides {
+		perAZ := resolvePerAZShardSize(override.ShardSize, totalNodes, numAZs)
+		level.Info(logger).Log(
+			"msg", "Resolved override shard size",
+			"tenants", override.Tenants,
+			"tenant_matcher_type", override.TenantMatcherType,
+			"shard_size", override.ShardSize,
+			"resolved_per_az_shard_size", perAZ,
+		)
+	}
+}
+
+func resolvePerAZShardSize(s ShardSize, totalNodes, numAZs int) int {
+	if s.IsPercent {
+		return int(math.Ceil(float64(totalNodes) * s.Percent / float64(numAZs)))
+	}
+	return ShuffleShardExpectedInstancesPerZone(s.Value, numAZs)
 }
 
 func (s *shuffleShardHashring) Nodes() []Endpoint {
@@ -878,17 +902,11 @@ func (s *shuffleShardHashring) getTenantShardRendezvous(tenant string) (Hashring
 		return nil, errors.Wrap(err, "failed to extract shard structure")
 	}
 
-	// Determine per-AZ shard count based on shard size type.
+	// Determine per-AZ shard count. Both percentage and absolute shard sizes
+	// are interpreted as total across all AZs, then divided by numAZs (ceil).
 	shardSize := s.getShardSize(tenant)
 	numAZs := len(azShardMap)
-	var perAZShards int
-	if shardSize.IsPercent {
-		// Percentage: resolve directly against per-AZ common shard count.
-		perAZShards = shardSize.ResolveCount(len(commonShards))
-	} else {
-		// Absolute: divide total by number of AZs.
-		perAZShards = shardSize.Value / numAZs // floor
-	}
+	perAZShards := resolvePerAZShardSize(shardSize, len(s.nodes), numAZs)
 	if perAZShards == 0 {
 		return nil, fmt.Errorf("shard size %s too small for %d AZs", shardSize, numAZs)
 	}
@@ -950,15 +968,10 @@ func (s *shuffleShardHashring) GetN(tenant string, ts *prompb.TimeSeries, n uint
 // groups.
 // Which hashring to use for a tenant is determined
 // by the tenants field of the hashring configuration.
-func NewMultiHashring(algorithm HashringAlgorithm, replicationFactor uint64, cfg []HashringConfig, reg prometheus.Registerer, defaultTenantID string) (Hashring, error) {
+func NewMultiHashring(algorithm HashringAlgorithm, replicationFactor uint64, cfg []HashringConfig, reg prometheus.Registerer, defaultTenantID string, logger log.Logger) (Hashring, error) {
 	m := &multiHashring{
 		cache: make(map[string]Hashring),
 	}
-
-	numShardsGauge := promauto.With(reg).NewGaugeVec(prometheus.GaugeOpts{
-		Name: "thanos_receive_hashring_shards",
-		Help: "Number of shards per hashring after groupByAZ alignment.",
-	}, []string{"hashring"})
 
 	for _, h := range cfg {
 		var hashring Hashring
@@ -967,7 +980,7 @@ func NewMultiHashring(algorithm HashringAlgorithm, replicationFactor uint64, cfg
 		if h.Algorithm != "" {
 			activeAlgorithm = h.Algorithm
 		}
-		hashring, err = newHashring(activeAlgorithm, h.Endpoints, replicationFactor, h.Hashring, h.Tenants, h.ShuffleShardingConfig, reg, numShardsGauge, defaultTenantID)
+		hashring, err = newHashring(activeAlgorithm, h.Endpoints, replicationFactor, h.Hashring, h.Tenants, h.ShuffleShardingConfig, reg, defaultTenantID, logger)
 		if err != nil {
 			return nil, err
 		}
@@ -988,7 +1001,7 @@ func NewMultiHashring(algorithm HashringAlgorithm, replicationFactor uint64, cfg
 	return m, nil
 }
 
-func newHashring(algorithm HashringAlgorithm, endpoints []Endpoint, replicationFactor uint64, hashring string, tenants []string, shuffleShardingConfig ShuffleShardingConfig, reg prometheus.Registerer, numShardsGauge *prometheus.GaugeVec, defaultTenantID string) (Hashring, error) {
+func newHashring(algorithm HashringAlgorithm, endpoints []Endpoint, replicationFactor uint64, hashring string, tenants []string, shuffleShardingConfig ShuffleShardingConfig, reg prometheus.Registerer, defaultTenantID string, logger log.Logger) (Hashring, error) {
 
 	switch algorithm {
 	case AlgorithmHashmod:
@@ -1012,7 +1025,7 @@ func newHashring(algorithm HashringAlgorithm, endpoints []Endpoint, replicationF
 			if shuffleShardingConfig.ShardSize.Value > len(endpoints) {
 				return nil, fmt.Errorf("shard size %d is larger than number of nodes in hashring %s (%d)", shuffleShardingConfig.ShardSize.Value, hashring, len(endpoints))
 			}
-			return newShuffleShardHashring(ringImpl, shuffleShardingConfig, replicationFactor, reg, hashring, defaultTenantID)
+			return newShuffleShardHashring(ringImpl, shuffleShardingConfig, replicationFactor, reg, hashring, defaultTenantID, logger)
 		}
 		return ringImpl, nil
 	case AlgorithmRendezvous:
@@ -1020,7 +1033,7 @@ func newHashring(algorithm HashringAlgorithm, endpoints []Endpoint, replicationF
 		if err != nil {
 			return nil, err
 		}
-		numShardsGauge.WithLabelValues(hashring).Set(float64(ringImpl.numShards))
+		level.Info(logger).Log("msg", "Rendezvous hashring created", "hashring", hashring, "num_shards", ringImpl.numShards, "num_azs", len(ringImpl.sortedAZs))
 		if !shuffleShardingConfig.ShardSize.IsZero() {
 			if shuffleShardingConfig.ShardSize.IsPercent {
 				if shuffleShardingConfig.ShardSize.Percent <= 0 || shuffleShardingConfig.ShardSize.Percent > 1.0 {
@@ -1031,12 +1044,11 @@ func newHashring(algorithm HashringAlgorithm, endpoints []Endpoint, replicationF
 					return nil, fmt.Errorf("shard size %d is larger than number of nodes in hashring %s (%d)", shuffleShardingConfig.ShardSize.Value, hashring, len(endpoints))
 				}
 			}
-			return newShuffleShardHashring(ringImpl, shuffleShardingConfig, replicationFactor, reg, hashring, defaultTenantID)
+			return newShuffleShardHashring(ringImpl, shuffleShardingConfig, replicationFactor, reg, hashring, defaultTenantID, logger)
 		}
 		return ringImpl, nil
 	default:
-		l := log.NewNopLogger()
-		level.Warn(l).Log("msg", "Unrecognizable hashring algorithm. Fall back to hashmod algorithm.",
+		level.Warn(logger).Log("msg", "Unrecognizable hashring algorithm. Fall back to hashmod algorithm.",
 			"hashring", hashring,
 			"tenants", tenants)
 		if !shuffleShardingConfig.ShardSize.IsZero() {
