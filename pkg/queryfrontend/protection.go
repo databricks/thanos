@@ -43,10 +43,10 @@ func GetProtectionResult(ctx context.Context) *ProtectionResult {
 func RuleActionToString(action RuleAction) string {
 	switch action {
 	case RuleActionLog:
-		return "RuleActionLog"
+		return "Log"
 	case RuleActionBlock:
-		return "RuleActionBlock"
+		return "Block"
 	default:
-		return "Unknown RuleAction"
+		return "Unknown"
 	}
 }

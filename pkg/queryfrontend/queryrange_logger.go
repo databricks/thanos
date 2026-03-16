@@ -61,7 +61,7 @@ type MetricsRangeQueryLogging struct {
 	// Protection fields
 	ProtectionTriggered bool   `json:"protectionTriggered"` // Whether a protection rule was triggered
 	ProtectionRuleName  string `json:"protectionRuleName"`  // Name of the rule that triggered
-	ProtectionAction    string `json:"protectionAction"`    // "RuleActionLog" or "RuleActionBlock"
+	ProtectionAction    string `json:"protectionAction"`    // "Log" or "Block"
 }
 
 // RangeQueryLogConfig holds configuration for range query logging.
