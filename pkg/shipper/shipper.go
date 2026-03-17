@@ -21,7 +21,6 @@ import (
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
-	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/tsdb"
 	"github.com/prometheus/prometheus/tsdb/fileutil"
 
@@ -30,6 +29,7 @@ import (
 	"github.com/thanos-io/thanos/pkg/block"
 	"github.com/thanos-io/thanos/pkg/block/metadata"
 	"github.com/thanos-io/thanos/pkg/runutil"
+	"github.com/thanos-io/thanos/pkg/store/labelpb"
 )
 
 type metrics struct {
@@ -80,7 +80,7 @@ type Shipper struct {
 	allowOutOfOrderUploads bool
 	hashFunc               metadata.HashFunc
 
-	labels func() labels.Labels
+	labels func() labelpb.Labels
 	mtx    sync.RWMutex
 }
 
@@ -92,7 +92,7 @@ func New(
 	r prometheus.Registerer,
 	dir string,
 	bucket objstore.Bucket,
-	lbls func() labels.Labels,
+	lbls func() labelpb.Labels,
 	source metadata.SourceType,
 	uploadCompactedFunc func() bool,
 	allowOutOfOrderUploads bool,
@@ -103,7 +103,7 @@ func New(
 		logger = log.NewNopLogger()
 	}
 	if lbls == nil {
-		lbls = func() labels.Labels { return labels.EmptyLabels() }
+		lbls = func() labelpb.Labels { return labelpb.EmptyLabels() }
 	}
 
 	if metaFileName == "" {
@@ -129,11 +129,11 @@ func New(
 	}
 }
 
-func (s *Shipper) SetLabels(lbls labels.Labels) {
+func (s *Shipper) SetLabels(lbls labelpb.Labels) {
 	s.mtx.Lock()
 	defer s.mtx.Unlock()
 
-	s.labels = func() labels.Labels { return lbls }
+	s.labels = func() labelpb.Labels { return lbls }
 }
 
 // Timestamps returns the minimum timestamp for which data is available and the highest timestamp
@@ -176,13 +176,13 @@ type lazyOverlapChecker struct {
 	synced bool
 	logger log.Logger
 	bucket objstore.Bucket
-	labels func() labels.Labels
+	labels func() labelpb.Labels
 
 	metas       []tsdb.BlockMeta
 	lookupMetas map[ulid.ULID]struct{}
 }
 
-func newLazyOverlapChecker(logger log.Logger, bucket objstore.Bucket, labels func() labels.Labels) *lazyOverlapChecker {
+func newLazyOverlapChecker(logger log.Logger, bucket objstore.Bucket, labels func() labelpb.Labels) *lazyOverlapChecker {
 	return &lazyOverlapChecker{
 		logger: logger,
 		bucket: bucket,
@@ -204,7 +204,7 @@ func (c *lazyOverlapChecker) sync(ctx context.Context) error {
 			return err
 		}
 
-		if !labels.Equal(labels.FromMap(m.Thanos.Labels), c.labels()) {
+		if !labelpb.Equal(labelpb.FromMap(m.Thanos.Labels), c.labels()) {
 			return nil
 		}
 
@@ -271,7 +271,7 @@ func (s *Shipper) Sync(ctx context.Context) (uploaded int, err error) {
 	meta.Uploaded = nil
 
 	var (
-		checker    = newLazyOverlapChecker(s.logger, s.bucket, func() labels.Labels { return s.labels() })
+		checker    = newLazyOverlapChecker(s.logger, s.bucket, func() labelpb.Labels { return s.labels() })
 		uploadErrs int
 	)
 
@@ -394,7 +394,7 @@ func (s *Shipper) upload(ctx context.Context, meta *metadata.Meta) error {
 	}
 	// Attach current labels and write a new meta file with Thanos extensions.
 	if lset := s.labels(); !lset.IsEmpty() {
-		lset.Range(func(l labels.Label) {
+		lset.Range(func(l *labelpb.Label) {
 			meta.Thanos.Labels[l.Name] = l.Value
 		})
 	}

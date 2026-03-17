@@ -31,10 +31,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	prommodel "github.com/prometheus/common/model"
 	"github.com/prometheus/common/route"
-	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/model/relabel"
 	"github.com/prometheus/prometheus/tsdb"
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
+	"github.com/thanos-io/thanos/pkg/store/labelpb"
 	"golang.org/x/text/language"
 	"golang.org/x/text/message"
 	"gopkg.in/yaml.v3"
@@ -1006,7 +1006,7 @@ func printTSV(w io.Writer, t Table) error {
 	return nil
 }
 
-func printBlockData(blockMetas []*metadata.Meta, selectorLabels labels.Labels, sortBy []string, printer tablePrinter) error {
+func printBlockData(blockMetas []*metadata.Meta, selectorLabels labelpb.Labels, sortBy []string, printer tablePrinter) error {
 	header := inspectColumns
 
 	var lines [][]string
@@ -1076,9 +1076,9 @@ func getKeysAlphabetically(labels map[string]string) []string {
 
 // matchesSelector checks if blockMeta contains every label from
 // the selector with the correct value.
-func matchesSelector(blockMeta *metadata.Meta, selectorLabels labels.Labels) bool {
+func matchesSelector(blockMeta *metadata.Meta, selectorLabels labelpb.Labels) bool {
 	matches := true
-	selectorLabels.Range(func(l labels.Label) {
+	selectorLabels.Range(func(l *labelpb.Label) {
 		val, ok := blockMeta.Thanos.Labels[l.Name]
 		matches = matches && ok && val == l.Value
 	})
@@ -1604,7 +1604,7 @@ func registerBucketUploadBlocks(app extkingpin.AppClause, objStoreConfig *extfla
 
 		bkt = objstoretracing.WrapWithTraces(objstore.WrapWithMetrics(bkt, extprom.WrapRegistererWithPrefix("thanos_", reg), bkt.Name()))
 
-		s := shipper.New(logger, reg, tbc.path, bkt, func() labels.Labels { return lset }, metadata.BucketUploadSource,
+		s := shipper.New(logger, reg, tbc.path, bkt, func() labelpb.Labels { return lset }, metadata.BucketUploadSource,
 			nil, false, metadata.HashFunc(""), shipper.DefaultMetaFilename)
 
 		ctx, cancel := context.WithCancel(context.Background())

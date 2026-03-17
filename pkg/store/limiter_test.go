@@ -13,8 +13,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	prom_testutil "github.com/prometheus/client_golang/prometheus/testutil"
-	"github.com/prometheus/prometheus/model/labels"
-
+	labelpb "github.com/thanos-io/thanos/pkg/store/labelpb"
 	"github.com/thanos-io/thanos/pkg/store/storepb"
 )
 
@@ -42,9 +41,9 @@ func TestRateLimitedServer(t *testing.T) {
 
 	numSamples := 60
 	series := []*storepb.SeriesResponse{
-		storeSeriesResponse(t, labels.FromStrings("series", "1"), makeSamples(numSamples)),
-		storeSeriesResponse(t, labels.FromStrings("series", "2"), makeSamples(numSamples)),
-		storeSeriesResponse(t, labels.FromStrings("series", "3"), makeSamples(numSamples)),
+		storeSeriesResponse(t, labelpb.FromStrings("series", "1"), makeSamples(numSamples)),
+		storeSeriesResponse(t, labelpb.FromStrings("series", "2"), makeSamples(numSamples)),
+		storeSeriesResponse(t, labelpb.FromStrings("series", "3"), makeSamples(numSamples)),
 	}
 	tests := []struct {
 		name   string

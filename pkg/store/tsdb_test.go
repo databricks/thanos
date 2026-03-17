@@ -39,7 +39,7 @@ func TestTSDBStore_Series_ChunkChecksum(t *testing.T) {
 	defer func() { testutil.Ok(t, db.Close()) }()
 	testutil.Ok(t, err)
 
-	tsdbStore := NewTSDBStore(nil, db, component.Rule, labels.FromStrings("region", "eu-west"))
+	tsdbStore := NewTSDBStore(nil, db, component.Rule, labelpb.FromStrings("region", "eu-west"))
 
 	appender := db.Appender(context.Background())
 
@@ -55,7 +55,7 @@ func TestTSDBStore_Series_ChunkChecksum(t *testing.T) {
 	req := &storepb.SeriesRequest{
 		MinTime: 1,
 		MaxTime: 3,
-		Matchers: []storepb.LabelMatcher{
+		Matchers: []*storepb.LabelMatcher{
 			{Type: storepb.LabelMatcher_EQ, Name: "a", Value: "1"},
 		},
 	}
@@ -79,7 +79,7 @@ func TestTSDBStore_Series(t *testing.T) {
 	defer func() { testutil.Ok(t, db.Close()) }()
 	testutil.Ok(t, err)
 
-	tsdbStore := NewTSDBStore(nil, db, component.Rule, labels.FromStrings("region", "eu-west"))
+	tsdbStore := NewTSDBStore(nil, db, component.Rule, labelpb.FromStrings("region", "eu-west"))
 
 	appender := db.Appender(context.Background())
 
@@ -101,13 +101,13 @@ func TestTSDBStore_Series(t *testing.T) {
 			req: &storepb.SeriesRequest{
 				MinTime: 1,
 				MaxTime: 3,
-				Matchers: []storepb.LabelMatcher{
+				Matchers: []*storepb.LabelMatcher{
 					{Type: storepb.LabelMatcher_EQ, Name: "a", Value: "1"},
 				},
 			},
 			expectedSeries: []rawSeries{
 				{
-					lset:   labels.FromStrings("a", "1", "region", "eu-west"),
+					lset:   labelpb.FromStrings("a", "1", "region", "eu-west"),
 					chunks: [][]sample{{{1, 1}, {2, 2}, {3, 3}}},
 				},
 			},
@@ -117,13 +117,13 @@ func TestTSDBStore_Series(t *testing.T) {
 			req: &storepb.SeriesRequest{
 				MinTime: 1,
 				MaxTime: 2,
-				Matchers: []storepb.LabelMatcher{
+				Matchers: []*storepb.LabelMatcher{
 					{Type: storepb.LabelMatcher_EQ, Name: "a", Value: "1"},
 				},
 			},
 			expectedSeries: []rawSeries{
 				{
-					lset:   labels.FromStrings("a", "1", "region", "eu-west"),
+					lset:   labelpb.FromStrings("a", "1", "region", "eu-west"),
 					chunks: [][]sample{{{1, 1}, {2, 2}, {3, 3}}},
 				},
 			},
@@ -133,7 +133,7 @@ func TestTSDBStore_Series(t *testing.T) {
 			req: &storepb.SeriesRequest{
 				MinTime: 4,
 				MaxTime: 6,
-				Matchers: []storepb.LabelMatcher{
+				Matchers: []*storepb.LabelMatcher{
 					{Type: storepb.LabelMatcher_EQ, Name: "a", Value: "1"},
 				},
 			},
@@ -144,7 +144,7 @@ func TestTSDBStore_Series(t *testing.T) {
 			req: &storepb.SeriesRequest{
 				MinTime: 1,
 				MaxTime: 3,
-				Matchers: []storepb.LabelMatcher{
+				Matchers: []*storepb.LabelMatcher{
 					{Type: storepb.LabelMatcher_EQ, Name: "region", Value: "eu-west"},
 				},
 			},
@@ -155,7 +155,7 @@ func TestTSDBStore_Series(t *testing.T) {
 			req: &storepb.SeriesRequest{
 				MinTime: 1,
 				MaxTime: 3,
-				Matchers: []storepb.LabelMatcher{
+				Matchers: []*storepb.LabelMatcher{
 					{Type: storepb.LabelMatcher_EQ, Name: "b", Value: "1"},
 				},
 			},
@@ -166,14 +166,14 @@ func TestTSDBStore_Series(t *testing.T) {
 			req: &storepb.SeriesRequest{
 				MinTime: 1,
 				MaxTime: 3,
-				Matchers: []storepb.LabelMatcher{
+				Matchers: []*storepb.LabelMatcher{
 					{Type: storepb.LabelMatcher_EQ, Name: "a", Value: "1"},
 				},
 				SkipChunks: true,
 			},
 			expectedSeries: []rawSeries{
 				{
-					lset: labels.FromStrings("a", "1", "region", "eu-west"),
+					lset: labelpb.FromStrings("a", "1", "region", "eu-west"),
 				},
 			},
 		},
@@ -250,7 +250,7 @@ func TestTSDBStore_SeriesAccessWithDelegateClosing(t *testing.T) {
 		}
 	})
 
-	extLabels := labels.FromStrings("ext", "1")
+	extLabels := labelpb.FromStrings("ext", "1")
 	store := NewTSDBStore(logger, &mockedStartTimeDB{DBReadOnly: db, startTime: 0}, component.Receive, extLabels)
 
 	srv := storetestutil.NewSeriesServer(context.Background())
@@ -259,7 +259,7 @@ func TestTSDBStore_SeriesAccessWithDelegateClosing(t *testing.T) {
 		testutil.Ok(t, store.Series(&storepb.SeriesRequest{
 			MinTime: 0,
 			MaxTime: math.MaxInt64,
-			Matchers: []storepb.LabelMatcher{
+			Matchers: []*storepb.LabelMatcher{
 				{Type: storepb.LabelMatcher_EQ, Name: "foo", Value: "bar"},
 			},
 			PartialResponseStrategy: storepb.PartialResponseStrategy_ABORT,
@@ -413,7 +413,7 @@ func TestTSDBStore_SeriesAccessWithoutDelegateClosing(t *testing.T) {
 		}
 	})
 
-	extLabels := labels.FromStrings("ext", "1")
+	extLabels := labelpb.FromStrings("ext", "1")
 	store := NewTSDBStore(logger, &mockedStartTimeDB{DBReadOnly: db, startTime: 0}, component.Receive, extLabels)
 
 	srv := storetestutil.NewSeriesServer(context.Background())
@@ -421,7 +421,7 @@ func TestTSDBStore_SeriesAccessWithoutDelegateClosing(t *testing.T) {
 		testutil.Ok(t, store.Series(&storepb.SeriesRequest{
 			MinTime: 0,
 			MaxTime: math.MaxInt64,
-			Matchers: []storepb.LabelMatcher{
+			Matchers: []*storepb.LabelMatcher{
 				{Type: storepb.LabelMatcher_EQ, Name: "foo", Value: "bar"},
 			},
 			PartialResponseStrategy: storepb.PartialResponseStrategy_ABORT,
@@ -552,7 +552,7 @@ func benchTSDBStoreSeries(t testutil.TB, totalSamples, totalSeries int) {
 
 	defer func() { testutil.Ok(t, db.Close()) }()
 
-	extLabels := labels.FromStrings("ext", "1")
+	extLabels := labelpb.FromStrings("ext", "1")
 	store := NewTSDBStore(logger, &mockedStartTimeDB{DBReadOnly: db, startTime: 0}, component.Receive, extLabels)
 
 	var expected []*storepb.Series
@@ -561,20 +561,20 @@ func benchTSDBStoreSeries(t testutil.TB, totalSamples, totalSeries int) {
 			// Add external labels & frame it.
 			s := r.GetSeries()
 			bytesLeftForChunks := store.maxBytesPerFrame
-			lbls := make([]labelpb.ZLabel, 0, len(s.Labels)+extLabels.Len())
+			lbls := make(labelpb.Labels, 0, len(s.Labels)+len(extLabels))
 			for _, l := range s.Labels {
-				lbls = append(lbls, labelpb.ZLabel{
+				lbls = append(lbls, &labelpb.Label{
 					Name:  l.Name,
 					Value: l.Value,
 				})
-				bytesLeftForChunks -= lbls[len(lbls)-1].Size()
+				bytesLeftForChunks -= lbls[len(lbls)-1].SizeVT()
 			}
-			extLabels.Range(func(l labels.Label) {
-				lbls = append(lbls, labelpb.ZLabel{
+			extLabels.Range(func(l *labelpb.Label) {
+				lbls = append(lbls, &labelpb.Label{
 					Name:  l.Name,
 					Value: l.Value,
 				})
-				bytesLeftForChunks -= lbls[len(lbls)-1].Size()
+				bytesLeftForChunks -= lbls[len(lbls)-1].SizeVT()
 			})
 			sort.Slice(lbls, func(i, j int) bool {
 				return lbls[i].Name < lbls[j].Name
@@ -584,7 +584,7 @@ func benchTSDBStoreSeries(t testutil.TB, totalSamples, totalSeries int) {
 			frame := &storepb.Series{Labels: lbls}
 			for i, c := range s.Chunks {
 				frame.Chunks = append(frame.Chunks, c)
-				frameBytesLeft -= c.Size()
+				frameBytesLeft -= c.SizeVT()
 
 				if i == len(s.Chunks)-1 {
 					break
@@ -607,7 +607,7 @@ func benchTSDBStoreSeries(t testutil.TB, totalSamples, totalSeries int) {
 			Req: &storepb.SeriesRequest{
 				MinTime: 0,
 				MaxTime: math.MaxInt64,
-				Matchers: []storepb.LabelMatcher{
+				Matchers: []*storepb.LabelMatcher{
 					{Type: storepb.LabelMatcher_EQ, Name: "foo", Value: "bar"},
 				},
 				PartialResponseStrategy: storepb.PartialResponseStrategy_ABORT,

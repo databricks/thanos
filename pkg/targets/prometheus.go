@@ -7,8 +7,6 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/prometheus/prometheus/model/labels"
-
 	"github.com/thanos-io/thanos/pkg/promclient"
 	"github.com/thanos-io/thanos/pkg/store/labelpb"
 	"github.com/thanos-io/thanos/pkg/targets/targetspb"
@@ -16,14 +14,16 @@ import (
 
 // Prometheus implements targetspb.Targets gRPC that allows to fetch targets from Prometheus HTTP api/v1/targets endpoint.
 type Prometheus struct {
+	targetspb.UnimplementedTargetsServer
+
 	base   *url.URL
 	client *promclient.Client
 
-	extLabels func() labels.Labels
+	extLabels func() labelpb.Labels
 }
 
 // NewPrometheus creates new targets.Prometheus.
-func NewPrometheus(base *url.URL, client *promclient.Client, extLabels func() labels.Labels) *Prometheus {
+func NewPrometheus(base *url.URL, client *promclient.Client, extLabels func() labelpb.Labels) *Prometheus {
 	return &Prometheus{
 		base:      base,
 		client:    client,
@@ -52,17 +52,15 @@ func (p *Prometheus) Targets(r *targetspb.TargetsRequest, s targetspb.Targets_Ta
 	return nil
 }
 
-func enrichTargetsWithExtLabels(targets *targetspb.TargetDiscovery, extLset labels.Labels) {
+func enrichTargetsWithExtLabels(targets *targetspb.TargetDiscovery, ext labelpb.Labels) {
 	for i, target := range targets.ActiveTargets {
-		target.SetDiscoveredLabels(labelpb.ExtendSortedLabels(target.DiscoveredLabels.PromLabels(), extLset))
-		target.SetLabels(labelpb.ExtendSortedLabels(target.Labels.PromLabels(), extLset))
-
+		target.DiscoveredLabels = &labelpb.LabelSet{Labels: labelpb.ExtendSortedLabels(target.DiscoveredLabels.GetLabels(), ext)}
+		target.Labels = &labelpb.LabelSet{Labels: labelpb.ExtendSortedLabels(target.Labels.GetLabels(), ext)}
 		targets.ActiveTargets[i] = target
 	}
 
 	for i, target := range targets.DroppedTargets {
-		target.SetDiscoveredLabels(labelpb.ExtendSortedLabels(target.DiscoveredLabels.PromLabels(), extLset))
-
+		target.DiscoveredLabels = &labelpb.LabelSet{Labels: labelpb.ExtendSortedLabels(target.DiscoveredLabels.GetLabels(), ext)}
 		targets.DroppedTargets[i] = target
 	}
 }

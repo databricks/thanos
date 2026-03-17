@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/thanos-io/thanos/pkg/extpromql"
 	"github.com/thanos-io/thanos/pkg/store/labelpb"
+	thanostestutil "github.com/thanos-io/thanos/pkg/testutil"
 )
 
 type sample struct {
@@ -27,13 +29,13 @@ type sample struct {
 }
 
 type listSeriesSet struct {
-	series []Series
+	series []*Series
 	idx    int
 }
 
-func newSeries(tb testing.TB, lset labels.Labels, smplChunks [][]sample) Series {
-	s := Series{
-		Labels: labelpb.ZLabelsFromPromLabels(lset),
+func newSeries(tb testing.TB, lset labelpb.Labels, smplChunks [][]sample) *Series {
+	s := &Series{
+		Labels: lset,
 	}
 
 	for _, smpls := range smplChunks {
@@ -45,7 +47,7 @@ func newSeries(tb testing.TB, lset labels.Labels, smplChunks [][]sample) Series 
 			a.Append(smpl.t, smpl.v)
 		}
 
-		ch := AggrChunk{
+		ch := &AggrChunk{
 			MinTime: smpls[0].t,
 			MaxTime: smpls[len(smpls)-1].t,
 			Raw:     &Chunk{Type: Chunk_XOR, Data: c.Bytes()},
@@ -57,7 +59,7 @@ func newSeries(tb testing.TB, lset labels.Labels, smplChunks [][]sample) Series 
 }
 
 func newListSeriesSet(tb testing.TB, raw []rawSeries) *listSeriesSet {
-	var series []Series
+	var series []*Series
 	for _, s := range raw {
 		series = append(series, newSeries(tb, s.lset, s.chunks))
 	}
@@ -72,9 +74,9 @@ func (s *listSeriesSet) Next() bool {
 	return s.idx < len(s.series)
 }
 
-func (s *listSeriesSet) At() (labels.Labels, []AggrChunk) {
+func (s *listSeriesSet) At() (labelpb.Labels, []*AggrChunk) {
 	if s.idx < 0 || s.idx >= len(s.series) {
-		return labels.EmptyLabels(), nil
+		return labelpb.EmptyLabels(), nil
 	}
 
 	return s.series[s.idx].PromLabels(), s.series[s.idx].Chunks
@@ -86,7 +88,7 @@ type errSeriesSet struct{ err error }
 
 func (errSeriesSet) Next() bool { return false }
 
-func (errSeriesSet) At() (labels.Labels, []AggrChunk) { return labels.EmptyLabels(), nil }
+func (errSeriesSet) At() (labelpb.Labels, []*AggrChunk) { return labelpb.EmptyLabels(), nil }
 
 func (e errSeriesSet) Err() error { return e.err }
 
@@ -104,19 +106,19 @@ func TestMergeSeriesSets(t *testing.T) {
 		{
 			desc: "single seriesSet, distinct series",
 			in: [][]rawSeries{{{
-				lset:   labels.FromStrings("a", "a"),
+				lset:   labelpb.FromStrings("a", "a"),
 				chunks: [][]sample{{{1, 1}, {2, 2}}, {{3, 3}, {4, 4}}},
 			}, {
-				lset:   labels.FromStrings("a", "c"),
+				lset:   labelpb.FromStrings("a", "c"),
 				chunks: [][]sample{{{11, 1}, {12, 2}}, {{13, 3}, {14, 4}}},
 			}}},
 
 			expected: []rawSeries{
 				{
-					lset:   labels.FromStrings("a", "a"),
+					lset:   labelpb.FromStrings("a", "a"),
 					chunks: [][]sample{{{1, 1}, {2, 2}}, {{3, 3}, {4, 4}}},
 				}, {
-					lset:   labels.FromStrings("a", "c"),
+					lset:   labelpb.FromStrings("a", "c"),
 					chunks: [][]sample{{{11, 1}, {12, 2}}, {{13, 3}, {14, 4}}},
 				},
 			},
@@ -124,19 +126,19 @@ func TestMergeSeriesSets(t *testing.T) {
 		{
 			desc: "two seriesSets, distinct series",
 			in: [][]rawSeries{{{
-				lset:   labels.FromStrings("a", "a"),
+				lset:   labelpb.FromStrings("a", "a"),
 				chunks: [][]sample{{{1, 1}, {2, 2}}, {{3, 3}, {4, 4}}},
 			}}, {{
-				lset:   labels.FromStrings("a", "c"),
+				lset:   labelpb.FromStrings("a", "c"),
 				chunks: [][]sample{{{11, 1}, {12, 2}}, {{13, 3}, {14, 4}}},
 			}}},
 
 			expected: []rawSeries{
 				{
-					lset:   labels.FromStrings("a", "a"),
+					lset:   labelpb.FromStrings("a", "a"),
 					chunks: [][]sample{{{1, 1}, {2, 2}}, {{3, 3}, {4, 4}}},
 				}, {
-					lset:   labels.FromStrings("a", "c"),
+					lset:   labelpb.FromStrings("a", "c"),
 					chunks: [][]sample{{{11, 1}, {12, 2}}, {{13, 3}, {14, 4}}},
 				},
 			},
@@ -146,17 +148,17 @@ func TestMergeSeriesSets(t *testing.T) {
 			in: [][]rawSeries{
 				{
 					{
-						lset:   labels.FromStrings("a", "a"),
+						lset:   labelpb.FromStrings("a", "a"),
 						chunks: [][]sample{{{1, 1}, {2, 2}}, {{3, 3}, {4, 4}}},
 					},
 					{
-						lset:   labels.FromStrings("a", "c"),
+						lset:   labelpb.FromStrings("a", "c"),
 						chunks: [][]sample{{{11, 1}, {12, 2}}, {{13, 3}, {14, 4}}},
 					},
 				},
 				{
 					{
-						lset:   labels.FromStrings("a", "c"),
+						lset:   labelpb.FromStrings("a", "c"),
 						chunks: [][]sample{{{7, 1}, {8, 2}}, {{9, 3}, {10, 4}, {11, 4444}}}, // Last sample overlaps, merge ignores that.
 					},
 				},
@@ -164,10 +166,10 @@ func TestMergeSeriesSets(t *testing.T) {
 
 			expected: []rawSeries{
 				{
-					lset:   labels.FromStrings("a", "a"),
+					lset:   labelpb.FromStrings("a", "a"),
 					chunks: [][]sample{{{1, 1}, {2, 2}}, {{3, 3}, {4, 4}}},
 				}, {
-					lset:   labels.FromStrings("a", "c"),
+					lset:   labelpb.FromStrings("a", "c"),
 					chunks: [][]sample{{{7, 1}, {8, 2}}, {{9, 3}, {10, 4}, {11, 4444}}, {{11, 1}, {12, 2}}, {{13, 3}, {14, 4}}},
 				},
 			},
@@ -177,15 +179,15 @@ func TestMergeSeriesSets(t *testing.T) {
 			in: [][]rawSeries{
 				{
 					{
-						lset:   labels.FromStrings("a", "a"),
+						lset:   labelpb.FromStrings("a", "a"),
 						chunks: [][]sample{{{1, 1}, {2, 2}}, {{3, 3}, {4, 4}}},
 					},
 					{
-						lset:   labels.FromStrings("a", "c"),
+						lset:   labelpb.FromStrings("a", "c"),
 						chunks: [][]sample{{{7, 1}, {8, 2}}, {{9, 3}, {10, 4}, {11, 4444}}},
 					},
 					{
-						lset:   labels.FromStrings("a", "c"),
+						lset:   labelpb.FromStrings("a", "c"),
 						chunks: [][]sample{{{11, 1}, {12, 2}}, {{13, 3}, {14, 4}}},
 					},
 				},
@@ -193,10 +195,10 @@ func TestMergeSeriesSets(t *testing.T) {
 
 			expected: []rawSeries{
 				{
-					lset:   labels.FromStrings("a", "a"),
+					lset:   labelpb.FromStrings("a", "a"),
 					chunks: [][]sample{{{1, 1}, {2, 2}}, {{3, 3}, {4, 4}}},
 				}, {
-					lset:   labels.FromStrings("a", "c"),
+					lset:   labelpb.FromStrings("a", "c"),
 					chunks: [][]sample{{{7, 1}, {8, 2}}, {{9, 3}, {10, 4}, {11, 4444}}, {{11, 1}, {12, 2}}, {{13, 3}, {14, 4}}},
 				},
 			},
@@ -206,18 +208,18 @@ func TestMergeSeriesSets(t *testing.T) {
 			in: [][]rawSeries{
 				{
 					{
-						lset:   labels.FromStrings("a", "a"),
+						lset:   labelpb.FromStrings("a", "a"),
 						chunks: [][]sample{{{1, 1}, {2, 2}}, {{3, 3}, {4, 4}}},
 					},
 					{
-						lset: labels.FromStrings("a", "c"),
+						lset: labelpb.FromStrings("a", "c"),
 						chunks: [][]sample{
 							{{11, 11}, {12, 12}, {13, 13}, {14, 14}},
 							{{15, 15}, {16, 16}, {17, 17}, {18, 18}},
 						},
 					},
 					{
-						lset: labels.FromStrings("a", "c"),
+						lset: labelpb.FromStrings("a", "c"),
 						chunks: [][]sample{
 							{{20, 20}, {21, 21}, {22, 22}, {24, 24}},
 						},
@@ -225,20 +227,20 @@ func TestMergeSeriesSets(t *testing.T) {
 				},
 				{
 					{
-						lset: labels.FromStrings("a", "c"),
+						lset: labelpb.FromStrings("a", "c"),
 						chunks: [][]sample{
 							{{1, 1}, {2, 2}, {3, 3}, {4, 4}},
 							{{11, 11}, {12, 12}, {13, 13}, {14, 14}}, // Same chunk as in set 1.
 						},
 					},
 					{
-						lset:   labels.FromStrings("a", "d"),
+						lset:   labelpb.FromStrings("a", "d"),
 						chunks: [][]sample{{{11, 1}, {12, 2}}, {{13, 3}, {14, 4}}},
 					},
 				},
 				{
 					{
-						lset: labels.FromStrings("a", "c"),
+						lset: labelpb.FromStrings("a", "c"),
 						chunks: [][]sample{
 							{{11, 11}, {12, 12}, {13, 13}, {14, 14}}, // Same chunk as in set 1.
 							{{20, 20}, {21, 21}, {22, 23}, {24, 24}}, // Almost same chunk as in set 1 (one value is different).
@@ -247,7 +249,7 @@ func TestMergeSeriesSets(t *testing.T) {
 				},
 				{
 					{
-						lset: labels.FromStrings("a", "c"),
+						lset: labelpb.FromStrings("a", "c"),
 						chunks: [][]sample{
 							{{11, 11}, {12, 12}, {14, 14}},           // Almost same chunk as in set 1 (one sample is missing).
 							{{20, 20}, {21, 21}, {22, 22}, {24, 24}}, // Same chunk as in set 1.
@@ -258,10 +260,10 @@ func TestMergeSeriesSets(t *testing.T) {
 
 			expected: []rawSeries{
 				{
-					lset:   labels.FromStrings("a", "a"),
+					lset:   labelpb.FromStrings("a", "a"),
 					chunks: [][]sample{{{t: 1, v: 1}, {t: 2, v: 2}}, {{t: 3, v: 3}, {t: 4, v: 4}}},
 				}, {
-					lset: labels.FromStrings("a", "c"),
+					lset: labelpb.FromStrings("a", "c"),
 					chunks: [][]sample{
 						{{t: 1, v: 1}, {t: 2, v: 2}, {t: 3, v: 3}, {t: 4, v: 4}},
 						{{t: 11, v: 11}, {t: 12, v: 12}, {t: 13, v: 13}, {t: 14, v: 14}},
@@ -271,7 +273,7 @@ func TestMergeSeriesSets(t *testing.T) {
 						{{t: 20, v: 20}, {t: 21, v: 21}, {t: 22, v: 23}, {t: 24, v: 24}},
 					},
 				}, {
-					lset:   labels.FromStrings("a", "d"),
+					lset:   labelpb.FromStrings("a", "d"),
 					chunks: [][]sample{{{t: 11, v: 1}, {t: 12, v: 2}}, {{t: 13, v: 3}, {t: 14, v: 4}}},
 				},
 			},
@@ -281,13 +283,13 @@ func TestMergeSeriesSets(t *testing.T) {
 			in: [][]rawSeries{
 				{
 					{
-						lset: labels.FromStrings("a", "c"),
+						lset: labelpb.FromStrings("a", "c"),
 						chunks: [][]sample{
 							{{20, 20}, {21, 21}, {22, 22}, {24, 24}},
 						},
 					},
 					{
-						lset: labels.FromStrings("a", "c"),
+						lset: labelpb.FromStrings("a", "c"),
 						chunks: [][]sample{
 							{{11, 11}, {12, 12}, {13, 13}, {14, 14}},
 							{{15, 15}, {16, 16}, {17, 17}, {18, 18}},
@@ -296,7 +298,7 @@ func TestMergeSeriesSets(t *testing.T) {
 				},
 				{
 					{
-						lset: labels.FromStrings("a", "c"),
+						lset: labelpb.FromStrings("a", "c"),
 						chunks: [][]sample{
 							{{11, 11}, {12, 12}, {13, 13}, {14, 14}}, // Same chunk as in set 1.
 							{{1, 1}, {2, 2}, {3, 3}, {4, 4}},
@@ -305,7 +307,7 @@ func TestMergeSeriesSets(t *testing.T) {
 				},
 				{
 					{
-						lset: labels.FromStrings("a", "c"),
+						lset: labelpb.FromStrings("a", "c"),
 						chunks: [][]sample{
 							{{20, 20}, {21, 21}, {22, 23}, {24, 24}}, // Almost same chunk as in set 1 (one value is different).
 							{{11, 11}, {12, 12}, {13, 13}, {14, 14}}, // Same chunk as in set 1.
@@ -316,7 +318,7 @@ func TestMergeSeriesSets(t *testing.T) {
 
 			expected: []rawSeries{
 				{
-					lset: labels.FromStrings("a", "c"),
+					lset: labelpb.FromStrings("a", "c"),
 					chunks: [][]sample{
 						{{t: 11, v: 11}, {t: 12, v: 12}, {t: 13, v: 13}, {t: 14, v: 14}},
 						{{t: 1, v: 1}, {t: 2, v: 2}, {t: 3, v: 3}, {t: 4, v: 4}},
@@ -335,7 +337,10 @@ func TestMergeSeriesSets(t *testing.T) {
 			for _, iss := range tcase.in {
 				input = append(input, newListSeriesSet(t, iss))
 			}
-			testutil.Equals(t, tcase.expected, expandSeriesSet(t, MergeSeriesSets(input...)))
+			// AllowUnexported is needed because rawSeries and sample are test-local
+			// structs with unexported fields (lset, chunks, t, v) that cmp.Diff
+			// cannot access by default but must compare to verify correctness.
+			thanostestutil.ProtoEqualsWithOptions(t, tcase.expected, expandSeriesSet(t, MergeSeriesSets(input...)), cmp.Options{cmp.AllowUnexported(rawSeries{}, sample{})})
 		})
 	}
 }
@@ -343,10 +348,10 @@ func TestMergeSeriesSets(t *testing.T) {
 func TestMergeSeriesSetError(t *testing.T) {
 	var input []SeriesSet
 	for _, iss := range [][]rawSeries{{{
-		lset:   labels.FromStrings("a", "a"),
+		lset:   labelpb.FromStrings("a", "a"),
 		chunks: [][]sample{{{1, 1}, {2, 2}}, {{3, 3}, {4, 4}}},
 	}}, {{
-		lset:   labels.FromStrings("a", "c"),
+		lset:   labelpb.FromStrings("a", "c"),
 		chunks: [][]sample{{{11, 1}, {12, 2}}, {{13, 3}, {14, 4}}},
 	}}} {
 		input = append(input, newListSeriesSet(t, iss))
@@ -357,7 +362,7 @@ func TestMergeSeriesSetError(t *testing.T) {
 }
 
 type rawSeries struct {
-	lset   labels.Labels
+	lset   labelpb.Labels
 	chunks [][]sample
 }
 
@@ -424,10 +429,20 @@ func benchmarkMergedSeriesSet(b testutil.TB, overlappingChunks bool) {
 	} {
 		for _, j := range []int{1, 2, 4, 8, 16, 32} {
 			b.Run(fmt.Sprintf("series=%d,blocks=%d", k, j), func(b testutil.TB) {
-				lbls, err := labels.ReadLabels(filepath.Join("../../testutil/testdata", "20kseries.json"), k)
+				promLbls, err := labels.ReadLabels(filepath.Join("../../testutil/testdata", "20kseries.json"), k)
 				testutil.Ok(b, err)
 
-				sort.Sort(labels.Slice(lbls))
+				sort.Sort(labels.Slice(promLbls))
+
+				// Convert prometheus labels to our Labels type.
+				lbls := make([]labelpb.Labels, len(promLbls))
+				for i, pl := range promLbls {
+					ls := make(labelpb.Labels, 0, pl.Len())
+					pl.Range(func(l labels.Label) {
+						ls = append(ls, &labelpb.Label{Name: l.Name, Value: l.Value})
+					})
+					lbls[i] = ls
+				}
 
 				blocks := make([][]rawSeries, j)
 				for _, l := range lbls {
@@ -469,37 +484,37 @@ func benchmarkMergedSeriesSet(b testutil.TB, overlappingChunks bool) {
 
 func TestMatchersToString_Translate(t *testing.T) {
 	for _, c := range []struct {
-		ms       []LabelMatcher
+		ms       []*LabelMatcher
 		expected string
 	}{
 		{
-			ms: []LabelMatcher{
+			ms: []*LabelMatcher{
 				{Name: "__name__", Type: LabelMatcher_EQ, Value: "up"},
 			},
 			expected: `{__name__="up"}`,
 		},
 		{
-			ms: []LabelMatcher{
+			ms: []*LabelMatcher{
 				{Name: "__name__", Type: LabelMatcher_NEQ, Value: "up"},
 				{Name: "job", Type: LabelMatcher_EQ, Value: "test"},
 			},
 			expected: `{__name__!="up", job="test"}`,
 		},
 		{
-			ms: []LabelMatcher{
+			ms: []*LabelMatcher{
 				{Name: "__name__", Type: LabelMatcher_EQ, Value: "up"},
 				{Name: "job", Type: LabelMatcher_RE, Value: "test"},
 			},
 			expected: `{__name__="up", job=~"test"}`,
 		},
 		{
-			ms: []LabelMatcher{
+			ms: []*LabelMatcher{
 				{Name: "job", Type: LabelMatcher_NRE, Value: "test"},
 			},
 			expected: `{job!~"test"}`,
 		},
 		{
-			ms: []LabelMatcher{
+			ms: []*LabelMatcher{
 				{Name: "__name__", Type: LabelMatcher_EQ, Value: "up"},
 				{Name: "__name__", Type: LabelMatcher_NEQ, Value: "up"},
 			},
@@ -542,7 +557,7 @@ func TestSeriesRequestToPromQL(t *testing.T) {
 		{
 			name: "Single matcher regular expression",
 			r: &SeriesRequest{
-				Matchers: []LabelMatcher{
+				Matchers: []*LabelMatcher{
 					{
 						Type:  LabelMatcher_RE,
 						Name:  "namespace",
@@ -560,7 +575,7 @@ func TestSeriesRequestToPromQL(t *testing.T) {
 		{
 			name: "Single matcher regular expression with grouping",
 			r: &SeriesRequest{
-				Matchers: []LabelMatcher{
+				Matchers: []*LabelMatcher{
 					{
 						Type:  LabelMatcher_RE,
 						Name:  "namespace",
@@ -582,7 +597,7 @@ func TestSeriesRequestToPromQL(t *testing.T) {
 		{
 			name: "Multiple matchers with grouping",
 			r: &SeriesRequest{
-				Matchers: []LabelMatcher{
+				Matchers: []*LabelMatcher{
 					{
 						Type:  LabelMatcher_EQ,
 						Name:  "__name__",
@@ -609,7 +624,7 @@ func TestSeriesRequestToPromQL(t *testing.T) {
 		{
 			name: "Query with vector range selector",
 			r: &SeriesRequest{
-				Matchers: []LabelMatcher{
+				Matchers: []*LabelMatcher{
 					{
 						Type:  LabelMatcher_EQ,
 						Name:  "__name__",
@@ -635,7 +650,7 @@ func TestSeriesRequestToPromQL(t *testing.T) {
 		{
 			name: "Query with grouping and vector range selector",
 			r: &SeriesRequest{
-				Matchers: []LabelMatcher{
+				Matchers: []*LabelMatcher{
 					{
 						Type:  LabelMatcher_EQ,
 						Name:  "__name__",
@@ -678,7 +693,7 @@ func TestPromMatchersToMatchers_RedundantMatcherFiltering(t *testing.T) {
 	cases := []struct {
 		name             string
 		inputMatchers    []*labels.Matcher
-		expectedMatchers []LabelMatcher
+		expectedMatchers []*LabelMatcher
 		description      string
 	}{
 		{
@@ -686,7 +701,7 @@ func TestPromMatchersToMatchers_RedundantMatcherFiltering(t *testing.T) {
 			inputMatchers: []*labels.Matcher{
 				labels.MustNewMatcher(labels.MatchRegexp, "label1", ".*"),
 			},
-			expectedMatchers: []LabelMatcher{
+			expectedMatchers: []*LabelMatcher{
 				{Name: "label1", Type: LabelMatcher_RE, Value: ".*"},
 			},
 			description: "When there's only one matcher, even if redundant, it should be kept to avoid empty matcher set",
@@ -697,7 +712,7 @@ func TestPromMatchersToMatchers_RedundantMatcherFiltering(t *testing.T) {
 				labels.MustNewMatcher(labels.MatchEqual, "__name__", "up"),
 				labels.MustNewMatcher(labels.MatchRegexp, "label1", ".*"),
 			},
-			expectedMatchers: []LabelMatcher{
+			expectedMatchers: []*LabelMatcher{
 				{Name: "__name__", Type: LabelMatcher_EQ, Value: "up"},
 			},
 			description: "When there are multiple matchers, redundant ones should be filtered out",
@@ -710,7 +725,7 @@ func TestPromMatchersToMatchers_RedundantMatcherFiltering(t *testing.T) {
 				labels.MustNewMatcher(labels.MatchRegexp, "label2", ".*"),
 				labels.MustNewMatcher(labels.MatchEqual, "job", "test"),
 			},
-			expectedMatchers: []LabelMatcher{
+			expectedMatchers: []*LabelMatcher{
 				{Name: "__name__", Type: LabelMatcher_EQ, Value: "up"},
 				{Name: "job", Type: LabelMatcher_EQ, Value: "test"},
 			},
@@ -722,7 +737,7 @@ func TestPromMatchersToMatchers_RedundantMatcherFiltering(t *testing.T) {
 				labels.MustNewMatcher(labels.MatchEqual, "__name__", "up"),
 				labels.MustNewMatcher(labels.MatchRegexp, "label1", ".+"),
 			},
-			expectedMatchers: []LabelMatcher{
+			expectedMatchers: []*LabelMatcher{
 				{Name: "__name__", Type: LabelMatcher_EQ, Value: "up"},
 				{Name: "label1", Type: LabelMatcher_RE, Value: ".+"},
 			},
@@ -734,7 +749,7 @@ func TestPromMatchersToMatchers_RedundantMatcherFiltering(t *testing.T) {
 				labels.MustNewMatcher(labels.MatchRegexp, "label1", ".*"),
 				labels.MustNewMatcher(labels.MatchRegexp, "label2", ".*"),
 			},
-			expectedMatchers: []LabelMatcher{},
+			expectedMatchers: []*LabelMatcher{},
 			description:      "Current implementation: when ALL matchers are redundant (len > 1), they all get filtered, resulting in empty set. This is a known edge case.",
 		},
 	}

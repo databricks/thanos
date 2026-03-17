@@ -7,27 +7,40 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/efficientgo/core/testutil"
+	"google.golang.org/protobuf/types/known/durationpb"
+
+	thanostestutil "github.com/thanos-io/thanos/pkg/testutil"
 )
 
 func TestQueryStatsMerge(t *testing.T) {
+	// Use reflection for int64 fields so newly added counters are
+	// automatically covered without updating this test.
+	setExportedInt64Fields := func(v reflect.Value, val int64) {
+		for i := 0; i < v.NumField(); i++ {
+			f := v.Field(i)
+			if !f.CanSet() || f.Kind() != reflect.Int64 {
+				continue
+			}
+			f.SetInt(val)
+		}
+	}
+
 	s := &QueryStats{}
-	ps := reflect.Indirect(reflect.ValueOf(s))
-	for i := 0; i < ps.NumField(); i++ {
-		ps.FieldByIndex([]int{i}).SetInt(int64(1))
-	}
+	setExportedInt64Fields(reflect.Indirect(reflect.ValueOf(s)), 1)
+	s.GetAllDuration = &durationpb.Duration{Seconds: 1, Nanos: 1}
+	s.MergeDuration = &durationpb.Duration{Seconds: 1, Nanos: 1}
+
 	o := &QueryStats{}
-	po := reflect.Indirect(reflect.ValueOf(o))
-	for i := 0; i < po.NumField(); i++ {
-		po.FieldByIndex([]int{i}).SetInt(int64(100))
-	}
+	setExportedInt64Fields(reflect.Indirect(reflect.ValueOf(o)), 100)
+	o.GetAllDuration = &durationpb.Duration{Seconds: 100, Nanos: 100}
+	o.MergeDuration = &durationpb.Duration{Seconds: 100, Nanos: 100}
+
 	s.Merge(o)
 
-	// Expected stats.
 	e := &QueryStats{}
-	pe := reflect.Indirect(reflect.ValueOf(e))
-	for i := 0; i < pe.NumField(); i++ {
-		pe.FieldByIndex([]int{i}).SetInt(int64(101))
-	}
-	testutil.Equals(t, e, s)
+	setExportedInt64Fields(reflect.Indirect(reflect.ValueOf(e)), 101)
+	e.GetAllDuration = &durationpb.Duration{Seconds: 101, Nanos: 101}
+	e.MergeDuration = &durationpb.Duration{Seconds: 101, Nanos: 101}
+
+	thanostestutil.ProtoEquals(t, e, s)
 }

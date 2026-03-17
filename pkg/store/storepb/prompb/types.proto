@@ -17,18 +17,14 @@
 syntax = "proto3";
 package prometheus_copy;
 
-option go_package = "prompb";
+option go_package = "github.com/thanos-io/thanos/pkg/store/storepb/prompb";
 
-import "gogoproto/gogo.proto";
 import "store/labelpb/types.proto";
-
-// Do not generate XXX fields to reduce memory footprint and opening a door
-// for zero-copy casts to/from prometheus data types.
-option (gogoproto.goproto_unkeyed_all) = false;
-option (gogoproto.goproto_unrecognized_all) = false;
-option (gogoproto.goproto_sizecache_all) = false;
+import "github.com/planetscale/vtprotobuf/vtproto/ext.proto";
+import "tagger/tagger.proto";
 
 message MetricMetadata {
+  option (vtproto.mempool) = true;
   enum MetricType {
     UNKNOWN = 0;
     COUNTER = 1;
@@ -49,13 +45,15 @@ message MetricMetadata {
 }
 
 message Sample {
+  option (vtproto.mempool) = true;
   double value = 1;
   int64 timestamp = 2;
 }
 
 message Exemplar {
+  option (vtproto.mempool) = true;
   // Optional, can be empty.
-  repeated thanos.Label labels = 1 [(gogoproto.nullable) = false, (gogoproto.customtype) = "github.com/thanos-io/thanos/pkg/store/labelpb.ZLabel"];
+  repeated thanos.Label labels = 1 [(tagger.tags) = "json:\"labels\""];
   double value = 2;
   // timestamp is in ms format, see pkg/timestamp/timestamp.go for
   // conversion from time.Time to Prometheus timestamp.
@@ -69,6 +67,7 @@ message Exemplar {
 // histograms. This Histogram message can represent both, the usual
 // integer histogram as well as a float histogram.
 message Histogram {
+  option (vtproto.mempool) = true;
   enum ResetHint {
     UNKNOWN = 0; // Need to test for a counter reset explicitly.
     YES     = 1; // This is the 1st histogram after a counter reset.
@@ -96,7 +95,7 @@ message Histogram {
   }
 
   // Negative Buckets.
-  repeated BucketSpan negative_spans =  8 [(gogoproto.nullable) = false];
+  repeated BucketSpan negative_spans =  8 [(tagger.tags) = "json:\"negative_spans\""];
   // Use either "negative_deltas" or "negative_counts", the former for
   // regular histograms with integer counts, the latter for float
   // histograms.
@@ -104,7 +103,7 @@ message Histogram {
   repeated double negative_counts    = 10; // Absolute count of each bucket.
 
   // Positive Buckets.
-  repeated BucketSpan positive_spans = 11 [(gogoproto.nullable) = false];
+  repeated BucketSpan positive_spans = 11 [(tagger.tags) = "json:\"positive_spans\""];
   // Use either "positive_deltas" or "positive_counts", the former for
   // regular histograms with integer counts, the latter for float
   // histograms.
@@ -115,7 +114,7 @@ message Histogram {
   // timestamp is in ms format, see model/timestamp/timestamp.go for
   // conversion from time.Time to Prometheus timestamp.
   int64 timestamp = 15;
-} 
+}
 
 // A BucketSpan defines a number of consecutive buckets with their
 // offset. Logically, it would be more straightforward to include the
@@ -123,6 +122,7 @@ message Histogram {
 // more compact in the way the data is structured here (with all the
 // buckets in a single array separate from the Spans).
 message BucketSpan {
+  option (vtproto.mempool) = true;
   sint32 offset = 1; // Gap to previous span, or starting point for 1st span (which can be negative).
   uint32 length = 2; // Length of consecutive buckets.
 }
@@ -130,12 +130,12 @@ message BucketSpan {
 
 // TimeSeries represents samples and labels for a single time series.
 message TimeSeries {
+  option (vtproto.mempool) = true;
   // Labels have to be sorted by label names and without duplicated label names.
-  // TODO(bwplotka): Don't use zero copy ZLabels, see https://github.com/thanos-io/thanos/pull/3279 for details.
-  repeated thanos.Label labels = 1 [(gogoproto.nullable) = false, (gogoproto.customtype) = "github.com/thanos-io/thanos/pkg/store/labelpb.ZLabel"];
-  repeated Sample samples = 2 [(gogoproto.nullable) = false];
-  repeated Exemplar exemplars = 3 [(gogoproto.nullable) = false];
-  repeated Histogram histograms = 4 [(gogoproto.nullable) = false];
+  repeated thanos.Label labels = 1 [(tagger.tags) = "json:\"labels\""];
+  repeated Sample samples = 2 [(tagger.tags) = "json:\"samples\""];
+  repeated Exemplar exemplars = 3 [(tagger.tags) = "json:\"exemplars\""];
+  repeated Histogram histograms = 4 [(tagger.tags) = "json:\"histograms\""];
 }
 
 // Matcher specifies a rule, which can match or set of labels or not.
@@ -147,8 +147,8 @@ message LabelMatcher {
     NRE = 3;
   }
   Type type = 1;
-  string name = 2;
-  string value = 3;
+  string name = 2 [(vtproto.options).unique = true];
+  string value = 3 [(vtproto.options).unique = true];
 }
 
 message ReadHints {
@@ -181,7 +181,7 @@ message Chunk {
 // ChunkedSeries represents single, encoded time series.
 message ChunkedSeries {
   // Labels should be sorted.
-  repeated thanos.Label labels = 1 [(gogoproto.nullable) = false, (gogoproto.customtype) = "github.com/thanos-io/thanos/pkg/store/labelpb.ZLabel"];
+  repeated thanos.Label labels = 1 [(tagger.tags) = "json:\"labels\""];
   // Chunks will be in start time order and may overlap.
-  repeated Chunk chunks = 2 [(gogoproto.nullable) = false];
+  repeated Chunk chunks = 2 [(tagger.tags) = "json:\"chunks\""];
 }

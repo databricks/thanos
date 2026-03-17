@@ -7,11 +7,12 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/thanos-io/thanos/pkg/extpromql"
 	"net/http"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/thanos-io/thanos/pkg/extpromql"
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
@@ -223,7 +224,7 @@ func (s resultsCache) Do(ctx context.Context, r Request) (Response, error) {
 	tenantIDs, err := tenant.TenantIDs(ctx)
 	respWithStats := r.GetStats() != "" && s.cacheQueryableSamplesStats
 	if err != nil {
-		return nil, httpgrpc.Errorf(http.StatusBadRequest, err.Error())
+		return nil, httpgrpc.Errorf(http.StatusBadRequest, "%s", err.Error())
 	}
 
 	// If cache_queryable_samples_stats is enabled we always need request the status upstream
@@ -405,7 +406,7 @@ func (s resultsCache) isOffsetCachable(r Request) bool {
 }
 
 func getHeaderValuesWithName(r Response, headerName string) (headerValues []string) {
-	for _, hv := range r.GetHeaders() {
+	for _, hv := range r.PrometheusHeaders() {
 		if hv.GetName() != headerName {
 			continue
 		}

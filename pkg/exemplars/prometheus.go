@@ -7,8 +7,6 @@ import (
 	"context"
 	"net/url"
 
-	"github.com/prometheus/prometheus/model/labels"
-
 	"github.com/thanos-io/thanos/pkg/exemplars/exemplarspb"
 	"github.com/thanos-io/thanos/pkg/promclient"
 	"github.com/thanos-io/thanos/pkg/store/labelpb"
@@ -17,14 +15,16 @@ import (
 
 // Prometheus implements exemplarspb.Exemplars gRPC that allows to fetch exemplars from Prometheus.
 type Prometheus struct {
+	exemplarspb.UnimplementedExemplarsServer
+
 	base   *url.URL
 	client *promclient.Client
 
-	extLabels func() labels.Labels
+	extLabels func() labelpb.Labels
 }
 
 // NewPrometheus creates new exemplars.Prometheus.
-func NewPrometheus(base *url.URL, client *promclient.Client, extLabels func() labels.Labels) *Prometheus {
+func NewPrometheus(base *url.URL, client *promclient.Client, extLabels func() labelpb.Labels) *Prometheus {
 	return &Prometheus{
 		base:      base,
 		client:    client,
@@ -40,10 +40,9 @@ func (p *Prometheus) Exemplars(r *exemplarspb.ExemplarsRequest, s exemplarspb.Ex
 	}
 
 	// Prometheus does not add external labels, so we need to add on our own.
-	extLset := p.extLabels()
+	ext := p.extLabels()
 	for _, e := range exemplars {
-		// Make sure the returned series labels are sorted.
-		e.SetSeriesLabels(labelpb.ExtendSortedLabels(e.SeriesLabels.PromLabels(), extLset))
+		e.SeriesLabels = &labelpb.LabelSet{Labels: labelpb.ExtendSortedLabels(e.SeriesLabels.GetLabels(), ext)}
 
 		var err error
 		tracing.DoInSpan(s.Context(), "send_exemplars_response", func(_ context.Context) {

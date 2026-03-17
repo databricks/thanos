@@ -104,7 +104,7 @@ func testReadinessWithGRPCServer(t *testing.T, enableReadiness bool) {
 	time.Sleep(200 * time.Millisecond)
 
 	// Create client connection
-	conn, err := grpc.Dial(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	testutil.Ok(t, err)
 	defer conn.Close()
 

@@ -931,7 +931,7 @@ func promqlResultsWithFailures(numFailures int) (*atomic.Int64, http.Handler) {
 func labelsResults(fail bool) (*int, http.Handler) {
 	count := 0
 	var lock sync.Mutex
-	q := ThanosLabelsResponse{
+	q := &ThanosLabelsResponse{
 		Status: "success",
 		Data:   []string{"__name__", "job"},
 	}
@@ -955,9 +955,9 @@ func labelsResults(fail bool) (*int, http.Handler) {
 func seriesResults(fail bool) (*int, http.Handler) {
 	count := 0
 	var lock sync.Mutex
-	q := ThanosSeriesResponse{
+	q := &ThanosSeriesResponse{
 		Status: "success",
-		Data:   []labelpb.ZLabelSet{{Labels: []labelpb.ZLabel{{Name: "__name__", Value: "up"}, {Name: "foo", Value: "bar"}}}},
+		Data:   []*labelpb.LabelSet{{Labels: []*labelpb.Label{{Name: "__name__", Value: "up"}, {Name: "foo", Value: "bar"}}}},
 	}
 
 	return &count, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

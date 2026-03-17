@@ -58,7 +58,7 @@ func TestExternalLabels(t *testing.T) {
 			}
 
 			testutil.Ok(t, err)
-			testutil.Equals(t, len(tc.labels), ext.Len())
+			testutil.Equals(t, len(tc.labels), len(ext))
 			for k, v := range tc.labels {
 				testutil.Equals(t, v, ext.Get(k))
 			}

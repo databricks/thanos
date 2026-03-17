@@ -12,12 +12,11 @@ import (
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
-	"github.com/gogo/protobuf/jsonpb"
 	"github.com/pkg/errors"
-	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/tsdb/fileutil"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/thanos-io/thanos/pkg/component"
 	"github.com/thanos-io/thanos/pkg/runutil"
@@ -30,8 +29,10 @@ import (
 // Inefficient implementation for quick StoreAPI view.
 // Chunk order is exactly the same as in a given file.
 type LocalStore struct {
+	storepb.UnimplementedStoreServer
+
 	logger    log.Logger
-	extLabels labels.Labels
+	extLabels labelpb.Labels
 
 	c io.Closer
 
@@ -48,7 +49,7 @@ type LocalStore struct {
 func NewLocalStoreFromJSONMmappableFile(
 	logger log.Logger,
 	component component.StoreAPI,
-	extLabels labels.Labels,
+	extLabels labelpb.Labels,
 	path string,
 	split bufio.SplitFunc,
 ) (*LocalStore, error) {
@@ -82,7 +83,7 @@ func NewLocalStoreFromJSONMmappableFile(
 	skanner := NewNoCopyScanner(content, split)
 	resp := &storepb.SeriesResponse{}
 	for skanner.Scan() {
-		if err := jsonpb.Unmarshal(bytes.NewReader(skanner.Bytes()), resp); err != nil {
+		if err := protojson.Unmarshal(skanner.Bytes(), resp); err != nil {
 			return nil, errors.Wrapf(err, "unmarshal storepb.SeriesResponse frame for file %s", path)
 		}
 		series := resp.GetSeries()
@@ -144,10 +145,9 @@ func (s *LocalStore) Series(r *storepb.SeriesRequest, srv storepb.Store_SeriesSe
 
 	var chosen []int
 	for si, series := range s.series {
-		lbls := labelpb.ZLabelsToPromLabels(series.Labels)
 		var noMatch bool
 		for _, m := range matchers {
-			extValue := lbls.Get(m.Name)
+			extValue := labelpb.FindValue(series.Labels, m.Name)
 			if extValue == "" {
 				continue
 			}
@@ -163,8 +163,8 @@ func (s *LocalStore) Series(r *storepb.SeriesRequest, srv storepb.Store_SeriesSe
 		chosen = chosen[:0]
 		resp := &storepb.Series{
 			// Copy labels as in-process clients like proxy tend to work on same memory for labels.
-			Labels: labelpb.DeepCopy(series.Labels),
-			Chunks: make([]storepb.AggrChunk, 0, len(s.sortedChunks[si])),
+			Labels: labelpb.Labels(series.Labels).DeepCopy(),
+			Chunks: make([]*storepb.AggrChunk, 0, len(s.sortedChunks[si])),
 		}
 
 		for _, ci := range s.sortedChunks[si] {
@@ -213,8 +213,7 @@ func (s *LocalStore) LabelValues(_ context.Context, r *storepb.LabelValuesReques
 ) {
 	vals := map[string]struct{}{}
 	for _, series := range s.series {
-		lbls := labelpb.ZLabelsToPromLabels(series.Labels)
-		val := lbls.Get(r.Label)
+		val := labelpb.FindValue(series.Labels, r.Label)
 		if val == "" {
 			continue
 		}

@@ -7,6 +7,7 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 
 	"github.com/thanos-io/thanos/pkg/info/infopb"
+	"github.com/thanos-io/thanos/pkg/store/labelpb"
 	"github.com/thanos-io/thanos/pkg/store/storepb"
 )
 
@@ -15,26 +16,26 @@ type TestClient struct {
 
 	Name string
 
-	ExtLset                     []labels.Labels
+	ExtLset                     []labelpb.Labels
 	MinTime, MaxTime            int64
 	Shardable                   bool
 	WithoutReplicaLabelsEnabled bool
 	IsLocalStore                bool
-	StoreTSDBInfos              []infopb.TSDBInfo
+	StoreTSDBInfos              []*infopb.TSDBInfo
 	StoreFilterNotMatches       bool
 	GroupKeyStr                 string
 	ReplicaKeyStr               string
 }
 
-func (c TestClient) LabelSets() []labels.Labels         { return c.ExtLset }
-func (c TestClient) TimeRange() (mint, maxt int64)      { return c.MinTime, c.MaxTime }
-func (c TestClient) TSDBInfos() []infopb.TSDBInfo       { return c.StoreTSDBInfos }
-func (c TestClient) SupportsSharding() bool             { return c.Shardable }
-func (c TestClient) SupportsWithoutReplicaLabels() bool { return c.WithoutReplicaLabelsEnabled }
-func (c TestClient) String() string                     { return c.Name }
-func (c TestClient) Addr() (string, bool)               { return c.Name, c.IsLocalStore }
+func (c *TestClient) LabelSets() []labelpb.Labels        { return c.ExtLset }
+func (c *TestClient) TimeRange() (mint, maxt int64)      { return c.MinTime, c.MaxTime }
+func (c *TestClient) TSDBInfos() []*infopb.TSDBInfo      { return c.StoreTSDBInfos }
+func (c *TestClient) SupportsSharding() bool             { return c.Shardable }
+func (c *TestClient) SupportsWithoutReplicaLabels() bool { return c.WithoutReplicaLabelsEnabled }
+func (c *TestClient) String() string                     { return c.Name }
+func (c *TestClient) Addr() (string, bool)               { return c.Name, c.IsLocalStore }
 
-func (c TestClient) Matches(matches []*labels.Matcher) bool { return !c.StoreFilterNotMatches }
+func (c *TestClient) Matches(matches []*labels.Matcher) bool { return !c.StoreFilterNotMatches }
 
-func (c TestClient) GroupKey() string   { return c.GroupKeyStr }
-func (c TestClient) ReplicaKey() string { return c.ReplicaKeyStr }
+func (c *TestClient) GroupKey() string   { return c.GroupKeyStr }
+func (c *TestClient) ReplicaKey() string { return c.ReplicaKeyStr }

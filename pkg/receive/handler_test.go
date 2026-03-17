@@ -29,7 +29,6 @@ import (
 	"github.com/efficientgo/core/testutil"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
-	"github.com/gogo/protobuf/proto"
 	"github.com/golang/snappy"
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
@@ -59,6 +58,8 @@ import (
 	"github.com/thanos-io/thanos/pkg/store/storepb"
 	"github.com/thanos-io/thanos/pkg/store/storepb/prompb"
 	"github.com/thanos-io/thanos/pkg/tenancy"
+	thanostestutil "github.com/thanos-io/thanos/pkg/testutil"
+	"github.com/thanos-io/thanos/pkg/vtproto"
 )
 
 const dnsScheme = "dns"
@@ -151,7 +152,7 @@ func (f *fakeAppendable) Appender(_ context.Context) (storage.Appender, error) {
 
 type fakeAppender struct {
 	sync.Mutex
-	samples     map[storage.SeriesRef][]prompb.Sample
+	samples     map[storage.SeriesRef][]*prompb.Sample
 	exemplars   map[storage.SeriesRef][]exemplar.Exemplar
 	appendErr   func() error
 	commitErr   func() error
@@ -172,7 +173,7 @@ func newFakeAppender(appendErr, commitErr, rollbackErr func() error) *fakeAppend
 		rollbackErr = nilErrFn
 	}
 	return &fakeAppender{
-		samples:     make(map[storage.SeriesRef][]prompb.Sample),
+		samples:     make(map[storage.SeriesRef][]*prompb.Sample),
 		appendErr:   appendErr,
 		commitErr:   commitErr,
 		rollbackErr: rollbackErr,
@@ -183,11 +184,11 @@ func (f *fakeAppender) UpdateMetadata(storage.SeriesRef, labels.Labels, promethe
 	return 0, nil
 }
 
-func (f *fakeAppender) Get(l labels.Labels) []prompb.Sample {
+func (f *fakeAppender) Get(l labels.Labels) []*prompb.Sample {
 	f.Lock()
 	defer f.Unlock()
 	s := f.samples[storage.SeriesRef(l.Hash())]
-	res := make([]prompb.Sample, len(s))
+	res := make([]*prompb.Sample, len(s))
 	copy(res, s)
 	return res
 }
@@ -198,7 +199,7 @@ func (f *fakeAppender) Append(ref storage.SeriesRef, l labels.Labels, t int64, v
 	if ref == 0 {
 		ref = storage.SeriesRef(l.Hash())
 	}
-	f.samples[ref] = append(f.samples[ref], prompb.Sample{Timestamp: t, Value: v})
+	f.samples[ref] = append(f.samples[ref], &prompb.Sample{Timestamp: t, Value: v})
 	return ref, f.appendErr()
 }
 
@@ -768,13 +769,13 @@ func testReceiveQuorum(t *testing.T, hashringAlgo HashringAlgorithm, withConsist
 			// Test that each time series is stored
 			// the correct amount of times in each fake DB.
 			for _, ts := range tc.wreq.Timeseries {
-				lset := labelpb.ZLabelsToPromLabels(ts.Labels)
+				lset := labelpb.ToPromLabels(ts.Labels)
 				for j, a := range tc.appendables {
 					if withConsistencyDelay {
 						var expected int
 						n := a.appender.(*fakeAppender).Get(lset)
 						got := uint64(len(n))
-						if a.appenderErr == nil && endpointHit(t, hashring, tc.replicationFactor, handlers[j].options.Endpoint, tenant, &ts) {
+						if a.appenderErr == nil && endpointHit(t, hashring, tc.replicationFactor, handlers[j].options.Endpoint, tenant, ts) {
 							// We have len(handlers) copies of each sample because the test case
 							// is run once for each handler and they all use the same appender.
 							expected = len(handlers) * len(ts.Samples)
@@ -786,7 +787,7 @@ func testReceiveQuorum(t *testing.T, hashringAlgo HashringAlgorithm, withConsist
 						var expectedMin int
 						n := a.appender.(*fakeAppender).Get(lset)
 						got := uint64(len(n))
-						if a.appenderErr == nil && endpointHit(t, hashring, tc.replicationFactor, handlers[j].options.Endpoint, tenant, &ts) {
+						if a.appenderErr == nil && endpointHit(t, hashring, tc.replicationFactor, handlers[j].options.Endpoint, tenant, ts) {
 							// We have len(handlers) copies of each sample because the test case
 							// is run once for each handler and they all use the same appender.
 							expectedMin = int((tc.replicationFactor/2)+1) * len(ts.Samples)
@@ -939,16 +940,15 @@ func TestReceiveWriteRequestLimits(t *testing.T) {
 			)
 
 			wreq := &prompb.WriteRequest{
-				Timeseries: []prompb.TimeSeries{},
+				Timeseries: []*prompb.TimeSeries{},
 			}
 
 			for i := 0; i < tc.amountSeries; i += 1 {
-				label := labelpb.ZLabel{Name: "foo", Value: "bar"}
-				series := prompb.TimeSeries{
-					Labels: []labelpb.ZLabel{label},
+				series := &prompb.TimeSeries{
+					Labels: labelpb.FromStrings("foo", "bar"),
 				}
 				for j := 0; j < tc.amountSamples; j += 1 {
-					sample := prompb.Sample{Value: float64(j), Timestamp: int64(j)}
+					sample := &prompb.Sample{Value: float64(j), Timestamp: int64(j)}
 					series.Samples = append(series.Samples, sample)
 				}
 				wreq.Timeseries = append(wreq.Timeseries, series)
@@ -999,7 +999,7 @@ func cycleErrors(errs []error) func() error {
 
 // makeRequest is a helper to make a correct request against a remote write endpoint given a request.
 func makeRequest(h *Handler, tenant string, wreq *prompb.WriteRequest) (*httptest.ResponseRecorder, error) {
-	buf, err := proto.Marshal(wreq)
+	buf, err := wreq.MarshalVT()
 	if err != nil {
 		return nil, errors.Wrap(err, "marshal request")
 	}
@@ -1031,12 +1031,36 @@ type fakeRemoteWriteGRPCServer struct {
 	h storepb.WriteableStoreServer
 }
 
+// remoteWriteRoundtrip simulates the generated POOL_RETURN_REFCOUNT gRPC handler:
+// marshal on the "client side", unmarshal into a pooled object on the "server side",
+// set up reference-counted pool return via context, and call RemoteWrite.
+func (f *fakeRemoteWriteGRPCServer) remoteWriteRoundtrip(ctx context.Context, in *storepb.WriteRequest) (*storepb.WriteResponse, error) {
+	b, err := in.MarshalVT()
+	if err != nil {
+		return nil, err
+	}
+	serverReq := storepb.WriteRequestFromVTPool()
+	if err := serverReq.UnmarshalVT(b); err != nil {
+		serverReq.ReturnToVTPool()
+		return nil, err
+	}
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		wg.Wait()
+		serverReq.ReturnToVTPool()
+	}()
+	defer wg.Done()
+	ctx = vtproto.WithReturnWG(ctx, wg)
+	return f.h.RemoteWrite(ctx, serverReq)
+}
+
 func (f *fakeRemoteWriteGRPCServer) RemoteWrite(ctx context.Context, in *storepb.WriteRequest, opts ...grpc.CallOption) (*storepb.WriteResponse, error) {
-	return f.h.RemoteWrite(ctx, in)
+	return f.remoteWriteRoundtrip(ctx, in)
 }
 
 func (f *fakeRemoteWriteGRPCServer) RemoteWriteAsync(ctx context.Context, in *storepb.WriteRequest, er endpointReplica, seriesIDs []int, responses chan writeResponse, cb func(error)) {
-	_, err := f.h.RemoteWrite(ctx, in)
+	_, err := f.remoteWriteRoundtrip(ctx, in)
 	responses <- writeResponse{
 		er:        er,
 		err:       err,
@@ -1100,36 +1124,28 @@ func (a *tsOverrideAppender) GetRef(lset labels.Labels, hash uint64) (storage.Se
 // serializeSeriesWithOneSample returns marshaled and compressed remote write requests like it would
 // be sent to Thanos receive.
 // It has one sample and allow passing multiple series, in same manner as typical Prometheus would batch it.
-func serializeSeriesWithOneSample(t testing.TB, series [][]labelpb.ZLabel) []byte {
-	r := &prompb.WriteRequest{Timeseries: make([]prompb.TimeSeries, 0, len(series))}
+func serializeSeriesWithOneSample(t testing.TB, series []labelpb.Labels) []byte {
+	r := &prompb.WriteRequest{Timeseries: make([]*prompb.TimeSeries, 0, len(series))}
 
 	for _, s := range series {
-		r.Timeseries = append(r.Timeseries, prompb.TimeSeries{
+		r.Timeseries = append(r.Timeseries, &prompb.TimeSeries{
 			Labels: s,
 			// Timestamp does not matter, it will be overridden.
-			Samples: []prompb.Sample{{Value: math.MaxFloat64, Timestamp: math.MinInt64}},
+			Samples: []*prompb.Sample{{Value: math.MaxFloat64, Timestamp: math.MinInt64}},
 		})
 	}
-	body, err := proto.Marshal(r)
+	body, err := r.MarshalVT()
 	testutil.Ok(t, err)
 	return snappy.Encode(nil, body)
 }
 
-func makeSeriesWithValues(numSeries int) []prompb.TimeSeries {
-	series := make([]prompb.TimeSeries, numSeries)
+func makeSeriesWithValues(numSeries int) []*prompb.TimeSeries {
+	series := make([]*prompb.TimeSeries, numSeries)
 	for i := 0; i < numSeries; i++ {
-		series[i] = prompb.TimeSeries{
-			Labels: []labelpb.ZLabel{
-				{
-					Name:  fmt.Sprintf("pod-%d", i),
-					Value: fmt.Sprintf("nginx-%d", i),
-				},
-			},
-			Samples: []prompb.Sample{
-				{
-					Value:     float64(i),
-					Timestamp: 10,
-				},
+		series[i] = &prompb.TimeSeries{
+			Labels: labelpb.FromStrings(fmt.Sprintf("pod-%d", i), fmt.Sprintf("nginx-%d", i)),
+			Samples: []*prompb.Sample{
+				{Value: float64(i), Timestamp: 10},
 			},
 		}
 	}
@@ -1147,6 +1163,7 @@ func benchmarkHandlerMultiTSDBReceiveRemoteWrite(b testutil.TB) {
 		testutil.Ok(b, closeFunc())
 	}()
 	handler := handlers[0]
+	handler.logger = log.NewNopLogger()
 
 	reg := prometheus.NewRegistry()
 
@@ -1159,7 +1176,7 @@ func benchmarkHandlerMultiTSDBReceiveRemoteWrite(b testutil.TB) {
 			NoLockfile:        true,
 			StripeSize:        1, // Disable stripe pre allocation so we can have clear profiles.
 		},
-		labels.FromStrings("replica", "01"),
+		labelpb.FromStrings("replica", "01"),
 		"tenant_id",
 		nil,
 		false,
@@ -1177,13 +1194,13 @@ func benchmarkHandlerMultiTSDBReceiveRemoteWrite(b testutil.TB) {
 	}{
 		{
 			name: "typical labels under 1KB, 500 of them",
-			writeRequest: serializeSeriesWithOneSample(b, func() [][]labelpb.ZLabel {
-				series := make([][]labelpb.ZLabel, 500)
+			writeRequest: serializeSeriesWithOneSample(b, func() []labelpb.Labels {
+				series := make([]labelpb.Labels, 500)
 				for s := 0; s < len(series); s++ {
-					lbls := make([]labelpb.ZLabel, 10)
+					lbls := make(labelpb.Labels, 10)
 					for i := 0; i < len(lbls); i++ {
 						// Label ~20B name, 50B value.
-						lbls[i] = labelpb.ZLabel{Name: fmt.Sprintf("abcdefghijabcdefghijabcdefghij%d", i), Value: fmt.Sprintf("abcdefghijabcdefghijabcdefghijabcdefghijabcdefghij%d", i)}
+						lbls[i] = &labelpb.Label{Name: fmt.Sprintf("abcdefghijabcdefghijabcdefghij%d", i), Value: fmt.Sprintf("abcdefghijabcdefghijabcdefghijabcdefghijabcdefghij%d", i)}
 					}
 					series[s] = lbls
 				}
@@ -1192,13 +1209,13 @@ func benchmarkHandlerMultiTSDBReceiveRemoteWrite(b testutil.TB) {
 		},
 		{
 			name: "typical labels under 1KB, 5000 of them",
-			writeRequest: serializeSeriesWithOneSample(b, func() [][]labelpb.ZLabel {
-				series := make([][]labelpb.ZLabel, 5000)
+			writeRequest: serializeSeriesWithOneSample(b, func() []labelpb.Labels {
+				series := make([]labelpb.Labels, 5000)
 				for s := 0; s < len(series); s++ {
-					lbls := make([]labelpb.ZLabel, 10)
+					lbls := make(labelpb.Labels, 10)
 					for i := 0; i < len(lbls); i++ {
 						// Label ~20B name, 50B value.
-						lbls[i] = labelpb.ZLabel{Name: fmt.Sprintf("abcdefghijabcdefghijabcdefghij%d", i), Value: fmt.Sprintf("abcdefghijabcdefghijabcdefghijabcdefghijabcdefghij%d", i)}
+						lbls[i] = &labelpb.Label{Name: fmt.Sprintf("abcdefghijabcdefghijabcdefghij%d", i), Value: fmt.Sprintf("abcdefghijabcdefghijabcdefghijabcdefghijabcdefghij%d", i)}
 					}
 					series[s] = lbls
 				}
@@ -1207,13 +1224,13 @@ func benchmarkHandlerMultiTSDBReceiveRemoteWrite(b testutil.TB) {
 		},
 		{
 			name: "typical labels under 1KB, 20000 of them",
-			writeRequest: serializeSeriesWithOneSample(b, func() [][]labelpb.ZLabel {
-				series := make([][]labelpb.ZLabel, 20000)
+			writeRequest: serializeSeriesWithOneSample(b, func() []labelpb.Labels {
+				series := make([]labelpb.Labels, 20000)
 				for s := 0; s < len(series); s++ {
-					lbls := make([]labelpb.ZLabel, 10)
+					lbls := make(labelpb.Labels, 10)
 					for i := 0; i < len(lbls); i++ {
 						// Label ~20B name, 50B value.
-						lbls[i] = labelpb.ZLabel{Name: fmt.Sprintf("abcdefghijabcdefghijabcdefghij%d", i), Value: fmt.Sprintf("abcdefghijabcdefghijabcdefghijabcdefghijabcdefghij%d", i)}
+						lbls[i] = &labelpb.Label{Name: fmt.Sprintf("abcdefghijabcdefghijabcdefghij%d", i), Value: fmt.Sprintf("abcdefghijabcdefghijabcdefghijabcdefghijabcdefghij%d", i)}
 					}
 					series[s] = lbls
 				}
@@ -1222,8 +1239,8 @@ func benchmarkHandlerMultiTSDBReceiveRemoteWrite(b testutil.TB) {
 		},
 		{
 			name: "extremely large label value 10MB, 10 of them",
-			writeRequest: serializeSeriesWithOneSample(b, func() [][]labelpb.ZLabel {
-				series := make([][]labelpb.ZLabel, 10)
+			writeRequest: serializeSeriesWithOneSample(b, func() []labelpb.Labels {
+				series := make([]labelpb.Labels, 10)
 				for s := 0; s < len(series); s++ {
 					lbl := &strings.Builder{}
 					lbl.Grow(1024 * 1024 * 10) // 10MB.
@@ -1231,7 +1248,7 @@ func benchmarkHandlerMultiTSDBReceiveRemoteWrite(b testutil.TB) {
 					for i := 0; i < lbl.Cap()/len(word); i++ {
 						_, _ = lbl.WriteString(word)
 					}
-					series[s] = []labelpb.ZLabel{{Name: "__name__", Value: lbl.String()}}
+					series[s] = labelpb.FromStrings("__name__", lbl.String())
 				}
 				return series
 			}()),
@@ -1376,51 +1393,27 @@ func TestRelabel(t *testing.T) {
 	for _, tcase := range []struct {
 		name                 string
 		relabel              []*relabel.Config
-		writeRequest         prompb.WriteRequest
-		expectedWriteRequest prompb.WriteRequest
+		writeRequest         *prompb.WriteRequest
+		expectedWriteRequest *prompb.WriteRequest
 	}{
 		{
 			name: "empty relabel configs",
-			writeRequest: prompb.WriteRequest{
-				Timeseries: []prompb.TimeSeries{
+			writeRequest: &prompb.WriteRequest{
+				Timeseries: []*prompb.TimeSeries{
 					{
-						Labels: []labelpb.ZLabel{
-							{
-								Name:  "__name__",
-								Value: "test_metric",
-							},
-							{
-								Name:  "foo",
-								Value: "bar",
-							},
-						},
-						Samples: []prompb.Sample{
-							{
-								Timestamp: 0,
-								Value:     1,
-							},
+						Labels: labelpb.FromStrings("__name__", "test_metric", "foo", "bar"),
+						Samples: []*prompb.Sample{
+							{Timestamp: 0, Value: 1},
 						},
 					},
 				},
 			},
-			expectedWriteRequest: prompb.WriteRequest{
-				Timeseries: []prompb.TimeSeries{
+			expectedWriteRequest: &prompb.WriteRequest{
+				Timeseries: []*prompb.TimeSeries{
 					{
-						Labels: []labelpb.ZLabel{
-							{
-								Name:  "__name__",
-								Value: "test_metric",
-							},
-							{
-								Name:  "foo",
-								Value: "bar",
-							},
-						},
-						Samples: []prompb.Sample{
-							{
-								Timestamp: 0,
-								Value:     1,
-							},
+						Labels: labelpb.FromStrings("__name__", "test_metric", "foo", "bar"),
+						Samples: []*prompb.Sample{
+							{Timestamp: 0, Value: 1},
 						},
 					},
 				},
@@ -1437,46 +1430,22 @@ func TestRelabel(t *testing.T) {
 					Replacement:  "baz",
 				},
 			},
-			writeRequest: prompb.WriteRequest{
-				Timeseries: []prompb.TimeSeries{
+			writeRequest: &prompb.WriteRequest{
+				Timeseries: []*prompb.TimeSeries{
 					{
-						Labels: []labelpb.ZLabel{
-							{
-								Name:  "__name__",
-								Value: "test_metric",
-							},
-							{
-								Name:  "foo",
-								Value: "bar",
-							},
-						},
-						Samples: []prompb.Sample{
-							{
-								Timestamp: 0,
-								Value:     1,
-							},
+						Labels: labelpb.FromStrings("__name__", "test_metric", "foo", "bar"),
+						Samples: []*prompb.Sample{
+							{Timestamp: 0, Value: 1},
 						},
 					},
 				},
 			},
-			expectedWriteRequest: prompb.WriteRequest{
-				Timeseries: []prompb.TimeSeries{
+			expectedWriteRequest: &prompb.WriteRequest{
+				Timeseries: []*prompb.TimeSeries{
 					{
-						Labels: []labelpb.ZLabel{
-							{
-								Name:  "__name__",
-								Value: "test_metric",
-							},
-							{
-								Name:  "foo",
-								Value: "bar",
-							},
-						},
-						Samples: []prompb.Sample{
-							{
-								Timestamp: 0,
-								Value:     1,
-							},
+						Labels: labelpb.FromStrings("__name__", "test_metric", "foo", "bar"),
+						Samples: []*prompb.Sample{
+							{Timestamp: 0, Value: 1},
 						},
 					},
 				},
@@ -1498,46 +1467,22 @@ func TestRelabel(t *testing.T) {
 					Replacement: "foo",
 				},
 			},
-			writeRequest: prompb.WriteRequest{
-				Timeseries: []prompb.TimeSeries{
+			writeRequest: &prompb.WriteRequest{
+				Timeseries: []*prompb.TimeSeries{
 					{
-						Labels: []labelpb.ZLabel{
-							{
-								Name:  "__name__",
-								Value: "test_metric",
-							},
-							{
-								Name:  "foo",
-								Value: "bar",
-							},
-						},
-						Samples: []prompb.Sample{
-							{
-								Timestamp: 0,
-								Value:     1,
-							},
+						Labels: labelpb.FromStrings("__name__", "test_metric", "foo", "bar"),
+						Samples: []*prompb.Sample{
+							{Timestamp: 0, Value: 1},
 						},
 					},
 				},
 			},
-			expectedWriteRequest: prompb.WriteRequest{
-				Timeseries: []prompb.TimeSeries{
+			expectedWriteRequest: &prompb.WriteRequest{
+				Timeseries: []*prompb.TimeSeries{
 					{
-						Labels: []labelpb.ZLabel{
-							{
-								Name:  "__name__",
-								Value: "foo",
-							},
-							{
-								Name:  "foo",
-								Value: "test",
-							},
-						},
-						Samples: []prompb.Sample{
-							{
-								Timestamp: 0,
-								Value:     1,
-							},
+						Labels: labelpb.FromStrings("__name__", "foo", "foo", "test"),
+						Samples: []*prompb.Sample{
+							{Timestamp: 0, Value: 1},
 						},
 					},
 				},
@@ -1551,42 +1496,22 @@ func TestRelabel(t *testing.T) {
 					Regex:  relabel.MustNewRegexp("foo"),
 				},
 			},
-			writeRequest: prompb.WriteRequest{
-				Timeseries: []prompb.TimeSeries{
+			writeRequest: &prompb.WriteRequest{
+				Timeseries: []*prompb.TimeSeries{
 					{
-						Labels: []labelpb.ZLabel{
-							{
-								Name:  "__name__",
-								Value: "test_metric",
-							},
-							{
-								Name:  "foo",
-								Value: "bar",
-							},
-						},
-						Samples: []prompb.Sample{
-							{
-								Timestamp: 0,
-								Value:     1,
-							},
+						Labels: labelpb.FromStrings("__name__", "test_metric", "foo", "bar"),
+						Samples: []*prompb.Sample{
+							{Timestamp: 0, Value: 1},
 						},
 					},
 				},
 			},
-			expectedWriteRequest: prompb.WriteRequest{
-				Timeseries: []prompb.TimeSeries{
+			expectedWriteRequest: &prompb.WriteRequest{
+				Timeseries: []*prompb.TimeSeries{
 					{
-						Labels: []labelpb.ZLabel{
-							{
-								Name:  "__name__",
-								Value: "test_metric",
-							},
-						},
-						Samples: []prompb.Sample{
-							{
-								Timestamp: 0,
-								Value:     1,
-							},
+						Labels: labelpb.FromStrings("__name__", "test_metric"),
+						Samples: []*prompb.Sample{
+							{Timestamp: 0, Value: 1},
 						},
 					},
 				},
@@ -1601,30 +1526,18 @@ func TestRelabel(t *testing.T) {
 					Regex:        relabel.MustNewRegexp("bar"),
 				},
 			},
-			writeRequest: prompb.WriteRequest{
-				Timeseries: []prompb.TimeSeries{
+			writeRequest: &prompb.WriteRequest{
+				Timeseries: []*prompb.TimeSeries{
 					{
-						Labels: []labelpb.ZLabel{
-							{
-								Name:  "__name__",
-								Value: "test_metric",
-							},
-							{
-								Name:  "foo",
-								Value: "bar",
-							},
-						},
-						Samples: []prompb.Sample{
-							{
-								Timestamp: 0,
-								Value:     1,
-							},
+						Labels: labelpb.FromStrings("__name__", "test_metric", "foo", "bar"),
+						Samples: []*prompb.Sample{
+							{Timestamp: 0, Value: 1},
 						},
 					},
 				},
 			},
-			expectedWriteRequest: prompb.WriteRequest{
-				Timeseries: []prompb.TimeSeries{},
+			expectedWriteRequest: &prompb.WriteRequest{
+				Timeseries: []*prompb.TimeSeries{},
 			},
 		},
 		{
@@ -1635,27 +1548,13 @@ func TestRelabel(t *testing.T) {
 					Regex:  relabel.MustNewRegexp("foo"),
 				},
 			},
-			writeRequest: prompb.WriteRequest{
-				Timeseries: []prompb.TimeSeries{
+			writeRequest: &prompb.WriteRequest{
+				Timeseries: []*prompb.TimeSeries{
 					{
-						Labels: []labelpb.ZLabel{
+						Labels: labelpb.FromStrings("__name__", "test_metric", "foo", "bar"),
+						Exemplars: []*prompb.Exemplar{
 							{
-								Name:  "__name__",
-								Value: "test_metric",
-							},
-							{
-								Name:  "foo",
-								Value: "bar",
-							},
-						},
-						Exemplars: []prompb.Exemplar{
-							{
-								Labels: []labelpb.ZLabel{
-									{
-										Name:  "traceID",
-										Value: "foo",
-									},
-								},
+								Labels:    labelpb.FromStrings("traceID", "foo"),
 								Value:     1,
 								Timestamp: 1,
 							},
@@ -1663,23 +1562,13 @@ func TestRelabel(t *testing.T) {
 					},
 				},
 			},
-			expectedWriteRequest: prompb.WriteRequest{
-				Timeseries: []prompb.TimeSeries{
+			expectedWriteRequest: &prompb.WriteRequest{
+				Timeseries: []*prompb.TimeSeries{
 					{
-						Labels: []labelpb.ZLabel{
+						Labels: labelpb.FromStrings("__name__", "test_metric"),
+						Exemplars: []*prompb.Exemplar{
 							{
-								Name:  "__name__",
-								Value: "test_metric",
-							},
-						},
-						Exemplars: []prompb.Exemplar{
-							{
-								Labels: []labelpb.ZLabel{
-									{
-										Name:  "traceID",
-										Value: "foo",
-									},
-								},
+								Labels:    labelpb.FromStrings("traceID", "foo"),
 								Value:     1,
 								Timestamp: 1,
 							},
@@ -1697,27 +1586,13 @@ func TestRelabel(t *testing.T) {
 					Regex:        relabel.MustNewRegexp("bar"),
 				},
 			},
-			writeRequest: prompb.WriteRequest{
-				Timeseries: []prompb.TimeSeries{
+			writeRequest: &prompb.WriteRequest{
+				Timeseries: []*prompb.TimeSeries{
 					{
-						Labels: []labelpb.ZLabel{
+						Labels: labelpb.FromStrings("__name__", "test_metric", "foo", "bar"),
+						Exemplars: []*prompb.Exemplar{
 							{
-								Name:  "__name__",
-								Value: "test_metric",
-							},
-							{
-								Name:  "foo",
-								Value: "bar",
-							},
-						},
-						Exemplars: []prompb.Exemplar{
-							{
-								Labels: []labelpb.ZLabel{
-									{
-										Name:  "traceID",
-										Value: "foo",
-									},
-								},
+								Labels:    labelpb.FromStrings("traceID", "foo"),
 								Value:     1,
 								Timestamp: 1,
 							},
@@ -1725,8 +1600,8 @@ func TestRelabel(t *testing.T) {
 					},
 				},
 			},
-			expectedWriteRequest: prompb.WriteRequest{
-				Timeseries: []prompb.TimeSeries{},
+			expectedWriteRequest: &prompb.WriteRequest{
+				Timeseries: []*prompb.TimeSeries{},
 			},
 		},
 	} {
@@ -1735,8 +1610,8 @@ func TestRelabel(t *testing.T) {
 				Relabeller: newRelabelerWithConstantConfig(tcase.relabel, nil),
 			})
 
-			h.relabel(&tcase.writeRequest)
-			testutil.Equals(t, tcase.expectedWriteRequest, tcase.writeRequest)
+			h.relabel(tcase.writeRequest)
+			thanostestutil.ProtoEquals(t, tcase.expectedWriteRequest, tcase.writeRequest)
 		})
 	}
 }
@@ -1859,25 +1734,30 @@ func TestDistributeSeries(t *testing.T) {
 	hr := &hashringSeenTenants{Hashring: hashring}
 	h.Hashring(hr)
 
-	_, remote, err := h.distributeTimeseriesToReplicas(
+	writes, err := h.distributeTimeseriesToReplicas(
 		"foo",
-		[]uint64{0},
-		[]prompb.TimeSeries{
+		replica{n: 0, replicated: true},
+		[]*prompb.TimeSeries{
 			{
-				Labels: labelpb.ZLabelsFromPromLabels(labels.FromStrings("a", "b", tenantIDLabelName, "bar")),
+				Labels: labelpb.FromStrings("a", "b", tenantIDLabelName, "bar"),
 			},
 			{
-				Labels: labelpb.ZLabelsFromPromLabels(labels.FromStrings("b", "a", tenantIDLabelName, "boo")),
+				Labels: labelpb.FromStrings("b", "a", tenantIDLabelName, "boo"),
 			},
 		},
 	)
 	require.NoError(t, err)
-	require.Len(t, remote, 1)
-	require.Len(t, remote[endpointReplica{endpoint: endpoint, replica: 0}][tenantIDLabelName+":bar"].timeSeries, 1)
-	require.Len(t, remote[endpointReplica{endpoint: endpoint, replica: 0}][tenantIDLabelName+":boo"].timeSeries, 1)
 
-	require.Equal(t, 2, labelpb.ZLabelsToPromLabels(remote[endpointReplica{endpoint: endpoint, replica: 0}][tenantIDLabelName+":bar"].timeSeries[0].Labels).Len())
-	require.Equal(t, 2, labelpb.ZLabelsToPromLabels(remote[endpointReplica{endpoint: endpoint, replica: 0}][tenantIDLabelName+":boo"].timeSeries[0].Labels).Len())
+	er := endpointReplica{endpoint: endpoint, replica: 0}
+	barKey := distributionKey{er: er, tenant: tenantIDLabelName + ":bar", local: false}
+	booKey := distributionKey{er: er, tenant: tenantIDLabelName + ":boo", local: false}
+
+	require.Len(t, writes, 2)
+	require.Len(t, writes[barKey].timeSeries, 1)
+	require.Len(t, writes[booKey].timeSeries, 1)
+
+	require.Equal(t, 2, len(writes[barKey].timeSeries[0].Labels))
+	require.Equal(t, 2, len(writes[booKey].timeSeries[0].Labels))
 
 	require.Equal(t, map[string]struct{}{tenantIDLabelName + ":bar": {}, tenantIDLabelName + ":boo": {}}, hr.seenTenants)
 }
@@ -1919,19 +1799,14 @@ func TestHandlerFlippingHashrings(t *testing.T) {
 				return
 			}
 
-			_, err := h.handleRequest(ctx, 0, "test", &prompb.WriteRequest{
-				Timeseries: []prompb.TimeSeries{
-					{
-						Labels: labelpb.ZLabelsFromPromLabels(labels.FromStrings("foo", "bar")),
-						Samples: []prompb.Sample{
-							{
-								Timestamp: time.Now().Unix(),
-								Value:     123,
-							},
-						},
+			_, err := h.handleRequest(ctx, 0, "test", []*prompb.TimeSeries{
+				{
+					Labels: labelpb.FromStrings("foo", "bar"),
+					Samples: []*prompb.Sample{
+						{Timestamp: time.Now().Unix(), Value: 123},
 					},
 				},
-			})
+			}, nil)
 			require.Error(t, err)
 		}
 	}()
@@ -1994,16 +1869,14 @@ func TestIngestorRestart(t *testing.T) {
 	defer client.Close()
 
 	ctx := context.TODO()
-	data := &prompb.WriteRequest{
-		Timeseries: []prompb.TimeSeries{
-			{
-				Labels:  labelpb.ZLabelsFromPromLabels(labels.FromStrings("foo", "bar")),
-				Samples: []prompb.Sample{{Timestamp: time.Now().Unix(), Value: 123}},
-			},
+	data := []*prompb.TimeSeries{
+		{
+			Labels:  labelpb.FromStrings("foo", "bar"),
+			Samples: []*prompb.Sample{{Timestamp: time.Now().Unix(), Value: 123}},
 		},
 	}
 
-	stats, err := client.handleRequest(ctx, 0, "test", data)
+	stats, err := client.handleRequest(ctx, 0, "test", data, nil)
 	require.NoError(t, err)
 	require.Equal(t, tenantRequestStats{
 		"test": requestStats{timeseries: 1, totalSamples: 1},
@@ -2018,7 +1891,7 @@ func TestIngestorRestart(t *testing.T) {
 
 	iter, errs := 10, 0
 	for i := 0; i < iter; i++ {
-		_, err = client.handleRequest(ctx, 0, "test", data)
+		_, err = client.handleRequest(ctx, 0, "test", data, nil)
 		if err != nil {
 			require.Error(t, errUnavailable, err)
 			errs++
@@ -2032,6 +1905,8 @@ func TestIngestorRestart(t *testing.T) {
 }
 
 type fakeStoreServer struct {
+	storepb.UnimplementedWriteableStoreServer
+
 	logger log.Logger
 }
 
@@ -2054,4 +1929,122 @@ func startIngestor(logger log.Logger, serverAddress string, delay time.Duration)
 		}
 	}()
 	return srv
+}
+
+// SIMPLE CASE: pooling disabled:
+// BenchmarkReceiveHTTPLargeBody/c:0.0MB_uc:0.0MB-32                 894674              6805 ns/op           5.00 MB/s        5191 B/op         60 allocs/op
+// SIMPLE CASE: pooling enabled:
+// BenchmarkReceiveHTTPLargeBody/c:0.0MB_uc:0.0MB-32                 979448              5973 ns/op           5.69 MB/s        3909 B/op         54 allocs/op
+// Next Iter.
+// BenchmarkReceiveHTTPLargeBody/c:0.0MB_uc:0.0MB-32                 200830              5821 ns/op           5.84 MB/s        3904 B/op         53 allocs/op
+// MOAR ITER
+// BenchmarkReceiveHTTPLargeBody/c:0.0MB_uc:0.0MB-32                 200000              5542 ns/op           6.13 MB/s        3473 B/op         51 allocs/op
+// BenchmarkReceiveHTTPLargeBody/c:0.0MB_uc:0.0MB-32                 200000              5727 ns/op           5.94 MB/s        3464 B/op         51 allocs/op
+// BenchmarkReceiveHTTPLargeBody/c:0.0MB_uc:0.0MB-32                 200000              5665 ns/op           6.00 MB/s        3373 B/op         50 allocs/op
+// BenchmarkReceiveHTTPLargeBody/c:0.0MB_uc:0.0MB-32                 200000              5616 ns/op           6.05 MB/s        2588 B/op         49 allocs/op
+// BenchmarkReceiveHTTPLargeBody/c:0.0MB_uc:0.0MB-32                 200000              5540 ns/op           6.14 MB/s        2580 B/op         49 allocs/op
+// Now on the LARGE size: (with all them optimizations)
+// BenchmarkReceiveHTTPLargeBody/c:0.0MB_uc:0.0MB-32                   1000            281270 ns/op          43.79 MB/s      309522 B/op       3358 allocs/op
+
+// VTProto introduced, with my basic optimizations, no pooling, etc.
+// BenchmarkReceiveHTTPLargeBody/c:0.0MB_uc:0.0MB-32                 200000              5918 ns/op           5.75 MB/s        3592 B/op         55 allocs/op
+// BenchmarkReceiveHTTPLargeBody/c:0.0MB_uc:0.0MB#01-32              200000            499428 ns/op          24.66 MB/s      397838 B/op       5479 allocs/op
+// VTProto introduced, WITHOUT my extra optimizations:
+// BenchmarkReceiveHTTPLargeBody/c:0.0MB_uc:0.0MB-32                 200000              6396 ns/op           5.32 MB/s        4034 B/op         58 allocs/op
+// BenchmarkReceiveHTTPLargeBody/c:0.0MB_uc:0.0MB#01-32              200000            503491 ns/op          24.46 MB/s      392868 B/op       5479 allocs/op
+// VTProto introduced, with extra extra optimizzations, and pooling:
+// BenchmarkReceiveHTTPLargeBody/c:0.0MB_uc:0.0MB-32                 200000              6383 ns/op           5.33 MB/s        3232 B/op         50 allocs/op
+// BenchmarkReceiveHTTPLargeBody/c:0.0MB_uc:0.0MB#01-32              200000            367150 ns/op          33.54 MB/s      187918 B/op       2376 allocs/op.
+func BenchmarkReceiveHTTPLargeBody(b *testing.B) {
+	tests := []struct {
+		namePrefix       string
+		numSeries        int
+		samplesPerSeries int
+		labelsPerSeries  int
+	}{
+		{
+			namePrefix:       "single",
+			numSeries:        1,
+			samplesPerSeries: 1,
+			labelsPerSeries:  1,
+		},
+		{
+			namePrefix:       "medium-small",
+			numSeries:        100,
+			samplesPerSeries: 10,
+			labelsPerSeries:  10,
+		},
+	}
+
+	appendables := []*fakeAppendable{
+		{appender: newFakeAppender(nil, nil, nil)},
+	}
+	handlers, _, closeFunc, err := newTestHandlerHashring(appendables, 1, AlgorithmHashmod, false)
+	if err != nil {
+		b.Fatalf("unable to create test handler: %v", err)
+	}
+	defer func() {
+		if err := closeFunc(); err != nil {
+			b.Fatal(err)
+		}
+		for _, h := range handlers {
+			h.Close()
+		}
+	}()
+	handler := handlers[0]
+	handler.logger = log.NewNopLogger()
+	handler.options.DefaultTenantID = "bench-large-body"
+	for _, tc := range tests {
+		wreq := buildLargeWriteRequest(tc.numSeries, tc.samplesPerSeries, tc.labelsPerSeries)
+		body, err := wreq.MarshalVT()
+		if err != nil {
+			b.Fatalf("marshal: %v", err)
+		}
+		compressed := snappy.Encode(nil, body)
+
+		name := fmt.Sprintf("c:%.1fMB_uc:%.1fMB", float64(len(compressed))/(1024*1024), float64(len(body))/(1024*1024))
+		b.Run(name, func(b *testing.B) {
+			b.SetBytes(int64(len(compressed)))
+			rec := httptest.NewRecorder()
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				handler.receiveHTTP(rec, &http.Request{
+					ContentLength: int64(len(compressed)),
+					Body:          io.NopCloser(bytes.NewReader(compressed)),
+				})
+				if rec.Code != http.StatusOK {
+					b.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+				}
+			}
+		})
+	}
+}
+
+func buildLargeWriteRequest(numSeries, samplesPerSeries, labelsPerSeries int) *prompb.WriteRequest {
+	wreq := &prompb.WriteRequest{
+		Timeseries: make([]*prompb.TimeSeries, numSeries),
+	}
+	for s := 0; s < numSeries; s++ {
+		lbls := make([]*labelpb.Label, labelsPerSeries)
+		lbls[0] = &labelpb.Label{Name: "__name__", Value: fmt.Sprintf("bench_metric_%d", s)}
+		for l := 1; l < labelsPerSeries; l++ {
+			lbls[l] = &labelpb.Label{
+				Name:  fmt.Sprintf("label_%03d", l),
+				Value: fmt.Sprintf("val_%03d_%06d", l, s),
+			}
+		}
+		samples := make([]*prompb.Sample, samplesPerSeries)
+		for i := 0; i < samplesPerSeries; i++ {
+			samples[i] = &prompb.Sample{
+				Value:     float64(i),
+				Timestamp: int64(s*samplesPerSeries + i),
+			}
+		}
+		wreq.Timeseries[s] = &prompb.TimeSeries{
+			Labels:  lbls,
+			Samples: samples,
+		}
+	}
+	return wreq
 }

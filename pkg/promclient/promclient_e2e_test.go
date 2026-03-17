@@ -59,7 +59,7 @@ func TestExternalLabels_e2e(t *testing.T) {
 		ext, err := NewDefaultClient().ExternalLabels(context.Background(), u)
 		testutil.Ok(t, err)
 
-		testutil.Equals(t, 2, ext.Len())
+		testutil.Equals(t, 2, len(ext))
 		testutil.Equals(t, "eu-west", ext.Get("region"))
 		testutil.Equals(t, "1", ext.Get("az"))
 	})

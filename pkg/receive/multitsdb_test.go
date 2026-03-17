@@ -37,6 +37,7 @@ import (
 	"github.com/thanos-io/thanos/pkg/store"
 	"github.com/thanos-io/thanos/pkg/store/labelpb"
 	"github.com/thanos-io/thanos/pkg/store/storepb"
+	thanostestutil "github.com/thanos-io/thanos/pkg/testutil"
 )
 
 func TestMultiTSDB(t *testing.T) {
@@ -53,7 +54,7 @@ func TestMultiTSDB(t *testing.T) {
 			NoLockfile:            true,
 			MaxExemplars:          100,
 			EnableExemplarStorage: true,
-		}, labels.FromStrings("replica", "01"), "tenant_id", nil, false, metadata.NoneFunc)
+		}, labelpb.FromStrings("replica", "01"), "tenant_id", nil, false, metadata.NoneFunc)
 		defer func() { testutil.Ok(t, m.Close()) }()
 
 		testutil.Ok(t, m.Flush())
@@ -132,7 +133,7 @@ func TestMultiTSDB(t *testing.T) {
 				RetentionDuration: (6 * time.Hour).Milliseconds(),
 				NoLockfile:        true,
 			},
-			labels.FromStrings("replica", "01"),
+			labelpb.FromStrings("replica", "01"),
 			"tenant_id",
 			nil,
 			false,
@@ -173,7 +174,7 @@ func TestMultiTSDB(t *testing.T) {
 			MaxBlockDuration:  (2 * time.Hour).Milliseconds(),
 			RetentionDuration: (6 * time.Hour).Milliseconds(),
 			NoLockfile:        true,
-		}, labels.FromStrings("replica", "01"), "tenant_id", nil, false, metadata.NoneFunc)
+		}, labelpb.FromStrings("replica", "01"), "tenant_id", nil, false, metadata.NoneFunc)
 		defer func() { testutil.Ok(t, m.Close()) }()
 
 		testutil.Ok(t, m.Flush())
@@ -191,12 +192,22 @@ func TestMultiTSDB(t *testing.T) {
 
 var (
 	expectedFooResp = &storepb.Series{
-		Labels: []labelpb.ZLabel{{Name: "a", Value: "1"}, {Name: "b", Value: "2"}, {Name: "replica", Value: "01"}, {Name: "tenant_id", Value: "foo"}},
-		Chunks: []storepb.AggrChunk{{MinTime: 1, MaxTime: 3, Raw: &storepb.Chunk{Data: []byte("\000\003\002@\003L\235\2354X\315\001\330\r\257Mui\251\327:U"), Hash: 9768694233508509040}}},
+		Labels: labelpb.Labels{
+			{Name: "a", Value: "1"},
+			{Name: "b", Value: "2"},
+			{Name: "replica", Value: "01"},
+			{Name: "tenant_id", Value: "foo"},
+		},
+		Chunks: []*storepb.AggrChunk{{MinTime: 1, MaxTime: 3, Raw: &storepb.Chunk{Data: []byte("\000\003\002@\003L\235\2354X\315\001\330\r\257Mui\251\327:U"), Hash: 9768694233508509040}}},
 	}
 	expectedBarResp = &storepb.Series{
-		Labels: []labelpb.ZLabel{{Name: "a", Value: "1"}, {Name: "b", Value: "2"}, {Name: "replica", Value: "01"}, {Name: "tenant_id", Value: "bar"}},
-		Chunks: []storepb.AggrChunk{{MinTime: 1, MaxTime: 3, Raw: &storepb.Chunk{Data: []byte("\000\003\002@4i\223\263\246\213\032\001\330\035i\337\322\352\323S\256t\270"), Hash: 2304287992246504442}}},
+		Labels: labelpb.Labels{
+			{Name: "a", Value: "1"},
+			{Name: "b", Value: "2"},
+			{Name: "replica", Value: "01"},
+			{Name: "tenant_id", Value: "bar"},
+		},
+		Chunks: []*storepb.AggrChunk{{MinTime: 1, MaxTime: 3, Raw: &storepb.Chunk{Data: []byte("\000\003\002@4i\223\263\246\213\032\001\330\035i\337\322\352\323S\256t\270"), Hash: 2304287992246504442}}},
 	}
 )
 
@@ -236,12 +247,12 @@ Outer:
 			if !ok {
 				break Outer
 			}
-			testutil.Equals(t, expectedFooResp, r)
+			thanostestutil.ProtoEquals(t, expectedFooResp, r)
 		case r, ok := <-respBar:
 			if !ok {
 				break Outer
 			}
-			testutil.Equals(t, expectedBarResp, r)
+			thanostestutil.ProtoEquals(t, expectedBarResp, r)
 		}
 	}
 	testutil.Ok(t, err)
@@ -251,7 +262,7 @@ func getResponses(storeClient store.Client, respCh chan<- *storepb.Series) error
 	sc, err := storeClient.Series(context.Background(), &storepb.SeriesRequest{
 		MinTime:  0,
 		MaxTime:  10,
-		Matchers: []storepb.LabelMatcher{{Name: "a", Value: ".*", Type: storepb.LabelMatcher_RE}},
+		Matchers: []*storepb.LabelMatcher{{Name: "a", Value: ".*", Type: storepb.LabelMatcher_RE}},
 	})
 	if err != nil {
 		return err
@@ -274,9 +285,9 @@ func getResponses(storeClient store.Client, respCh chan<- *storepb.Series) error
 }
 
 var (
-	expectedFooRespExemplars = []exemplarspb.ExemplarData{
+	expectedFooRespExemplars = []*exemplarspb.ExemplarData{
 		{
-			SeriesLabels: labelpb.ZLabelSet{Labels: []labelpb.ZLabel{{Name: "a", Value: "1"}, {Name: "b", Value: "2"}, {Name: "replica", Value: "01"}, {Name: "tenant_id", Value: "foo"}}},
+			SeriesLabels: labelpb.LabelSetFromStrings("a", "1", "b", "2", "replica", "01", "tenant_id", "foo"),
 			Exemplars: []*exemplarspb.Exemplar{
 				{Value: 1, Ts: 1},
 				{Value: 2.1212, Ts: 2},
@@ -284,13 +295,13 @@ var (
 			},
 		},
 	}
-	expectedBarRespExemplars = []exemplarspb.ExemplarData{
+	expectedBarRespExemplars = []*exemplarspb.ExemplarData{
 		{
-			SeriesLabels: labelpb.ZLabelSet{Labels: []labelpb.ZLabel{{Name: "a", Value: "1"}, {Name: "b", Value: "2"}, {Name: "replica", Value: "01"}, {Name: "tenant_id", Value: "bar"}}},
+			SeriesLabels: labelpb.LabelSetFromStrings("a", "1", "b", "2", "replica", "01", "tenant_id", "bar"),
 			Exemplars: []*exemplarspb.Exemplar{
-				{Value: 11, Ts: 1, Labels: labelpb.ZLabelSet{Labels: []labelpb.ZLabel{{Name: "traceID", Value: "abc"}}}},
-				{Value: 22.1212, Ts: 2, Labels: labelpb.ZLabelSet{Labels: []labelpb.ZLabel{{Name: "traceID", Value: "def"}}}},
-				{Value: 33.1313, Ts: 3, Labels: labelpb.ZLabelSet{Labels: []labelpb.ZLabel{{Name: "traceID", Value: "ghi"}}}},
+				{Value: 11, Ts: 1, Labels: labelpb.LabelSetFromStrings("traceID", "abc")},
+				{Value: 22.1212, Ts: 2, Labels: labelpb.LabelSetFromStrings("traceID", "def")},
+				{Value: 33.1313, Ts: 3, Labels: labelpb.LabelSetFromStrings("traceID", "ghi")},
 			},
 		},
 	}
@@ -298,8 +309,8 @@ var (
 
 func testMultiTSDBExemplars(t *testing.T, m *MultiTSDB) {
 	g := &errgroup.Group{}
-	respFoo := make(chan []exemplarspb.ExemplarData)
-	respBar := make(chan []exemplarspb.ExemplarData)
+	respFoo := make(chan []*exemplarspb.ExemplarData)
+	respBar := make(chan []*exemplarspb.ExemplarData)
 	for i := 0; i < 100; i++ {
 		s := m.TSDBExemplars()
 		testutil.Assert(t, len(s) == 2)
@@ -362,7 +373,7 @@ type exemplarsServer struct {
 
 	ctx context.Context
 
-	Data     []exemplarspb.ExemplarData
+	Data     []*exemplarspb.ExemplarData
 	Warnings []string
 
 	Size int64
@@ -373,7 +384,7 @@ func newExemplarsServer(ctx context.Context) *exemplarsServer {
 }
 
 func (e *exemplarsServer) Send(r *exemplarspb.ExemplarsResponse) error {
-	e.Size += int64(r.Size())
+	e.Size += int64(r.SizeVT())
 
 	if r.GetWarning() != "" {
 		e.Warnings = append(e.Warnings, r.GetWarning())
@@ -381,7 +392,7 @@ func (e *exemplarsServer) Send(r *exemplarspb.ExemplarsResponse) error {
 	}
 
 	if r.GetData() != nil {
-		e.Data = append(e.Data, *r.GetData())
+		e.Data = append(e.Data, r.GetData())
 		return nil
 	}
 
@@ -393,13 +404,13 @@ func (s *exemplarsServer) Context() context.Context {
 	return s.ctx
 }
 
-func checkExemplarsResponse(t *testing.T, expected, data []exemplarspb.ExemplarData) {
+func checkExemplarsResponse(t *testing.T, expected, data []*exemplarspb.ExemplarData) {
 	testutil.Equals(t, len(expected), len(data))
 	for i := range data {
-		testutil.Equals(t, expected[i].SeriesLabels, data[i].SeriesLabels)
+		thanostestutil.ProtoEquals(t, expected[i].SeriesLabels, data[i].SeriesLabels)
 		testutil.Equals(t, len(expected[i].Exemplars), len(data[i].Exemplars))
 		for j := range data[i].Exemplars {
-			testutil.Equals(t, *expected[i].Exemplars[j], *data[i].Exemplars[j])
+			thanostestutil.ProtoEquals(t, expected[i].Exemplars[j], data[i].Exemplars[j])
 		}
 	}
 }
@@ -437,7 +448,7 @@ func TestMultiTSDBPrune(t *testing.T) {
 					MaxBlockDuration:  (2 * time.Hour).Milliseconds(),
 					RetentionDuration: (6 * time.Hour).Milliseconds(),
 				},
-				labels.FromStrings("replica", "test"),
+				labelpb.FromStrings("replica", "test"),
 				"tenant_id",
 				test.bucket,
 				false,
@@ -512,7 +523,7 @@ func TestMultiTSDBRecreatePrunedTenant(t *testing.T) {
 			MaxBlockDuration:  (2 * time.Hour).Milliseconds(),
 			RetentionDuration: (6 * time.Hour).Milliseconds(),
 		},
-		labels.FromStrings("replica", "test"),
+		labelpb.FromStrings("replica", "test"),
 		"tenant_id",
 		objstore.NewInMemBucket(),
 		false,
@@ -541,7 +552,7 @@ func TestMultiTSDBAddNewTenant(t *testing.T) {
 					MaxBlockDuration:  (2 * time.Hour).Milliseconds(),
 					RetentionDuration: (6 * time.Hour).Milliseconds(),
 				},
-				labels.FromStrings("replica", "test"),
+				labelpb.FromStrings("replica", "test"),
 				"tenant_id",
 				objstore.NewInMemBucket(),
 				false,
@@ -616,7 +627,7 @@ func TestAlignedHeadFlush(t *testing.T) {
 					MaxBlockDuration:  (2 * time.Hour).Milliseconds(),
 					RetentionDuration: (6 * time.Hour).Milliseconds(),
 				},
-				labels.FromStrings("replica", "test"),
+				labelpb.FromStrings("replica", "test"),
 				"tenant_id",
 				test.bucket,
 				false,
@@ -692,7 +703,7 @@ func TestMultiTSDBStats(t *testing.T) {
 					MaxBlockDuration:  (2 * time.Hour).Milliseconds(),
 					RetentionDuration: (6 * time.Hour).Milliseconds(),
 				},
-				labels.FromStrings("replica", "test"),
+				labelpb.FromStrings("replica", "test"),
 				"tenant_id",
 				nil,
 				false,
@@ -723,7 +734,7 @@ func TestMultiTSDBWithNilStore(t *testing.T) {
 			MaxBlockDuration:  (2 * time.Hour).Milliseconds(),
 			RetentionDuration: (6 * time.Hour).Milliseconds(),
 		},
-		labels.FromStrings("replica", "test"),
+		labelpb.FromStrings("replica", "test"),
 		"tenant_id",
 		nil,
 		false,
@@ -766,7 +777,7 @@ func TestProxyLabelValues(t *testing.T) {
 			MaxBlockDuration:  5 * time.Minute.Milliseconds(),
 			NoLockfile:        true,
 		},
-		labels.FromStrings("replica", "01"),
+		labelpb.FromStrings("replica", "01"),
 		"tenant_id",
 		nil,
 		false,
@@ -837,7 +848,7 @@ func queryLabelValues(ctx context.Context, m *MultiTSDB) error {
 			clients[0] = &slowClient{clients[0]}
 		}
 		return clients
-	}, component.Store, labels.EmptyLabels(), 1*time.Minute, store.LazyRetrieval)
+	}, component.Store, labelpb.EmptyLabels(), 1*time.Minute, store.LazyRetrieval)
 
 	req := &storepb.LabelValuesRequest{
 		Label: labels.MetricName,
@@ -859,7 +870,7 @@ func BenchmarkMultiTSDB(b *testing.B) {
 		MaxBlockDuration:  (2 * time.Hour).Milliseconds(),
 		RetentionDuration: (6 * time.Hour).Milliseconds(),
 		NoLockfile:        true,
-	}, labels.FromStrings("replica", "test"),
+	}, labelpb.FromStrings("replica", "test"),
 		"tenant_id",
 		nil,
 		false,
@@ -962,7 +973,7 @@ func TestMultiTSDBBlockedTenantUploads(t *testing.T) {
 			MaxBlockDuration:  (2 * time.Hour).Milliseconds(),
 			RetentionDuration: (6 * time.Hour).Milliseconds(),
 		},
-		labels.FromStrings("replica", "test"),
+		labelpb.FromStrings("replica", "test"),
 		"tenant_id",
 		bucket,
 		false,
@@ -1063,7 +1074,7 @@ func TestMultiTSDBNoUploadTenantsPrefix(t *testing.T) {
 			MaxBlockDuration:  (2 * time.Hour).Milliseconds(),
 			RetentionDuration: (6 * time.Hour).Milliseconds(),
 		},
-		labels.FromStrings("replica", "test"),
+		labelpb.FromStrings("replica", "test"),
 		"tenant_id",
 		bucket,
 		false,
@@ -1113,7 +1124,7 @@ func TestNoUploadTenantsRetentionStillWorks(t *testing.T) {
 			MaxBlockDuration:  (2 * time.Hour).Milliseconds(),
 			RetentionDuration: (6 * time.Hour).Milliseconds(),
 		},
-		labels.FromStrings("replica", "test"),
+		labelpb.FromStrings("replica", "test"),
 		"tenant_id",
 		bucket,
 		false,
@@ -1158,7 +1169,7 @@ func TestTenantBucketPrefixInUpload(t *testing.T) {
 			MaxBlockDuration:  (2 * time.Hour).Milliseconds(),
 			RetentionDuration: (6 * time.Hour).Milliseconds(),
 		},
-		labels.FromStrings("replica", "test"),
+		labelpb.FromStrings("replica", "test"),
 		"tenant_id",
 		bucket,
 		false,
@@ -1262,7 +1273,7 @@ func TestMultiTSDBSkipsLostAndFound(t *testing.T) {
 			MaxBlockDuration:  (2 * time.Hour).Milliseconds(),
 			RetentionDuration: (6 * time.Hour).Milliseconds(),
 		},
-		labels.FromStrings("replica", "test"),
+		labelpb.FromStrings("replica", "test"),
 		"tenant_id",
 		nil,
 		false,
@@ -1289,7 +1300,7 @@ func TestMultiTSDBCompactionDelayInterval(t *testing.T) {
 		MinBlockDuration:  (2 * time.Hour).Milliseconds(),
 		MaxBlockDuration:  (2 * time.Hour).Milliseconds(),
 		RetentionDuration: (6 * time.Hour).Milliseconds(),
-	}, labels.FromStrings("replica", "test"), "tenant_id", nil, false, metadata.NoneFunc,
+	}, labelpb.FromStrings("replica", "test"), "tenant_id", nil, false, metadata.NoneFunc,
 		WithCompactionDelayInterval(interval))
 	t.Cleanup(func() {
 		testutil.Ok(t, m.Close())

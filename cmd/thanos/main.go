@@ -30,6 +30,7 @@ import (
 	"github.com/thanos-io/thanos/pkg/extkingpin"
 	"github.com/thanos-io/thanos/pkg/logging"
 	"github.com/thanos-io/thanos/pkg/tracing/client"
+	_ "github.com/thanos-io/thanos/pkg/vtproto"
 )
 
 func main() {

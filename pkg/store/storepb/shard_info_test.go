@@ -9,21 +9,20 @@ import (
 
 	"github.com/alecthomas/units"
 
-	"github.com/prometheus/prometheus/model/labels"
 	"github.com/thanos-io/thanos/pkg/store/labelpb"
 )
 
 func TestShardInfo_MatchesSeries(t *testing.T) {
-	series := labelpb.ZLabelsFromPromLabels(labels.FromStrings(
-		"pod", "nginx",
-		"node", "node-1",
+	series := labelpb.FromStrings(
 		"container", "nginx",
-	))
+		"node", "node-1",
+		"pod", "nginx",
+	)
 
 	tests := []struct {
 		name      string
 		shardInfo *ShardInfo
-		series    []labelpb.ZLabel
+		series    labelpb.Labels
 		matches   bool
 	}{
 		{
@@ -118,7 +117,7 @@ func TestShardInfo_MatchesSeries(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			matcher := test.shardInfo.Matcher(&buffers)
 			defer matcher.Close()
-			isMatch := matcher.MatchesZLabels(test.series)
+			isMatch := matcher.MatchesLabels(test.series)
 			if isMatch != test.matches {
 				t.Fatalf("invalid result, got %t, want %t", isMatch, test.matches)
 			}

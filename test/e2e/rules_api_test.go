@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"sort"
 	"testing"
 	"time"
@@ -16,8 +15,11 @@ import (
 	"github.com/efficientgo/e2e"
 	e2emon "github.com/efficientgo/e2e/monitoring"
 	"github.com/go-kit/log"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/rules"
+	"google.golang.org/protobuf/testing/protocmp"
 
 	"github.com/efficientgo/core/testutil"
 	"github.com/thanos-io/thanos/pkg/clientconfig"
@@ -101,13 +103,10 @@ func TestRulesAPI_Fanout(t *testing.T) {
 			File: q.Dir() + "/rules/rules.yaml",
 			Rules: []*rulespb.Rule{
 				rulespb.NewAlertingRule(&rulespb.Alert{
-					Name:  "TestAlert_AbortOnPartialResponse",
-					State: rulespb.AlertState_FIRING,
-					Query: "absent(some_metric)",
-					Labels: labelpb.ZLabelSet{Labels: []labelpb.ZLabel{
-						{Name: "prometheus", Value: "ha"},
-						{Name: "severity", Value: "page"},
-					}},
+					Name:   "TestAlert_AbortOnPartialResponse",
+					State:  rulespb.AlertState_FIRING,
+					Query:  "absent(some_metric)",
+					Labels: labelpb.LabelSetFromStrings("prometheus", "ha", "severity", "page"),
 					Health: string(rules.HealthGood),
 				}),
 			},
@@ -117,12 +116,10 @@ func TestRulesAPI_Fanout(t *testing.T) {
 			File: q.Dir() + "/thanos-rules/rules-0.yaml",
 			Rules: []*rulespb.Rule{
 				rulespb.NewAlertingRule(&rulespb.Alert{
-					Name:  "TestAlert_AbortOnPartialResponse",
-					State: rulespb.AlertState_FIRING,
-					Query: "absent(some_metric)",
-					Labels: labelpb.ZLabelSet{Labels: []labelpb.ZLabel{
-						{Name: "severity", Value: "page"},
-					}},
+					Name:   "TestAlert_AbortOnPartialResponse",
+					State:  rulespb.AlertState_FIRING,
+					Query:  "absent(some_metric)",
+					Labels: labelpb.LabelSetFromStrings("severity", "page"),
 					Health: string(rules.HealthGood),
 				}),
 			},
@@ -132,12 +129,10 @@ func TestRulesAPI_Fanout(t *testing.T) {
 			File: q.Dir() + "/thanos-rules/rules-1.yaml",
 			Rules: []*rulespb.Rule{
 				rulespb.NewAlertingRule(&rulespb.Alert{
-					Name:  "TestAlert_WarnOnPartialResponse",
-					State: rulespb.AlertState_FIRING,
-					Query: "absent(some_metric)",
-					Labels: labelpb.ZLabelSet{Labels: []labelpb.ZLabel{
-						{Name: "severity", Value: "page"},
-					}},
+					Name:   "TestAlert_WarnOnPartialResponse",
+					State:  rulespb.AlertState_FIRING,
+					Query:  "absent(some_metric)",
+					Labels: labelpb.LabelSetFromStrings("severity", "page"),
 					Health: string(rules.HealthGood),
 				}),
 			},
@@ -148,12 +143,10 @@ func TestRulesAPI_Fanout(t *testing.T) {
 			Limit: 1,
 			Rules: []*rulespb.Rule{
 				rulespb.NewAlertingRule(&rulespb.Alert{
-					Name:  "TestAlert_WithLimit",
-					State: rulespb.AlertState_INACTIVE,
-					Query: `promhttp_metric_handler_requests_total`,
-					Labels: labelpb.ZLabelSet{Labels: []labelpb.ZLabel{
-						{Name: "severity", Value: "page"},
-					}},
+					Name:   "TestAlert_WithLimit",
+					State:  rulespb.AlertState_INACTIVE,
+					Query:  `promhttp_metric_handler_requests_total`,
+					Labels: labelpb.LabelSetFromStrings("severity", "page"),
 					Health: string(rules.HealthBad),
 				}),
 			},
@@ -184,7 +177,7 @@ func ruleAndAssert(t *testing.T, ctx context.Context, addr, typ string, want []*
 		}
 
 		for ig, g := range res {
-			res[ig].LastEvaluation = time.Time{}
+			res[ig].LastEvaluation = nil
 			res[ig].EvaluationDurationSeconds = 0
 			res[ig].Interval = 0
 			res[ig].PartialResponseStrategy = 0
@@ -211,8 +204,8 @@ func ruleAndAssert(t *testing.T, ctx context.Context, addr, typ string, want []*
 			}
 		}
 
-		if !reflect.DeepEqual(want, res) {
-			return errors.Errorf("unexpected result\nwant %v\ngot: %v", want, res)
+		if diff := cmp.Diff(want, res, protocmp.Transform(), cmpopts.EquateEmpty()); diff != "" {
+			return errors.Errorf("unexpected result (-want +got):\n%s", diff)
 		}
 
 		return nil

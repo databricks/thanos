@@ -6,18 +6,19 @@ package query
 import (
 	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/model/histogram"
-	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
 	"github.com/prometheus/prometheus/util/annotations"
 
 	"github.com/thanos-io/thanos/pkg/compact/downsample"
 	"github.com/thanos-io/thanos/pkg/dedup"
+	"github.com/thanos-io/thanos/pkg/store/labelpb"
 	"github.com/thanos-io/thanos/pkg/store/storepb"
 )
 
-// promSeriesSet implements the SeriesSet interface of the Prometheus storage
-// package on top of our storepb SeriesSet. Overlapping chunks will be naively deduplicated (random selection).
+// promSeriesSet converts a storepb.SeriesSet (chunk-level) into a
+// dedup.SeriesSet (sample-level) by decoding chunks into iterators.
+// Overlapping chunks will be naively deduplicated (random selection).
 type promSeriesSet struct {
 	set storepb.SeriesSet
 
@@ -27,8 +28,8 @@ type promSeriesSet struct {
 	warns annotations.Annotations
 }
 
-// NewPromSeriesSet constructs a promSeriesSet.
-func NewPromSeriesSet(seriesSet storepb.SeriesSet, mint, maxt int64, aggrs []storepb.Aggr, warns annotations.Annotations) storage.SeriesSet {
+// NewPromSeriesSet constructs a promSeriesSet that implements dedup.SeriesSet.
+func NewPromSeriesSet(seriesSet storepb.SeriesSet, mint, maxt int64, aggrs []storepb.Aggr, warns annotations.Annotations) dedup.SeriesSet {
 	return &promSeriesSet{
 		set:   seriesSet,
 		mint:  mint,
@@ -42,7 +43,7 @@ func (s *promSeriesSet) Next() bool {
 	return s.set.Next()
 }
 
-func (s *promSeriesSet) At() storage.Series {
+func (s *promSeriesSet) At() dedup.Series {
 	if s.set.Err() != nil {
 		return nil
 	}
@@ -82,20 +83,20 @@ func (*storeSeriesSet) Err() error {
 	return nil
 }
 
-func (s *storeSeriesSet) At() (labels.Labels, []storepb.AggrChunk) {
+func (s *storeSeriesSet) At() (labelpb.Labels, []*storepb.AggrChunk) {
 	return s.series[s.i].PromLabels(), s.series[s.i].Chunks
 }
 
-// chunkSeries implements storage.Series for a series on storepb types.
+// chunkSeries implements dedup.Series for a series on storepb types.
 type chunkSeries struct {
-	lset       labels.Labels
-	chunks     []storepb.AggrChunk
+	lset       labelpb.Labels
+	chunks     []*storepb.AggrChunk
 	mint, maxt int64
 	aggrs      []storepb.Aggr
 }
 
 // newChunkSeries allows to iterate over samples for each sorted and non-overlapped chunks.
-func newChunkSeries(lset labels.Labels, chunks []storepb.AggrChunk, mint, maxt int64, aggrs []storepb.Aggr) *chunkSeries {
+func newChunkSeries(lset labelpb.Labels, chunks []*storepb.AggrChunk, mint, maxt int64, aggrs []storepb.Aggr) *chunkSeries {
 	return &chunkSeries{
 		lset:   lset,
 		chunks: chunks,
@@ -105,7 +106,7 @@ func newChunkSeries(lset labels.Labels, chunks []storepb.AggrChunk, mint, maxt i
 	}
 }
 
-func (s *chunkSeries) Labels() labels.Labels {
+func (s *chunkSeries) Labels() labelpb.Labels {
 	return s.lset
 }
 

@@ -20,26 +20,26 @@ import (
 type TSDB struct {
 	db storage.ExemplarQueryable
 
-	extLabels labels.Labels
+	extLabels labelpb.Labels
 	mtx       sync.RWMutex
 }
 
 // NewTSDB creates new exemplars.TSDB.
-func NewTSDB(db storage.ExemplarQueryable, extLabels labels.Labels) *TSDB {
+func NewTSDB(db storage.ExemplarQueryable, extLabels labelpb.Labels) *TSDB {
 	return &TSDB{
 		db:        db,
 		extLabels: extLabels,
 	}
 }
 
-func (t *TSDB) SetExtLabels(extLabels labels.Labels) {
+func (t *TSDB) SetExtLabels(extLabels labelpb.Labels) {
 	t.mtx.Lock()
 	defer t.mtx.Unlock()
 
 	t.extLabels = extLabels
 }
 
-func (t *TSDB) getExtLabels() labels.Labels {
+func (t *TSDB) getExtLabels() labelpb.Labels {
 	t.mtx.RLock()
 	defer t.mtx.RUnlock()
 
@@ -70,8 +70,8 @@ func (t *TSDB) Exemplars(matchers [][]*labels.Matcher, start, end int64, s exemp
 
 	for _, e := range exemplars {
 		exd := exemplarspb.ExemplarData{
-			SeriesLabels: labelpb.ZLabelSet{
-				Labels: labelpb.ZLabelsFromPromLabels(labelpb.ExtendSortedLabels(e.SeriesLabels, t.getExtLabels())),
+			SeriesLabels: &labelpb.LabelSet{
+				Labels: labelpb.ExtendSortedLabels(labelpb.FromPromLabels(e.SeriesLabels), t.getExtLabels()),
 			},
 			Exemplars: exemplarspb.ExemplarsFromPromExemplars(e.Exemplars),
 		}
@@ -84,7 +84,7 @@ func (t *TSDB) Exemplars(matchers [][]*labels.Matcher, start, end int64, s exemp
 
 // selectorsMatchesExternalLabels returns false if none of the selectors matches the external labels.
 // If true, it also returns an array of non-empty Prometheus matchers.
-func selectorsMatchesExternalLabels(selectors [][]*labels.Matcher, externalLabels labels.Labels) (bool, [][]*labels.Matcher) {
+func selectorsMatchesExternalLabels(selectors [][]*labels.Matcher, externalLabels labelpb.Labels) (bool, [][]*labels.Matcher) {
 	matchedOnce := false
 
 	var newSelectors [][]*labels.Matcher

@@ -22,7 +22,6 @@ import (
 	"github.com/oklog/ulid"
 	"github.com/prometheus/client_golang/prometheus"
 	promtest "github.com/prometheus/client_golang/prometheus/testutil"
-	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/model/timestamp"
 	"github.com/prometheus/prometheus/tsdb"
 
@@ -32,6 +31,7 @@ import (
 	"github.com/efficientgo/core/testutil"
 	"github.com/thanos-io/thanos/pkg/block"
 	"github.com/thanos-io/thanos/pkg/block/metadata"
+	"github.com/thanos-io/thanos/pkg/store/labelpb"
 	"github.com/thanos-io/thanos/pkg/testutil/e2eutil"
 )
 
@@ -43,8 +43,8 @@ func TestShipper_SyncBlocks_e2e(t *testing.T) {
 
 		dir := t.TempDir()
 
-		extLset := labels.FromStrings("prometheus", "prom-1")
-		shipper := New(log.NewLogfmtLogger(os.Stderr), nil, dir, metricsBucket, func() labels.Labels { return extLset }, metadata.TestSource, nil, false, metadata.NoneFunc, DefaultMetaFilename)
+		extLset := labelpb.FromStrings("prometheus", "prom-1")
+		shipper := New(log.NewLogfmtLogger(os.Stderr), nil, dir, metricsBucket, func() labelpb.Labels { return extLset }, metadata.TestSource, nil, false, metadata.NoneFunc, DefaultMetaFilename)
 
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
@@ -203,7 +203,7 @@ func TestShipper_SyncBlocksWithMigrating_e2e(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		extLset := labels.FromStrings("prometheus", "prom-1")
+		extLset := labelpb.FromStrings("prometheus", "prom-1")
 
 		logger := log.NewNopLogger()
 		testutil.Ok(t, p.Start(context.Background(), logger))
@@ -212,7 +212,7 @@ func TestShipper_SyncBlocksWithMigrating_e2e(t *testing.T) {
 		testutil.Ok(t, p.Restart(context.Background(), logger))
 
 		uploadCompactedFunc := func() bool { return true }
-		shipper := New(log.NewLogfmtLogger(os.Stderr), nil, dir, bkt, func() labels.Labels { return extLset }, metadata.TestSource, uploadCompactedFunc, false, metadata.NoneFunc, DefaultMetaFilename)
+		shipper := New(log.NewLogfmtLogger(os.Stderr), nil, dir, bkt, func() labelpb.Labels { return extLset }, metadata.TestSource, uploadCompactedFunc, false, metadata.NoneFunc, DefaultMetaFilename)
 
 		// Create 10 new blocks. 9 of them (non compacted) should be actually uploaded.
 		var (
@@ -351,7 +351,7 @@ func TestShipper_SyncOverlapBlocks_e2e(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	extLset := labels.FromStrings("prometheus", "prom-1")
+	extLset := labelpb.FromStrings("prometheus", "prom-1")
 
 	logger := log.NewNopLogger()
 	testutil.Ok(t, p.Start(context.Background(), logger))
@@ -360,8 +360,7 @@ func TestShipper_SyncOverlapBlocks_e2e(t *testing.T) {
 	testutil.Ok(t, p.Restart(context.Background(), logger))
 
 	uploadCompactedFunc := func() bool { return true }
-	// Here, the allowOutOfOrderUploads flag is set to true, which allows blocks with overlaps to be uploaded.
-	shipper := New(log.NewLogfmtLogger(os.Stderr), nil, dir, bkt, func() labels.Labels { return extLset }, metadata.TestSource, uploadCompactedFunc, true, metadata.NoneFunc, DefaultMetaFilename)
+	shipper := New(log.NewLogfmtLogger(os.Stderr), nil, dir, bkt, func() labelpb.Labels { return extLset }, metadata.TestSource, uploadCompactedFunc, true, metadata.NoneFunc, DefaultMetaFilename)
 
 	// Creating 2 overlapping blocks - both uploaded when OOO uploads allowed.
 	var (

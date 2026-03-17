@@ -82,7 +82,7 @@ func (c labelsCodec) MergeResponse(_ queryrange.Request, responses ...queryrange
 			Data:   lbls,
 		}, nil
 	case *ThanosSeriesResponse:
-		seriesData := make(labelpb.ZLabelSets, 0)
+		seriesData := make([]*labelpb.LabelSet, 0)
 
 		uniqueSeries := make(map[string]struct{})
 		for _, res := range responses {
@@ -95,7 +95,9 @@ func (c labelsCodec) MergeResponse(_ queryrange.Request, responses ...queryrange
 			}
 		}
 
-		sort.Sort(seriesData)
+		sort.Slice(seriesData, func(i, j int) bool {
+			return seriesData[i].PromLabels().String() < seriesData[j].PromLabels().String()
+		})
 		return &ThanosSeriesResponse{
 			Status: queryrange.StatusSuccess,
 			Data:   seriesData,

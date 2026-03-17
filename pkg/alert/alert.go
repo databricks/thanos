@@ -29,6 +29,7 @@ import (
 	"go.uber.org/atomic"
 
 	"github.com/thanos-io/thanos/pkg/runutil"
+	"github.com/thanos-io/thanos/pkg/store/labelpb"
 	"github.com/thanos-io/thanos/pkg/tracing"
 )
 
@@ -43,7 +44,7 @@ type Queue struct {
 	logger              log.Logger
 	maxBatchSize        int
 	capacity            int
-	toAddLset           labels.Labels
+	toAddLset           labelpb.Labels
 	toExcludeLabels     []string
 	alertRelabelConfigs []*relabel.Config
 
@@ -58,16 +59,20 @@ type Queue struct {
 
 // NewQueue returns a new queue. The given label set is attached to all alerts pushed to the queue.
 // The given exclude label set tells what label names to drop including external labels.
-func NewQueue(logger log.Logger, reg prometheus.Registerer, capacity, maxBatchSize int, externalLset labels.Labels, excludeLabels []string, alertRelabelConfigs []*relabel.Config) *Queue {
+func NewQueue(logger log.Logger, reg prometheus.Registerer, capacity, maxBatchSize int, externalLset labelpb.Labels, excludeLabels []string, alertRelabelConfigs []*relabel.Config) *Queue {
 	if logger == nil {
 		logger = log.NewNopLogger()
+	}
+	exclude := make(map[string]struct{}, len(excludeLabels))
+	for _, n := range excludeLabels {
+		exclude[n] = struct{}{}
 	}
 	q := &Queue{
 		logger:              logger,
 		capacity:            capacity,
 		morec:               make(chan struct{}, 1),
 		maxBatchSize:        maxBatchSize,
-		toAddLset:           labels.NewBuilder(externalLset.Copy()).Del(excludeLabels...).Labels(),
+		toAddLset:           labelpb.RmLabels(externalLset, exclude),
 		toExcludeLabels:     excludeLabels,
 		alertRelabelConfigs: alertRelabelConfigs,
 
@@ -156,7 +161,7 @@ func (q *Queue) Push(alerts []*notifier.Alert) {
 	for _, a := range alerts {
 		b.Reset(a.Labels.Copy())
 		b.Del(q.toExcludeLabels...)
-		q.toAddLset.Range(func(l labels.Label) {
+		q.toAddLset.Range(func(l *labelpb.Label) {
 			b.Set(l.Name, l.Value)
 		})
 		if lset, keep := relabel.Process(b.Labels(), q.alertRelabelConfigs...); keep {

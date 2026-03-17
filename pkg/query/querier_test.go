@@ -856,7 +856,7 @@ func newProxyStore(storeAPIs ...storepb.StoreServer) *store.ProxyStore {
 		nil,
 		func() []store.Client { return cls },
 		component.Query,
-		nil,
+		labelpb.EmptyLabels(),
 		0,
 		store.EagerRetrieval,
 	)
@@ -1257,7 +1257,7 @@ func storeSeriesResponse(t testing.TB, lset labels.Labels, smplChunks ...[]sampl
 	var s storepb.Series
 
 	for _, l := range lset {
-		s.Labels = append(s.Labels, labelpb.ZLabel{Name: l.Name, Value: l.Value})
+		s.Labels = append(s.Labels, &labelpb.Label{Name: l.Name, Value: l.Value})
 	}
 
 	for _, smpls := range smplChunks {
@@ -1269,7 +1269,7 @@ func storeSeriesResponse(t testing.TB, lset labels.Labels, smplChunks ...[]sampl
 			a.Append(smpl.t, smpl.v)
 		}
 
-		ch := storepb.AggrChunk{
+		ch := &storepb.AggrChunk{
 			MinTime: smpls[0].t,
 			MaxTime: smpls[len(smpls)-1].t,
 			Raw:     &storepb.Chunk{Type: storepb.Chunk_XOR, Data: c.Bytes()},

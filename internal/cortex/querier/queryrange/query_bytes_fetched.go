@@ -16,7 +16,7 @@ func sumQueryBytesFetched(responses ...Response) uint64 {
 	var result uint64
 	result = 0
 	for _, resp := range responses {
-		for _, hdr := range resp.GetHeaders() {
+		for _, hdr := range resp.PrometheusHeaders() {
 			if hdr.GetName() == QueryBytesFetchedHeaderName {
 				for _, v := range hdr.GetValues() {
 					n, err := strconv.ParseUint(v, 10, 64)
@@ -45,7 +45,7 @@ func QueryBytesFetchedPrometheusResponseHeaders(responses ...Response) []*Promet
 
 func QueryBytesFetchedHttpHeaderValue(response Response) []string {
 	var result []string
-	for _, hdr := range response.GetHeaders() {
+	for _, hdr := range response.PrometheusHeaders() {
 		if hdr.GetName() == QueryBytesFetchedHeaderName {
 			result = hdr.GetValues()
 			break

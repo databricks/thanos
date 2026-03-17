@@ -9,6 +9,8 @@ import (
 
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/stretchr/testify/require"
+
+	"github.com/thanos-io/thanos/pkg/store/labelpb"
 )
 
 func TestNewFilterFromFilterValueInvalidPattern(t *testing.T) {
@@ -524,7 +526,7 @@ func TestTagsFilterMatchLabels(t *testing.T) {
 			require.NoError(t, err)
 
 			lbls := labels.FromMap(tc.labels)
-			require.Equal(t, tc.expectedMatch, filter.MatchLabels(lbls),
+			require.Equal(t, tc.expectedMatch, filter.MatchLabels(labelpb.FromPromLabels(lbls)),
 				fmt.Sprintf("filter: %s, labels: %v", tc.filterStr, tc.labels))
 		})
 	}

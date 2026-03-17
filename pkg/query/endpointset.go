@@ -142,7 +142,7 @@ type EndpointStatus struct {
 	Name          string              `json:"name"`
 	LastCheck     time.Time           `json:"lastCheck"`
 	LastError     *stringError        `json:"lastError"`
-	LabelSets     []labels.Labels     `json:"labelSets"`
+	LabelSets     []labelpb.Labels    `json:"labelSets"`
 	ComponentType component.Component `json:"-"`
 	MinTime       int64               `json:"minTime"`
 	MaxTime       int64               `json:"maxTime"`
@@ -426,7 +426,7 @@ func (e *EndpointSet) Update(ctx context.Context) {
 	e.endpointsMtx.Lock()
 	defer e.endpointsMtx.Unlock()
 	for addr, er := range newRefs {
-		extLset := labelpb.PromLabelSetsToString(er.LabelSets())
+		extLset := labelpb.LabelSetsToString(er.LabelSets())
 		level.Info(e.logger).Log("msg", fmt.Sprintf("adding new %v with %+v", er.ComponentType(), er.apisPresent()),
 			"group_key", er.groupKey, "replica_key", er.replicaKey,
 			"address", addr, "extLset", extLset)
@@ -434,7 +434,7 @@ func (e *EndpointSet) Update(ctx context.Context) {
 	}
 	for addr, er := range staleRefs {
 		level.Info(er.logger).Log("msg", unhealthyEndpointMessage, "address", er.addr,
-			"extLset", labelpb.PromLabelSetsToString(er.LabelSets()),
+			"extLset", labelpb.LabelSetsToString(er.LabelSets()),
 			"group_key", er.groupKey, "replica_key", er.replicaKey)
 		er.Close()
 		delete(e.endpoints, addr)
@@ -456,7 +456,7 @@ func (e *EndpointSet) Update(ctx context.Context) {
 			continue
 		}
 
-		extLset := labelpb.PromLabelSetsToString(er.LabelSets())
+		extLset := labelpb.LabelSetsToString(er.LabelSets())
 
 		// All producers that expose StoreAPI should have unique external labels. Check all which connect to our Querier.
 		if er.HasStoreAPI() && (er.ComponentType() == component.Sidecar || er.ComponentType() == component.Rule) &&
@@ -615,9 +615,13 @@ func (e *EndpointSet) GetExemplarsStores() []*exemplarspb.ExemplarStore {
 	exemplarStores := make([]*exemplarspb.ExemplarStore, 0, len(endpoints))
 	for _, er := range endpoints {
 		if er.HasExemplarsAPI() {
+			lsets := make([]labelpb.Labels, 0, len(er.metadata.LabelSets))
+			for _, ls := range er.metadata.LabelSets {
+				lsets = append(lsets, ls.GetLabels())
+			}
 			exemplarStores = append(exemplarStores, &exemplarspb.ExemplarStore{
 				ExemplarsClient: exemplarspb.NewExemplarsClient(er.cc),
-				LabelSets:       labelpb.ZLabelSetsToPromLabelSets(er.metadata.LabelSets...),
+				LabelSets:       lsets,
 			})
 		}
 	}
@@ -817,24 +821,25 @@ func (er *endpointRef) HasExemplarsAPI() bool {
 	return er.metadata != nil && er.metadata.Exemplars != nil
 }
 
-func (er *endpointRef) LabelSets() []labels.Labels {
+func (er *endpointRef) LabelSets() []labelpb.Labels {
 	er.mtx.RLock()
 	defer er.mtx.RUnlock()
 
 	return er.status.LabelSets
 }
 
-func (er *endpointRef) labelSets() []labels.Labels {
+func (er *endpointRef) labelSets() []labelpb.Labels {
 	if er.metadata == nil {
-		return make([]labels.Labels, 0)
+		return nil
 	}
 
-	labelSet := make([]labels.Labels, 0, len(er.metadata.LabelSets))
-	for _, ls := range labelpb.ZLabelSetsToPromLabelSets(er.metadata.LabelSets...) {
-		if ls.Len() == 0 {
+	labelSet := make([]labelpb.Labels, 0, len(er.metadata.LabelSets))
+	for _, ls := range er.metadata.LabelSets {
+		lbls := ls.GetLabels()
+		if len(lbls) == 0 {
 			continue
 		}
-		labelSet = append(labelSet, ls.Copy())
+		labelSet = append(labelSet, labelpb.Labels(lbls).Copy())
 	}
 	return labelSet
 }
@@ -846,7 +851,7 @@ func (er *endpointRef) TimeRange() (mint, maxt int64) {
 	return er.timeRange()
 }
 
-func (er *endpointRef) TSDBInfos() []infopb.TSDBInfo {
+func (er *endpointRef) TSDBInfos() []*infopb.TSDBInfo {
 	er.mtx.RLock()
 	defer er.mtx.RUnlock()
 
@@ -921,7 +926,7 @@ func (er *endpointRef) String() string {
 	mint, maxt := er.TimeRange()
 	return fmt.Sprintf(
 		"Addr: %s LabelSets: %v MinTime: %d MaxTime: %d",
-		er.addr, labelpb.PromLabelSetsToString(er.LabelSets()), mint, maxt,
+		er.addr, labelpb.LabelSetsToString(er.LabelSets()), mint, maxt,
 	)
 }
 

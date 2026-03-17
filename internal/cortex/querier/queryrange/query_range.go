@@ -104,9 +104,7 @@ type Request interface {
 // Response represents a query range response.
 type Response interface {
 	proto.Message
-	// GetHeaders returns the HTTP headers in the response.
-	GetHeaders() []*PrometheusResponseHeader
-	// GetStats returns the Prometheus query stats in the response.
+	PrometheusHeaders() []*PrometheusResponseHeader
 	GetStats() *PrometheusResponseStats
 }
 
@@ -177,8 +175,16 @@ func minInt64(a, b int64) int64 {
 	return b
 }
 
+func (resp *PrometheusResponse) PrometheusHeaders() []*PrometheusResponseHeader {
+	return resp.GetHeaders()
+}
+
 func (resp *PrometheusResponse) GetStats() *PrometheusResponseStats {
 	return resp.Data.Stats
+}
+
+func (resp *PrometheusInstantQueryResponse) PrometheusHeaders() []*PrometheusResponseHeader {
+	return resp.GetHeaders()
 }
 
 func (resp *PrometheusInstantQueryResponse) GetStats() *PrometheusResponseStats {
@@ -409,7 +415,7 @@ func (prometheusCodec) EncodeRequest(ctx context.Context, r Request) (*http.Requ
 func (prometheusCodec) DecodeResponse(ctx context.Context, r *http.Response, _ Request) (Response, error) {
 	if r.StatusCode/100 != 2 {
 		body, _ := io.ReadAll(r.Body)
-		return nil, httpgrpc.Errorf(r.StatusCode, string(body))
+		return nil, httpgrpc.Errorf(r.StatusCode, "%s", string(body))
 	}
 	log, ctx := spanlogger.New(ctx, "ParseQueryRangeResponse") //nolint:ineffassign,staticcheck
 	defer log.Finish()

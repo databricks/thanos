@@ -122,10 +122,12 @@ require (
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/mitchellh/go-ps v1.0.0
 	github.com/onsi/gomega v1.34.0
+	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10
 	github.com/prometheus-community/prom-label-proxy v0.8.1-0.20240127162815-c1195f9aabc0
+	github.com/puzpuzpuz/xsync/v3 v3.5.1
 	github.com/seiflotfy/cuckoofilter v0.0.0-20240715131351-a2f2c23f1771
+	github.com/srikrsna/protoc-gen-gotag v1.0.2
 	go.opentelemetry.io/contrib/propagators/autoprop v0.54.0
-	go4.org/intern v0.0.0-20230525184215-6c62f75575cb
 	golang.org/x/exp v0.0.0-20240613232115-7f521ea00fb8
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 )
@@ -163,7 +165,6 @@ require (
 	go.opentelemetry.io/collector/semconv v0.108.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.49.0 // indirect
 	go.opentelemetry.io/contrib/propagators/ot v1.29.0 // indirect
-	go4.org/unsafe/assume-no-moving-gc v0.0.0-20230525183740-e7c30c78aeb2 // indirect
 	golang.org/x/lint v0.0.0-20210508222113-6edffad5e616 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20240827150818-7e3bb234dfed // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240903143218-8af14fe29dc1 // indirect
@@ -299,9 +300,6 @@ replace (
 	github.com/sercand/kuberesolver/v4 => github.com/sercand/kuberesolver/v5 v5.1.1
 
 	github.com/vimeo/galaxycache => github.com/thanos-community/galaxycache v0.0.0-20211122094458-3a32041a1f1e
-
-	// Pinning grpc due https://github.com/grpc/grpc-go/issues/7314
-	google.golang.org/grpc => google.golang.org/grpc v1.63.2
 
 	// Overriding to use latest commit.
 	gopkg.in/alecthomas/kingpin.v2 => github.com/alecthomas/kingpin v1.3.8-0.20210301060133-17f40c25f497

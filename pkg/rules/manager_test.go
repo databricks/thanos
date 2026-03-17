@@ -30,6 +30,7 @@ import (
 
 	"github.com/thanos-io/thanos/pkg/extprom"
 	"github.com/thanos-io/thanos/pkg/runutil"
+	"github.com/thanos-io/thanos/pkg/store/labelpb"
 	"github.com/thanos-io/thanos/pkg/store/storepb"
 )
 
@@ -105,7 +106,7 @@ groups:
 				return promql.Vector{}, nil
 			}
 		},
-		labels.FromStrings("replica", "1"),
+		labelpb.FromStrings("replica", "1"),
 		"http://localhost",
 	)
 	testutil.Ok(t, thanosRuleMgr.Update(1*time.Second, []string{filepath.Join(dir, "rule.yaml")}))
@@ -199,7 +200,7 @@ groups:
 				return nil, nil
 			}
 		},
-		labels.FromStrings("replica", "1"),
+		labelpb.FromStrings("replica", "1"),
 		"http://localhost",
 	)
 	err = thanosRuleMgr.Update(10*time.Second, []string{
@@ -346,7 +347,7 @@ func TestManager_Rules(t *testing.T) {
 				return nil, nil
 			}
 		},
-		labels.FromStrings("replica", "test1"),
+		labelpb.FromStrings("replica", "test1"),
 		"http://localhost",
 	)
 	testutil.Ok(t, thanosRuleMgr.Update(60*time.Second, []string{
@@ -386,7 +387,7 @@ groups:
 				return nil, nil
 			}
 		},
-		labels.EmptyLabels(),
+		labelpb.EmptyLabels(),
 		"http://localhost",
 	)
 
@@ -444,7 +445,7 @@ groups:
 				}, nil
 			}
 		},
-		labels.EmptyLabels(),
+		labelpb.EmptyLabels(),
 		"http://localhost",
 	)
 	thanosRuleMgr.Run()

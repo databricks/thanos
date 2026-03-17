@@ -7,10 +7,11 @@ import (
 	"math"
 
 	"github.com/prometheus/prometheus/model/histogram"
-	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
 	"github.com/prometheus/prometheus/util/annotations"
+
+	"github.com/thanos-io/thanos/pkg/store/labelpb"
 	"github.com/thanos-io/thanos/pkg/store/storepb"
 )
 
@@ -29,13 +30,31 @@ const (
 	AlgorithmQuorum  = "quorum"
 )
 
+// Series mirrors storage.Series but uses labelpb.Labels instead of
+// prometheus/model/labels.Labels. This is the Thanos-internal contract
+// for a single time series.
+type Series interface {
+	Labels() labelpb.Labels
+	Iterator(chunkenc.Iterator) chunkenc.Iterator
+}
+
+// SeriesSet mirrors storage.SeriesSet but uses the Thanos-internal Series
+// type. Everything inside Thanos operates on this interface; it is converted
+// to storage.SeriesSet only at the PromQL boundary.
+type SeriesSet interface {
+	Next() bool
+	At() Series
+	Err() error
+	Warnings() annotations.Annotations
+}
+
 type dedupSeriesSet struct {
-	set storage.SeriesSet
+	set SeriesSet
 
-	replicas []storage.Series
+	replicas []Series
 
-	lset labels.Labels
-	peek storage.Series
+	lset labelpb.Labels
+	peek Series
 	ok   bool
 
 	f                 string
@@ -60,9 +79,9 @@ type overlapSplitSet struct {
 	ok  bool
 	set storepb.SeriesSet
 
-	currLabels labels.Labels
+	currLabels labelpb.Labels
 	currI      int
-	replicas   [][]storepb.AggrChunk
+	replicas   [][]*storepb.AggrChunk
 }
 
 func (o *overlapSplitSet) Next() bool {
@@ -84,7 +103,7 @@ func (o *overlapSplitSet) Next() bool {
 		return false
 	}
 
-	var chunks []storepb.AggrChunk
+	var chunks []*storepb.AggrChunk
 	o.currLabels, chunks = o.set.At()
 	if len(chunks) == 0 {
 		return true
@@ -101,12 +120,12 @@ chunksLoop:
 				continue chunksLoop
 			}
 		}
-		o.replicas = append(o.replicas, []storepb.AggrChunk{chunks[i]}) // Not found, add to a new "fake" series.
+		o.replicas = append(o.replicas, []*storepb.AggrChunk{chunks[i]})
 	}
 	return true
 }
 
-func (o *overlapSplitSet) At() (labels.Labels, []storepb.AggrChunk) {
+func (o *overlapSplitSet) At() (labelpb.Labels, []*storepb.AggrChunk) {
 	return o.currLabels, o.replicas[o.currI]
 }
 
@@ -114,9 +133,9 @@ func (o *overlapSplitSet) Err() error {
 	return o.set.Err()
 }
 
-// NewSeriesSet returns seriesSet that deduplicates the same series.
-// The series in series set are expected be sorted by all labels.
-func NewSeriesSet(set storage.SeriesSet, f string, deduplicationFunc string) storage.SeriesSet {
+// NewSeriesSet returns a SeriesSet that deduplicates the same series.
+// The series in the input set are expected to be sorted by all labels.
+func NewSeriesSet(set SeriesSet, f string, deduplicationFunc string) SeriesSet {
 	s := &dedupSeriesSet{set: set, f: f, deduplicationFunc: deduplicationFunc}
 	s.ok = s.set.Next()
 	if s.ok {
@@ -132,7 +151,6 @@ func (s *dedupSeriesSet) Next() bool {
 	}
 	s.replicas = s.replicas[:0]
 
-	// Set the label set we are currently gathering to the peek element.
 	s.lset = s.peek.Labels()
 	s.replicas = append(s.replicas[:0], s.peek)
 
@@ -151,7 +169,7 @@ func (s *dedupSeriesSet) next() bool {
 
 	// If the label set modulo the replica label is equal to the current label set
 	// look for more replicas, otherwise a series is complete.
-	if !labels.Equal(s.lset, nextLset) {
+	if !labelpb.Equal(s.lset, nextLset) {
 		return true
 	}
 
@@ -160,19 +178,18 @@ func (s *dedupSeriesSet) next() bool {
 	return s.next()
 }
 
-func (s *dedupSeriesSet) At() storage.Series {
+func (s *dedupSeriesSet) At() Series {
 	if len(s.replicas) == 1 {
 		return seriesWithLabels{Series: s.replicas[0], lset: s.lset}
 	}
 	// Clients may store the series, so we must make a copy of the slice before advancing.
-	repl := make([]storage.Series, len(s.replicas))
+	repl := make([]Series, len(s.replicas))
 	copy(repl, s.replicas)
 	if s.deduplicationFunc == AlgorithmQuorum {
-		// merge all samples which are ingested via receiver, no skips.
 		return NewQuorumSeries(s.lset, repl, s.f)
 	}
 	if s.deduplicationFunc == AlgorithmChain {
-		return seriesWithLabels{Series: storage.ChainedSeriesMerge(repl...), lset: s.lset}
+		return newChainedMergeSeries(s.lset, repl)
 	}
 	return newDedupSeries(s.lset, repl, s.f)
 }
@@ -186,25 +203,45 @@ func (s *dedupSeriesSet) Warnings() annotations.Annotations {
 }
 
 type seriesWithLabels struct {
-	storage.Series
-	lset labels.Labels
+	Series
+	lset labelpb.Labels
 }
 
-func (s seriesWithLabels) Labels() labels.Labels { return s.lset }
+func (s seriesWithLabels) Labels() labelpb.Labels { return s.lset }
+
+// chainedMergeSeries merges multiple Series by chaining their sample iterators.
+type chainedMergeSeries struct {
+	lset     labelpb.Labels
+	replicas []Series
+}
+
+func newChainedMergeSeries(lset labelpb.Labels, replicas []Series) Series {
+	return &chainedMergeSeries{lset: lset, replicas: replicas}
+}
+
+func (s *chainedMergeSeries) Labels() labelpb.Labels { return s.lset }
+
+func (s *chainedMergeSeries) Iterator(it chunkenc.Iterator) chunkenc.Iterator {
+	iterators := make([]chunkenc.Iterator, 0, len(s.replicas))
+	for _, r := range s.replicas {
+		iterators = append(iterators, r.Iterator(nil))
+	}
+	return storage.ChainSampleIteratorFromIterators(it, iterators)
+}
 
 type dedupSeries struct {
-	lset     labels.Labels
-	replicas []storage.Series
+	lset     labelpb.Labels
+	replicas []Series
 
 	isCounter bool
 	f         string
 }
 
-func newDedupSeries(lset labels.Labels, replicas []storage.Series, f string) *dedupSeries {
+func newDedupSeries(lset labelpb.Labels, replicas []Series, f string) *dedupSeries {
 	return &dedupSeries{lset: lset, isCounter: isCounter(f), replicas: replicas, f: f}
 }
 
-func (s *dedupSeries) Labels() labels.Labels {
+func (s *dedupSeries) Labels() labelpb.Labels {
 	return s.lset
 }
 

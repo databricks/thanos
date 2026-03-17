@@ -109,8 +109,8 @@ func dedupExemplarsResponse(exemplarsData []*exemplarspb.ExemplarData, replicaLa
 		if len(e.Exemplars) == 0 {
 			continue
 		}
-		e.SeriesLabels.Labels = removeReplicaLabels(e.SeriesLabels.Labels, replicaLabels)
-		h := labelpb.ZLabelsToPromLabels(e.SeriesLabels.Labels).Hash()
+		e.SeriesLabels.Labels = removeReplicaLabels(e.SeriesLabels.GetLabels(), replicaLabels)
+		h := labelpb.Hash(e.SeriesLabels.GetLabels())
 		if ref, ok := hashToExemplar[h]; ok {
 			ref.Exemplars = append(ref.Exemplars, e.Exemplars...)
 		} else {
@@ -155,12 +155,12 @@ func dedupExemplars(exemplars []*exemplarspb.Exemplar) []*exemplarspb.Exemplar {
 	return exemplars[:i+1]
 }
 
-func removeReplicaLabels(labels []labelpb.ZLabel, replicaLabels map[string]struct{}) []labelpb.ZLabel {
+func removeReplicaLabels(lbls []*labelpb.Label, replicaLabels map[string]struct{}) []*labelpb.Label {
 	if len(replicaLabels) == 0 {
-		return labels
+		return lbls
 	}
-	newLabels := make([]labelpb.ZLabel, 0, len(labels))
-	for _, l := range labels {
+	newLabels := make([]*labelpb.Label, 0, len(lbls))
+	for _, l := range lbls {
 		if _, ok := replicaLabels[l.Name]; !ok {
 			newLabels = append(newLabels, l)
 		}

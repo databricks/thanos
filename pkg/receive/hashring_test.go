@@ -26,15 +26,9 @@ func TestHashringGet(t *testing.T) {
 	t.Parallel()
 
 	ts := &prompb.TimeSeries{
-		Labels: []labelpb.ZLabel{
-			{
-				Name:  "foo",
-				Value: "bar",
-			},
-			{
-				Name:  "baz",
-				Value: "qux",
-			},
+		Labels: labelpb.Labels{
+			{Name: "foo", Value: "bar"},
+			{Name: "baz", Value: "qux"},
 		},
 	}
 
@@ -226,11 +220,8 @@ func TestKetamaHashringGet(t *testing.T) {
 	t.Parallel()
 
 	baseTS := &prompb.TimeSeries{
-		Labels: []labelpb.ZLabel{
-			{
-				Name:  "pod",
-				Value: "nginx",
-			},
+		Labels: labelpb.Labels{
+			{Name: "pod", Value: "nginx"},
 		},
 	}
 	tests := []struct {
@@ -283,11 +274,8 @@ func TestKetamaHashringGet(t *testing.T) {
 			name:      "base case with different timeseries",
 			endpoints: []Endpoint{{Address: "node-1"}, {Address: "node-2"}, {Address: "node-3"}},
 			ts: &prompb.TimeSeries{
-				Labels: []labelpb.ZLabel{
-					{
-						Name:  "pod",
-						Value: "thanos",
-					},
+				Labels: labelpb.Labels{
+					{Name: "pod", Value: "thanos"},
 				},
 			},
 			expectedNode: "node-3",
@@ -460,8 +448,8 @@ func TestKetamaHashringEvenAZSpread(t *testing.T) {
 
 	tenant := "default-tenant"
 	ts := &prompb.TimeSeries{
-		Labels:  labelpb.ZLabelsFromPromLabels(labels.FromStrings("foo", "bar")),
-		Samples: []prompb.Sample{{Value: 1, Timestamp: 0}},
+		Labels:  labelpb.FromStrings("foo", "bar"),
+		Samples: []*prompb.Sample{{Value: 1, Timestamp: 0}},
 	}
 
 	for _, tt := range []struct {
@@ -635,8 +623,8 @@ func TestKetamaHashringEvenNodeSpread(t *testing.T) {
 			nodeSpread := make(map[string]int)
 			for i := 0; i < int(tt.numSeries); i++ {
 				ts := &prompb.TimeSeries{
-					Labels:  labelpb.ZLabelsFromPromLabels(labels.FromStrings("foo", fmt.Sprintf("%d", i))),
-					Samples: []prompb.Sample{{Value: 1, Timestamp: 0}},
+					Labels:  labelpb.FromStrings("foo", fmt.Sprintf("%d", i)),
+					Samples: []*prompb.Sample{{Value: 1, Timestamp: 0}},
 				}
 				for j := 0; j < int(tt.replicas); j++ {
 					r, err := hashRing.GetN(tenant, ts, uint64(j))
@@ -804,11 +792,8 @@ func TestShuffleShardHashring(t *testing.T) {
 			// We'll sample multiple times to ensure consistency
 			for i := 0; i < 100; i++ {
 				ts := &prompb.TimeSeries{
-					Labels: []labelpb.ZLabel{
-						{
-							Name:  "iteration",
-							Value: fmt.Sprintf("%d", i),
-						},
+					Labels: labelpb.Labels{
+						{Name: "iteration", Value: fmt.Sprintf("%d", i)},
 					},
 				}
 
@@ -834,15 +819,9 @@ func TestShuffleShardHashring(t *testing.T) {
 
 				for i := 0; i < 10+trial; i++ {
 					ts := &prompb.TimeSeries{
-						Labels: []labelpb.ZLabel{
-							{
-								Name:  "iteration",
-								Value: fmt.Sprintf("%d", i),
-							},
-							{
-								Name:  "trial",
-								Value: fmt.Sprintf("%d", trial),
-							},
+						Labels: labelpb.Labels{
+							{Name: "iteration", Value: fmt.Sprintf("%d", i)},
+							{Name: "trial", Value: fmt.Sprintf("%d", trial)},
 						},
 					}
 
@@ -858,26 +837,23 @@ func TestShuffleShardHashring(t *testing.T) {
 	}
 }
 
-func makeSeries() []prompb.TimeSeries {
+func makeSeries() []*prompb.TimeSeries {
 	numSeries := 10000
-	series := make([]prompb.TimeSeries, numSeries)
+	series := make([]*prompb.TimeSeries, numSeries)
 	for i := 0; i < numSeries; i++ {
-		series[i] = prompb.TimeSeries{
-			Labels: []labelpb.ZLabel{
-				{
-					Name:  "pod",
-					Value: fmt.Sprintf("nginx-%d", i),
-				},
+		series[i] = &prompb.TimeSeries{
+			Labels: labelpb.Labels{
+				{Name: "pod", Value: fmt.Sprintf("nginx-%d", i)},
 			},
 		}
 	}
 	return series
 }
 
-func findSeries(initialAssignments map[string][]prompb.TimeSeries, node string, newSeries prompb.TimeSeries) bool {
+func findSeries(initialAssignments map[string][]*prompb.TimeSeries, node string, newSeries *prompb.TimeSeries) bool {
 	for _, oldSeries := range initialAssignments[node] {
-		l1 := labelpb.ZLabelsToPromLabels(newSeries.Labels)
-		l2 := labelpb.ZLabelsToPromLabels(oldSeries.Labels)
+		l1 := labelpb.ToPromLabels(newSeries.Labels)
+		l2 := labelpb.ToPromLabels(oldSeries.Labels)
 		if labels.Equal(l1, l2) {
 			return true
 		}
@@ -886,19 +862,19 @@ func findSeries(initialAssignments map[string][]prompb.TimeSeries, node string, 
 	return false
 }
 
-func assignSeries(series []prompb.TimeSeries, nodes []Endpoint) (map[string][]prompb.TimeSeries, error) {
+func assignSeries(series []*prompb.TimeSeries, nodes []Endpoint) (map[string][]*prompb.TimeSeries, error) {
 	return assignReplicatedSeries(series, nodes, 0)
 }
 
-func assignReplicatedSeries(series []prompb.TimeSeries, nodes []Endpoint, replicas uint64) (map[string][]prompb.TimeSeries, error) {
+func assignReplicatedSeries(series []*prompb.TimeSeries, nodes []Endpoint, replicas uint64) (map[string][]*prompb.TimeSeries, error) {
 	hashRing, err := newKetamaHashring(nodes, SectionsPerNode, replicas)
 	if err != nil {
 		return nil, err
 	}
-	assignments := make(map[string][]prompb.TimeSeries)
+	assignments := make(map[string][]*prompb.TimeSeries)
 	for i := uint64(0); i < replicas; i++ {
 		for _, ts := range series {
-			result, err := hashRing.GetN("tenant", &ts, i)
+			result, err := hashRing.GetN("tenant", ts, i)
 			if err != nil {
 				return nil, err
 			}
@@ -1022,7 +998,7 @@ func getTenantNodes(t *testing.T, ring *shuffleShardHashring, tenant string, sha
 	// Sample many time series to discover all nodes in the shard
 	for i := 0; i < 1000; i++ {
 		ts := &prompb.TimeSeries{
-			Labels: []labelpb.ZLabel{
+			Labels: labelpb.Labels{
 				{Name: "series", Value: fmt.Sprintf("%d", i)},
 			},
 		}

@@ -29,7 +29,7 @@ import (
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/common/route"
 	"github.com/prometheus/prometheus/config"
-	"github.com/prometheus/prometheus/model/labels"
+
 	"github.com/prometheus/prometheus/model/relabel"
 	"github.com/prometheus/prometheus/notifier"
 	"github.com/prometheus/prometheus/promql"
@@ -105,7 +105,7 @@ type ruleConfig struct {
 	ruleFiles          []string
 	objStoreConfig     *extflag.PathOrContent
 	dataDir            string
-	lset               labels.Labels
+	lset               labelpb.Labels
 	ignoredLabelNames  []string
 	storeRateLimits    store.SeriesSelectLimits
 	ruleConcurrentEval int64
@@ -490,7 +490,7 @@ func runRule(
 		}, conf.dataDir, 1*time.Minute, nil, false)
 		if err := remoteStore.ApplyConfig(&config.Config{
 			GlobalConfig: config.GlobalConfig{
-				ExternalLabels: labelsTSDBToProm(conf.lset),
+				ExternalLabels: labelpb.ToPromLabels(conf.lset),
 			},
 			RemoteWriteConfigs: rwCfg.RemoteWriteConfigs,
 		}); err != nil {
@@ -590,7 +590,7 @@ func runRule(
 
 	var (
 		ruleMgr *thanosrules.Manager
-		alertQ  = alert.NewQueue(logger, reg, 10000, 100, labelsTSDBToProm(conf.lset), conf.alertmgr.alertExcludeLabels, alertRelabelConfigs)
+		alertQ  = alert.NewQueue(logger, reg, 10000, 100, conf.lset, conf.alertmgr.alertExcludeLabels, alertRelabelConfigs)
 	)
 	{
 		if conf.extendedFunctionsEnabled {
@@ -748,7 +748,7 @@ func runRule(
 		tsdbStore := store.NewTSDBStore(logger, tsdbDB, component.Rule, conf.lset)
 		infoOptions = append(
 			infoOptions,
-			info.WithLabelSetFunc(func() []labelpb.ZLabelSet {
+			info.WithLabelSetFunc(func() []*labelpb.LabelSet {
 				return tsdbStore.LabelSet()
 			}),
 			info.WithStoreInfoFunc(func() (*infopb.StoreInfo, error) {
@@ -856,7 +856,7 @@ func runRule(
 			}
 		}()
 
-		s := shipper.New(logger, reg, conf.dataDir, bkt, func() labels.Labels { return conf.lset }, metadata.RulerSource, nil, conf.shipper.allowOutOfOrderUpload, metadata.HashFunc(conf.shipper.hashFunc), conf.shipper.metaFileName)
+		s := shipper.New(logger, reg, conf.dataDir, bkt, func() labelpb.Labels { return conf.lset }, metadata.RulerSource, nil, conf.shipper.allowOutOfOrderUpload, metadata.HashFunc(conf.shipper.hashFunc), conf.shipper.metaFileName)
 
 		ctx, cancel := context.WithCancel(context.Background())
 
@@ -893,10 +893,6 @@ func removeLockfileIfAny(logger log.Logger, dataDir string) error {
 	}
 	level.Info(logger).Log("msg", "a leftover lockfile found and removed")
 	return nil
-}
-
-func labelsTSDBToProm(lset labels.Labels) (res labels.Labels) {
-	return lset.Copy()
 }
 
 func queryFuncCreator(

@@ -12,6 +12,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/thanos-io/thanos/pkg/component"
 	"github.com/thanos-io/thanos/pkg/store"
+	"github.com/thanos-io/thanos/pkg/store/labelpb"
 	"github.com/thanos-io/thanos/pkg/store/storepb"
 	"github.com/thanos-io/thanos/pkg/tenancy"
 	"google.golang.org/grpc"
@@ -129,13 +130,13 @@ func TestTenantProxyPassing(t *testing.T) {
 			nil,
 			func() []store.Client { return cls },
 			component.Query,
-			nil, 0*time.Second, store.EagerRetrieval,
+			labelpb.EmptyLabels(), 0*time.Second, store.EagerRetrieval,
 		)
 		// We assert directly in the mocked store apis LabelValues/LabelNames/Series funcs
 		_, _ = q.LabelValues(ctx, &storepb.LabelValuesRequest{})
 		_, _ = q.LabelNames(ctx, &storepb.LabelNamesRequest{})
 
-		seriesMatchers := []storepb.LabelMatcher{
+		seriesMatchers := []*storepb.LabelMatcher{
 			{Type: storepb.LabelMatcher_EQ, Name: "foo", Value: "bar"},
 		}
 
@@ -174,14 +175,14 @@ func TestTenantProxyPassing(t *testing.T) {
 			nil,
 			func() []store.Client { return cls },
 			component.Query,
-			nil, 0*time.Second, store.EagerRetrieval,
+			labelpb.EmptyLabels(), 0*time.Second, store.EagerRetrieval,
 		)
 
 		// We assert directly in the mocked store apis LabelValues/LabelNames/Series funcs
 		_, _ = q.LabelValues(ctx, &storepb.LabelValuesRequest{})
 		_, _ = q.LabelNames(ctx, &storepb.LabelNamesRequest{})
 
-		seriesMatchers := []storepb.LabelMatcher{
+		seriesMatchers := []*storepb.LabelMatcher{
 			{Type: storepb.LabelMatcher_EQ, Name: "foo", Value: "bar"},
 		}
 

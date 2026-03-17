@@ -23,7 +23,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/common/model"
-	"github.com/prometheus/prometheus/model/labels"
+	"github.com/thanos-io/thanos/pkg/store/labelpb"
 )
 
 var (
@@ -208,7 +208,7 @@ type HashringConfig struct {
 	TenantMatcherType tenantMatcher     `json:"tenant_matcher_type,omitempty"`
 	Endpoints         []Endpoint        `json:"endpoints"`
 	Algorithm         HashringAlgorithm `json:"algorithm,omitempty"`
-	ExternalLabels    labels.Labels     `json:"external_labels,omitempty"`
+	ExternalLabels    labelpb.Labels    `json:"external_labels,omitempty"`
 	// If non-zero then enable shuffle sharding.
 	ShuffleShardingConfig ShuffleShardingConfig `json:"shuffle_sharding_config,omitempty"`
 }

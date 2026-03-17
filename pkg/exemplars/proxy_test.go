@@ -15,7 +15,6 @@ import (
 	"github.com/efficientgo/core/testutil"
 	"github.com/go-kit/log"
 	"github.com/pkg/errors"
-	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql/parser"
 	"go.uber.org/atomic"
 	"google.golang.org/grpc"
@@ -116,7 +115,7 @@ func TestProxy(t *testing.T) {
 		request        *exemplarspb.ExemplarsRequest
 		clients        []*exemplarspb.ExemplarStore
 		server         *testExemplarServer
-		selectorLabels labels.Labels
+		selectorLabels labelpb.Labels
 		wantResponses  []*exemplarspb.ExemplarsResponse
 		wantError      error
 	}{
@@ -130,20 +129,20 @@ func TestProxy(t *testing.T) {
 				{
 					ExemplarsClient: &testExemplarClient{
 						response: exemplarspb.NewExemplarsResponse(&exemplarspb.ExemplarData{
-							SeriesLabels: labelpb.ZLabelSet{Labels: labelpb.ZLabelsFromPromLabels(labels.FromMap(map[string]string{"__name__": "http_request_duration_bucket"}))},
+							SeriesLabels: labelpb.LabelSetFromStrings("__name__", "http_request_duration_bucket"),
 							Exemplars:    []*exemplarspb.Exemplar{{Value: 1}},
 						}),
 					},
-					LabelSets: []labels.Labels{
-						labels.FromMap(map[string]string{"cluster": "A"}),
-						labels.FromMap(map[string]string{"cluster": "B"}),
+					LabelSets: []labelpb.Labels{
+						labelpb.FromStrings("cluster", "A"),
+						labelpb.FromStrings("cluster", "B"),
 					},
 				},
 			},
 			server: &testExemplarServer{},
 			wantResponses: []*exemplarspb.ExemplarsResponse{
 				exemplarspb.NewExemplarsResponse(&exemplarspb.ExemplarData{
-					SeriesLabels: labelpb.ZLabelSet{Labels: labelpb.ZLabelsFromPromLabels(labels.FromMap(map[string]string{"__name__": "http_request_duration_bucket"}))},
+					SeriesLabels: labelpb.LabelSetFromStrings("__name__", "http_request_duration_bucket"),
 					Exemplars:    []*exemplarspb.Exemplar{{Value: 1}},
 				}),
 			},
@@ -158,20 +157,20 @@ func TestProxy(t *testing.T) {
 				{
 					ExemplarsClient: &testExemplarClient{
 						response: exemplarspb.NewExemplarsResponse(&exemplarspb.ExemplarData{
-							SeriesLabels: labelpb.ZLabelSet{Labels: labelpb.ZLabelsFromPromLabels(labels.FromMap(map[string]string{"__name__": "http_request_duration_bucket"}))},
+							SeriesLabels: labelpb.LabelSetFromStrings("__name__", "http_request_duration_bucket"),
 							Exemplars:    []*exemplarspb.Exemplar{{Value: 1}},
 						}),
 					},
-					LabelSets: []labels.Labels{
-						labels.FromMap(map[string]string{"cluster": "A"}),
-						labels.FromMap(map[string]string{"cluster": "B"}),
+					LabelSets: []labelpb.Labels{
+						labelpb.FromStrings("cluster", "A"),
+						labelpb.FromStrings("cluster", "B"),
 					},
 				},
 			},
 			server: &testExemplarServer{},
 			wantResponses: []*exemplarspb.ExemplarsResponse{
 				exemplarspb.NewExemplarsResponse(&exemplarspb.ExemplarData{
-					SeriesLabels: labelpb.ZLabelSet{Labels: labelpb.ZLabelsFromPromLabels(labels.FromMap(map[string]string{"__name__": "http_request_duration_bucket"}))},
+					SeriesLabels: labelpb.LabelSetFromStrings("__name__", "http_request_duration_bucket"),
 					Exemplars:    []*exemplarspb.Exemplar{{Value: 1}},
 				}),
 			},
@@ -187,7 +186,7 @@ func TestProxy(t *testing.T) {
 					ExemplarsClient: &testExemplarClient{
 						response: exemplarspb.NewWarningExemplarsResponse(errors.New("warning from client")),
 					},
-					LabelSets: []labels.Labels{labels.FromMap(map[string]string{"cluster": "A"})},
+					LabelSets: []labelpb.Labels{labelpb.FromStrings("cluster", "A")},
 				},
 			},
 			server: &testExemplarServer{},
@@ -206,14 +205,14 @@ func TestProxy(t *testing.T) {
 				{
 					ExemplarsClient: &testExemplarClient{
 						response: exemplarspb.NewExemplarsResponse(&exemplarspb.ExemplarData{
-							SeriesLabels: labelpb.ZLabelSet{Labels: labelpb.ZLabelsFromPromLabels(labels.FromMap(map[string]string{"__name__": "http_request_duration_bucket"}))},
+							SeriesLabels: labelpb.LabelSetFromStrings("__name__", "http_request_duration_bucket"),
 							Exemplars:    []*exemplarspb.Exemplar{{Value: 1}},
 						}),
 					},
-					LabelSets: []labels.Labels{labels.FromMap(map[string]string{"cluster": "A"})},
+					LabelSets: []labelpb.Labels{labelpb.FromStrings("cluster", "A")},
 				},
 			},
-			selectorLabels: labels.FromMap(map[string]string{"query": "bar"}),
+			selectorLabels: labelpb.FromStrings("query", "bar"),
 			server:         &testExemplarServer{},
 			wantResponses:  nil,
 		},
@@ -228,18 +227,18 @@ func TestProxy(t *testing.T) {
 				{
 					ExemplarsClient: &testExemplarClient{
 						response: exemplarspb.NewExemplarsResponse(&exemplarspb.ExemplarData{
-							SeriesLabels: labelpb.ZLabelSet{Labels: labelpb.ZLabelsFromPromLabels(labels.FromMap(map[string]string{"__name__": "http_request_duration_bucket"}))},
+							SeriesLabels: labelpb.LabelSetFromStrings("__name__", "http_request_duration_bucket"),
 							Exemplars:    []*exemplarspb.Exemplar{{Value: 1}},
 						}),
 					},
-					LabelSets: []labels.Labels{labels.FromMap(map[string]string{"cluster": "A"})},
+					LabelSets: []labelpb.Labels{labelpb.FromStrings("cluster", "A")},
 				},
 			},
-			selectorLabels: labels.FromMap(map[string]string{"query": "foo"}),
+			selectorLabels: labelpb.FromStrings("query", "foo"),
 			server:         &testExemplarServer{},
 			wantResponses: []*exemplarspb.ExemplarsResponse{
 				exemplarspb.NewExemplarsResponse(&exemplarspb.ExemplarData{
-					SeriesLabels: labelpb.ZLabelSet{Labels: labelpb.ZLabelsFromPromLabels(labels.FromMap(map[string]string{"__name__": "http_request_duration_bucket"}))},
+					SeriesLabels: labelpb.LabelSetFromStrings("__name__", "http_request_duration_bucket"),
 					Exemplars:    []*exemplarspb.Exemplar{{Value: 1}},
 				}),
 			},
@@ -254,17 +253,17 @@ func TestProxy(t *testing.T) {
 				{
 					ExemplarsClient: &testExemplarClient{
 						response: exemplarspb.NewExemplarsResponse(&exemplarspb.ExemplarData{
-							SeriesLabels: labelpb.ZLabelSet{Labels: labelpb.ZLabelsFromPromLabels(labels.FromMap(map[string]string{"__name__": "http_request_duration_bucket"}))},
+							SeriesLabels: labelpb.LabelSetFromStrings("__name__", "http_request_duration_bucket"),
 							Exemplars:    []*exemplarspb.Exemplar{{Value: 1}},
 						}),
 					},
-					LabelSets: []labels.Labels{labels.FromMap(map[string]string{"cluster": "non-matching"}), labels.FromMap(map[string]string{"cluster": "A"})},
+					LabelSets: []labelpb.Labels{labelpb.FromStrings("cluster", "non-matching"), labelpb.FromStrings("cluster", "A")},
 				},
 			},
 			server: &testExemplarServer{},
 			wantResponses: []*exemplarspb.ExemplarsResponse{
 				exemplarspb.NewExemplarsResponse(&exemplarspb.ExemplarData{
-					SeriesLabels: labelpb.ZLabelSet{Labels: labelpb.ZLabelsFromPromLabels(labels.FromMap(map[string]string{"__name__": "http_request_duration_bucket"}))},
+					SeriesLabels: labelpb.LabelSetFromStrings("__name__", "http_request_duration_bucket"),
 					Exemplars:    []*exemplarspb.Exemplar{{Value: 1}},
 				}),
 			},
@@ -279,26 +278,26 @@ func TestProxy(t *testing.T) {
 				{
 					ExemplarsClient: &testExemplarClient{
 						response: exemplarspb.NewExemplarsResponse(&exemplarspb.ExemplarData{
-							SeriesLabels: labelpb.ZLabelSet{Labels: labelpb.ZLabelsFromPromLabels(labels.FromMap(map[string]string{"foo": "bar"}))},
+							SeriesLabels: labelpb.LabelSetFromStrings("foo", "bar"),
 							Exemplars:    []*exemplarspb.Exemplar{{Value: 1}},
 						}),
 					},
-					LabelSets: []labels.Labels{labels.FromMap(map[string]string{"cluster": "A"})},
+					LabelSets: []labelpb.Labels{labelpb.FromStrings("cluster", "A")},
 				},
 				{
 					ExemplarsClient: &testExemplarClient{
 						response: exemplarspb.NewExemplarsResponse(&exemplarspb.ExemplarData{
-							SeriesLabels: labelpb.ZLabelSet{Labels: labelpb.ZLabelsFromPromLabels(labels.FromMap(map[string]string{"foo": "baz"}))},
+							SeriesLabels: labelpb.LabelSetFromStrings("foo", "baz"),
 							Exemplars:    []*exemplarspb.Exemplar{{Value: 2}},
 						}),
 					},
-					LabelSets: []labels.Labels{labels.FromMap(map[string]string{"cluster": "B"})},
+					LabelSets: []labelpb.Labels{labelpb.FromStrings("cluster", "B")},
 				},
 			},
 			server: &testExemplarServer{},
 			wantResponses: []*exemplarspb.ExemplarsResponse{
 				exemplarspb.NewExemplarsResponse(&exemplarspb.ExemplarData{
-					SeriesLabels: labelpb.ZLabelSet{Labels: labelpb.ZLabelsFromPromLabels(labels.FromMap(map[string]string{"foo": "bar"}))},
+					SeriesLabels: labelpb.LabelSetFromStrings("foo", "bar"),
 					Exemplars:    []*exemplarspb.Exemplar{{Value: 1}},
 				}),
 			},
@@ -313,30 +312,30 @@ func TestProxy(t *testing.T) {
 				{
 					ExemplarsClient: &testExemplarClient{
 						response: exemplarspb.NewExemplarsResponse(&exemplarspb.ExemplarData{
-							SeriesLabels: labelpb.ZLabelSet{Labels: labelpb.ZLabelsFromPromLabels(labels.FromMap(map[string]string{"foo": "bar"}))},
+							SeriesLabels: labelpb.LabelSetFromStrings("foo", "bar"),
 							Exemplars:    []*exemplarspb.Exemplar{{Value: 1}},
 						}),
 					},
-					LabelSets: []labels.Labels{labels.FromMap(map[string]string{"cluster": "A"})},
+					LabelSets: []labelpb.Labels{labelpb.FromStrings("cluster", "A")},
 				},
 				{
 					ExemplarsClient: &testExemplarClient{
 						response: exemplarspb.NewExemplarsResponse(&exemplarspb.ExemplarData{
-							SeriesLabels: labelpb.ZLabelSet{Labels: labelpb.ZLabelsFromPromLabels(labels.FromMap(map[string]string{"foo": "baz"}))},
+							SeriesLabels: labelpb.LabelSetFromStrings("foo", "baz"),
 							Exemplars:    []*exemplarspb.Exemplar{{Value: 2}},
 						}),
 					},
-					LabelSets: []labels.Labels{labels.FromMap(map[string]string{"cluster": "B"})},
+					LabelSets: []labelpb.Labels{labelpb.FromStrings("cluster", "B")},
 				},
 			},
 			server: &testExemplarServer{},
 			wantResponses: []*exemplarspb.ExemplarsResponse{
 				exemplarspb.NewExemplarsResponse(&exemplarspb.ExemplarData{
-					SeriesLabels: labelpb.ZLabelSet{Labels: labelpb.ZLabelsFromPromLabels(labels.FromMap(map[string]string{"foo": "bar"}))},
+					SeriesLabels: labelpb.LabelSetFromStrings("foo", "bar"),
 					Exemplars:    []*exemplarspb.Exemplar{{Value: 1}},
 				}),
 				exemplarspb.NewExemplarsResponse(&exemplarspb.ExemplarData{
-					SeriesLabels: labelpb.ZLabelSet{Labels: labelpb.ZLabelsFromPromLabels(labels.FromMap(map[string]string{"foo": "baz"}))},
+					SeriesLabels: labelpb.LabelSetFromStrings("foo", "baz"),
 					Exemplars:    []*exemplarspb.Exemplar{{Value: 2}},
 				}),
 			},
@@ -387,7 +386,7 @@ func TestProxyDataRace(t *testing.T) {
 			ExemplarsClient: &testExemplarClient{
 				recvErr: errors.New("err"),
 			},
-			LabelSets: []labels.Labels{labels.FromMap(map[string]string{"cluster": "A"})},
+			LabelSets: []labelpb.Labels{labelpb.FromStrings("cluster", "A")},
 		}
 		size := 100
 		endpoints := make([]*exemplarspb.ExemplarStore, 0, size)
@@ -395,7 +394,7 @@ func TestProxyDataRace(t *testing.T) {
 			endpoints = append(endpoints, es)
 		}
 		return endpoints
-	}, labels.FromMap(map[string]string{"query": "foo"}))
+	}, labelpb.FromStrings("query", "foo"))
 	req := &exemplarspb.ExemplarsRequest{
 		Query:                   `http_request_duration_bucket{query="foo"}`,
 		PartialResponseStrategy: storepb.PartialResponseStrategy_WARN,

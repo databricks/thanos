@@ -18,7 +18,6 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/prometheus/model/labels"
 
 	grpc_opentracing "github.com/thanos-io/thanos/pkg/tracing/tracing_middleware"
 
@@ -114,7 +113,7 @@ func (d *responseDeduplicator) Next() bool {
 		lbls := d.bufferedSameSeries[0].GetSeries().Labels
 		atLbls := s.GetSeries().Labels
 
-		if labels.Compare(labelpb.ZLabelsToPromLabels(lbls), labelpb.ZLabelsToPromLabels(atLbls)) == 0 {
+		if labelpb.Compare(labelpb.Labels(lbls), labelpb.Labels(atLbls)) == 0 {
 			d.bufferedSameSeries = append(d.bufferedSameSeries, s)
 			continue
 		}
@@ -144,8 +143,7 @@ func (d *responseDeduplicator) chainSeriesAndRemIdenticalChunks(series []*storep
 				}
 
 				if _, ok := d.chunkDedupMap[hash]; !ok {
-					chk := chk
-					d.chunkDedupMap[hash] = &chk
+					d.chunkDedupMap[hash] = chk
 					d.chunkCountMap[hash] = 1
 					break
 				} else {
@@ -160,7 +158,7 @@ func (d *responseDeduplicator) chainSeriesAndRemIdenticalChunks(series []*storep
 		return series[0]
 	}
 
-	finalChunks := make([]storepb.AggrChunk, 0, len(d.chunkDedupMap))
+	finalChunks := make([]*storepb.AggrChunk, 0, len(d.chunkDedupMap))
 	for hash, chk := range d.chunkDedupMap {
 		if d.quorumChunkDedup {
 			// NB: this is specific to Databricks' setup where each time series is written to at least 2 out of 3 replicas.
@@ -170,14 +168,14 @@ func (d *responseDeduplicator) chainSeriesAndRemIdenticalChunks(series []*storep
 			// We want to send those two identical replicas to the later quorum-based deduplication process to dominate any corrupt third replica.
 			if d.chunkCountMap[hash] >= 3 {
 				// Most of cases should hit this branch.
-				finalChunks = append(finalChunks, *chk)
+				finalChunks = append(finalChunks, chk)
 			} else {
 				for i := 0; i < d.chunkCountMap[hash]; i++ {
-					finalChunks = append(finalChunks, *chk)
+					finalChunks = append(finalChunks, chk)
 				}
 			}
 		} else {
-			finalChunks = append(finalChunks, *chk)
+			finalChunks = append(finalChunks, chk)
 		}
 	}
 
@@ -211,10 +209,7 @@ func NewProxyResponseLoserTree(seriesSets ...respSet) *losertree.Tree[*storepb.S
 			return true
 		}
 		if a.GetSeries() != nil && b.GetSeries() != nil {
-			iLbls := labelpb.ZLabelsToPromLabels(a.GetSeries().Labels)
-			jLbls := labelpb.ZLabelsToPromLabels(b.GetSeries().Labels)
-
-			return labels.Compare(iLbls, jLbls) < 0
+			return labelpb.Compare(a.GetSeries().Labels, b.GetSeries().Labels) < 0
 		} else if a.GetSeries() == nil && b.GetSeries() != nil {
 			return true
 		} else if a.GetSeries() != nil && b.GetSeries() == nil {
@@ -235,7 +230,7 @@ func (l *lazyRespSet) StoreID() string {
 }
 
 func (l *lazyRespSet) Labelset() string {
-	return labelpb.PromLabelSetsToString(l.storeLabelSets)
+	return labelpb.LabelSetsToString(l.storeLabelSets)
 }
 
 func (l *lazyRespSet) StoreLabels() map[string]struct{} {
@@ -252,7 +247,7 @@ type lazyRespSet struct {
 	cl             storepb.Store_SeriesClient
 	closeSeries    context.CancelFunc
 	storeName      string
-	storeLabelSets []labels.Labels
+	storeLabelSets []labelpb.Labels
 	storeLabels    map[string]struct{}
 	frameTimeout   time.Duration
 
@@ -357,7 +352,7 @@ func newLazyRespSet(
 	span opentracing.Span,
 	frameTimeout time.Duration,
 	storeName string,
-	storeLabelSets []labels.Labels,
+	storeLabelSets []labelpb.Labels,
 	closeSeries context.CancelFunc,
 	cl storepb.Store_SeriesClient,
 	shardMatcher *storepb.ShardMatcher,
@@ -392,9 +387,9 @@ func newLazyRespSet(
 	}
 	respSet.storeLabels = make(map[string]struct{})
 	for _, ls := range storeLabelSets {
-		ls.Range(func(l labels.Label) {
+		for _, l := range ls {
 			respSet.storeLabels[l.Name] = struct{}{}
-		})
+		}
 	}
 
 	go func(st string, l *lazyRespSet) {
@@ -465,9 +460,9 @@ func newLazyRespSet(
 			}
 
 			numResponses++
-			bytesProcessed += resp.Size()
+			bytesProcessed += resp.SizeVT()
 
-			if resp.GetSeries() != nil && applySharding && !shardMatcher.MatchesZLabels(resp.GetSeries().Labels) {
+			if resp.GetSeries() != nil && applySharding && !shardMatcher.MatchesLabels(resp.GetSeries().Labels) {
 				return true
 			}
 
@@ -646,7 +641,7 @@ type eagerRespSet struct {
 
 	storeName      string
 	storeLabels    map[string]struct{}
-	storeLabelSets []labels.Labels
+	storeLabelSets []labelpb.Labels
 
 	// Internal bookkeeping.
 	bufferedResponses []*storepb.SeriesResponse
@@ -658,7 +653,7 @@ func newEagerRespSet(
 	span opentracing.Span,
 	frameTimeout time.Duration,
 	storeName string,
-	storeLabelSets []labels.Labels,
+	storeLabelSets []labelpb.Labels,
 	closeSeries context.CancelFunc,
 	cl storepb.Store_SeriesClient,
 	shardMatcher *storepb.ShardMatcher,
@@ -680,9 +675,9 @@ func newEagerRespSet(
 	}
 	ret.storeLabels = make(map[string]struct{})
 	for _, ls := range storeLabelSets {
-		ls.Range(func(l labels.Label) {
+		for _, l := range ls {
 			ret.storeLabels[l.Name] = struct{}{}
-		})
+		}
 	}
 
 	ret.wg.Add(1)
@@ -738,9 +733,9 @@ func newEagerRespSet(
 			}
 
 			numResponses++
-			bytesProcessed += resp.Size()
+			bytesProcessed += resp.SizeVT()
 
-			if resp.GetSeries() != nil && applySharding && !shardMatcher.MatchesZLabels(resp.GetSeries().Labels) {
+			if resp.GetSeries() != nil && applySharding && !shardMatcher.MatchesLabels(resp.GetSeries().Labels) {
 				return true
 			}
 
@@ -775,14 +770,6 @@ func newEagerRespSet(
 	return ret
 }
 
-func rmLabels(l labels.Labels, labelsToRemove map[string]struct{}) labels.Labels {
-	b := labels.NewBuilder(l)
-	for k := range labelsToRemove {
-		b.Del(k)
-	}
-	return b.Labels()
-}
-
 // sortWithoutLabels removes given labels from series and re-sorts the series responses that the same
 // series with different labels are coming right after each other. Other types of responses are moved to front.
 func sortWithoutLabels(set []*storepb.SeriesResponse, labelsToRemove map[string]struct{}) {
@@ -793,7 +780,7 @@ func sortWithoutLabels(set []*storepb.SeriesResponse, labelsToRemove map[string]
 		}
 
 		if len(labelsToRemove) > 0 {
-			ser.Labels = labelpb.ZLabelsFromPromLabels(rmLabels(labelpb.ZLabelsToPromLabels(ser.Labels), labelsToRemove))
+			ser.Labels = labelpb.RmLabelsInPlace(labelpb.Labels(ser.Labels), labelsToRemove)
 		}
 	}
 
@@ -808,7 +795,7 @@ func sortWithoutLabels(set []*storepb.SeriesResponse, labelsToRemove map[string]
 		if sj == nil {
 			return false
 		}
-		return labels.Compare(labelpb.ZLabelsToPromLabels(si.Labels), labelpb.ZLabelsToPromLabels(sj.Labels)) < 0
+		return labelpb.Compare(si.Labels, sj.Labels) < 0
 	})
 }
 
@@ -851,7 +838,7 @@ func (l *eagerRespSet) StoreID() string {
 }
 
 func (l *eagerRespSet) Labelset() string {
-	return labelpb.PromLabelSetsToString(l.storeLabelSets)
+	return labelpb.LabelSetsToString(l.storeLabelSets)
 }
 
 func (l *eagerRespSet) StoreLabels() map[string]struct{} {

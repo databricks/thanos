@@ -8,13 +8,13 @@ import (
 	"testing"
 
 	"github.com/efficientgo/core/testutil"
-	"github.com/prometheus/prometheus/model/labels"
-	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
+
+	"github.com/thanos-io/thanos/pkg/store/labelpb"
 )
 
 func TestIteratorEdgeCases(t *testing.T) {
-	ms := NewQuorumSeries(labels.Labels{}, []storage.Series{}, "")
+	ms := NewQuorumSeries(labelpb.Labels{}, []Series{}, "")
 	it := ms.Iterator(nil)
 	testutil.Ok(t, it.Err())
 	testutil.Equals(t, int64(math.MinInt64), it.AtT())
@@ -34,46 +34,46 @@ func TestMergedSeriesIterator(t *testing.T) {
 			name: "Single dedup label",
 			input: []series{
 				{
-					lset:    labels.Labels{{Name: "a", Value: "1"}, {Name: "c", Value: "3"}},
+					lset:    labelpb.FromStrings("a", "1", "c", "3"),
 					samples: []sample{{10000, 1}, {20000, 2}},
 				}, {
-					lset:    labels.Labels{{Name: "a", Value: "1"}, {Name: "c", Value: "3"}},
+					lset:    labelpb.FromStrings("a", "1", "c", "3"),
 					samples: []sample{{60000, 3}, {70000, 4}},
 				}, {
-					lset:    labels.Labels{{Name: "a", Value: "1"}, {Name: "c", Value: "3"}},
+					lset:    labelpb.FromStrings("a", "1", "c", "3"),
 					samples: []sample{{200000, 5}, {210000, 6}},
 				}, {
-					lset:    labels.Labels{{Name: "a", Value: "1"}, {Name: "c", Value: "3"}},
+					lset:    labelpb.FromStrings("a", "1", "c", "3"),
 					samples: []sample{{10000, 1}, {20000, 2}},
 				}, {
-					lset:    labels.Labels{{Name: "a", Value: "1"}, {Name: "c", Value: "3"}, {Name: "d", Value: "4"}},
+					lset:    labelpb.FromStrings("a", "1", "c", "3", "d", "4"),
 					samples: []sample{{10000, 1}, {20000, 2}},
 				}, {
-					lset:    labels.Labels{{Name: "a", Value: "1"}, {Name: "c", Value: "4"}},
+					lset:    labelpb.FromStrings("a", "1", "c", "4"),
 					samples: []sample{{10000, 1}, {20000, 2}},
 				}, {
-					lset:    labels.Labels{{Name: "a", Value: "2"}, {Name: "c", Value: "3"}},
+					lset:    labelpb.FromStrings("a", "2", "c", "3"),
 					samples: []sample{{10000, 1}, {20000, 2}},
 				}, {
-					lset:    labels.Labels{{Name: "a", Value: "2"}, {Name: "c", Value: "3"}},
+					lset:    labelpb.FromStrings("a", "2", "c", "3"),
 					samples: []sample{{60000, 3}, {70000, 4}},
 				},
 			},
 			exp: []series{
 				{
-					lset:    labels.Labels{{Name: "a", Value: "1"}, {Name: "c", Value: "3"}},
+					lset:    labelpb.FromStrings("a", "1", "c", "3"),
 					samples: []sample{{10000, 1}, {20000, 2}, {60000, 3}, {70000, 4}, {200000, 5}, {210000, 6}},
 				},
 				{
-					lset:    labels.Labels{{Name: "a", Value: "1"}, {Name: "c", Value: "3"}, {Name: "d", Value: "4"}},
+					lset:    labelpb.FromStrings("a", "1", "c", "3", "d", "4"),
 					samples: []sample{{10000, 1}, {20000, 2}},
 				},
 				{
-					lset:    labels.Labels{{Name: "a", Value: "1"}, {Name: "c", Value: "4"}},
+					lset:    labelpb.FromStrings("a", "1", "c", "4"),
 					samples: []sample{{10000, 1}, {20000, 2}},
 				},
 				{
-					lset:    labels.Labels{{Name: "a", Value: "2"}, {Name: "c", Value: "3"}},
+					lset:    labelpb.FromStrings("a", "2", "c", "3"),
 					samples: []sample{{10000, 1}, {20000, 2}, {60000, 3}, {70000, 4}},
 				},
 			},
@@ -82,50 +82,50 @@ func TestMergedSeriesIterator(t *testing.T) {
 			name: "Multi dedup label",
 			input: []series{
 				{
-					lset:    labels.Labels{{Name: "a", Value: "1"}, {Name: "c", Value: "3"}},
+					lset:    labelpb.FromStrings("a", "1", "c", "3"),
 					samples: []sample{{10000, 1}, {20000, 2}},
 				}, {
-					lset:    labels.Labels{{Name: "a", Value: "1"}, {Name: "c", Value: "3"}},
+					lset:    labelpb.FromStrings("a", "1", "c", "3"),
 					samples: []sample{{60000, 3}, {70000, 4}},
 				}, {
-					lset:    labels.Labels{{Name: "a", Value: "1"}, {Name: "c", Value: "3"}},
+					lset:    labelpb.FromStrings("a", "1", "c", "3"),
 					samples: []sample{{200000, 5}, {210000, 6}},
 				}, {
-					lset:    labels.Labels{{Name: "a", Value: "1"}, {Name: "c", Value: "3"}, {Name: "d", Value: "4"}},
+					lset:    labelpb.FromStrings("a", "1", "c", "3", "d", "4"),
 					samples: []sample{{10000, 1}, {20000, 2}},
 				}, {
-					lset:    labels.Labels{{Name: "a", Value: "1"}, {Name: "c", Value: "3"}},
+					lset:    labelpb.FromStrings("a", "1", "c", "3"),
 					samples: []sample{{10000, 1}, {20000, 2}},
 				}, {
-					lset:    labels.Labels{{Name: "a", Value: "1"}, {Name: "c", Value: "4"}},
+					lset:    labelpb.FromStrings("a", "1", "c", "4"),
 					samples: []sample{{10000, 1}, {20000, 2}},
 				}, {
-					lset:    labels.Labels{{Name: "a", Value: "2"}, {Name: "c", Value: "3"}},
+					lset:    labelpb.FromStrings("a", "2", "c", "3"),
 					samples: []sample{{10000, 1}, {20000, 2}},
 				}, {
-					lset:    labels.Labels{{Name: "a", Value: "2"}, {Name: "c", Value: "3"}},
+					lset:    labelpb.FromStrings("a", "2", "c", "3"),
 					samples: []sample{{60000, 3}, {70000, 4}},
 				},
 			},
 			exp: []series{
 				{
-					lset:    labels.Labels{{Name: "a", Value: "1"}, {Name: "c", Value: "3"}},
+					lset:    labelpb.FromStrings("a", "1", "c", "3"),
 					samples: []sample{{10000, 1}, {20000, 2}, {60000, 3}, {70000, 4}, {200000, 5}, {210000, 6}},
 				},
 				{
-					lset:    labels.Labels{{Name: "a", Value: "1"}, {Name: "c", Value: "3"}, {Name: "d", Value: "4"}},
+					lset:    labelpb.FromStrings("a", "1", "c", "3", "d", "4"),
 					samples: []sample{{10000, 1}, {20000, 2}},
 				},
 				{
-					lset:    labels.Labels{{Name: "a", Value: "1"}, {Name: "c", Value: "3"}},
+					lset:    labelpb.FromStrings("a", "1", "c", "3"),
 					samples: []sample{{10000, 1}, {20000, 2}},
 				},
 				{
-					lset:    labels.Labels{{Name: "a", Value: "1"}, {Name: "c", Value: "4"}},
+					lset:    labelpb.FromStrings("a", "1", "c", "4"),
 					samples: []sample{{10000, 1}, {20000, 2}},
 				},
 				{
-					lset:    labels.Labels{{Name: "a", Value: "2"}, {Name: "c", Value: "3"}},
+					lset:    labelpb.FromStrings("a", "2", "c", "3"),
 					samples: []sample{{10000, 1}, {20000, 2}, {60000, 3}, {70000, 4}},
 				},
 			},
@@ -134,16 +134,16 @@ func TestMergedSeriesIterator(t *testing.T) {
 			name: "Multi dedup label - some series don't have all dedup labels",
 			input: []series{
 				{
-					lset:    labels.Labels{{Name: "a", Value: "1"}, {Name: "c", Value: "3"}},
+					lset:    labelpb.FromStrings("a", "1", "c", "3"),
 					samples: []sample{{10000, 1}, {20000, 2}},
 				}, {
-					lset:    labels.Labels{{Name: "a", Value: "1"}, {Name: "c", Value: "3"}},
+					lset:    labelpb.FromStrings("a", "1", "c", "3"),
 					samples: []sample{{60000, 3}, {70000, 4}},
 				},
 			},
 			exp: []series{
 				{
-					lset:    labels.Labels{{Name: "a", Value: "1"}, {Name: "c", Value: "3"}},
+					lset:    labelpb.FromStrings("a", "1", "c", "3"),
 					samples: []sample{{10000, 1}, {20000, 2}, {60000, 3}, {70000, 4}},
 				},
 			},
@@ -158,19 +158,19 @@ func TestMergedSeriesIterator(t *testing.T) {
 			name: "Multi dedup labels - data points absent",
 			input: []series{
 				{
-					lset:    labels.Labels{{Name: "a", Value: "5"}, {Name: "c", Value: "6"}},
+					lset:    labelpb.FromStrings("a", "5", "c", "6"),
 					samples: []sample{{10000, 1}, {30000, 3}, {40000, 4}},
 				}, {
-					lset:    labels.Labels{{Name: "a", Value: "5"}, {Name: "c", Value: "6"}},
+					lset:    labelpb.FromStrings("a", "5", "c", "6"),
 					samples: []sample{{10000, 1}, {20000, 2}, {30000, 3}, {50000, 5}},
 				}, {
-					lset:    labels.Labels{{Name: "a", Value: "5"}, {Name: "c", Value: "6"}},
+					lset:    labelpb.FromStrings("a", "5", "c", "6"),
 					samples: []sample{{10000, 1}, {80000, 10}},
 				},
 			},
 			exp: []series{
 				{
-					lset:    labels.Labels{{Name: "a", Value: "5"}, {Name: "c", Value: "6"}},
+					lset:    labelpb.FromStrings("a", "5", "c", "6"),
 					samples: []sample{{10000, 1}, {20000, 2}, {30000, 3}, {40000, 4}, {50000, 5}, {80000, 10}},
 				},
 			},
@@ -179,32 +179,32 @@ func TestMergedSeriesIterator(t *testing.T) {
 			name: "Avoid corrupt Values",
 			input: []series{
 				{
-					lset:    labels.Labels{{Name: "a", Value: "5"}, {Name: "c", Value: "6"}},
+					lset:    labelpb.FromStrings("a", "5", "c", "6"),
 					samples: []sample{{10000, 1}, {20000, 23492}, {30000, 3}, {50000, 5}},
 				}, {
-					lset:    labels.Labels{{Name: "a", Value: "5"}, {Name: "c", Value: "6"}},
+					lset:    labelpb.FromStrings("a", "5", "c", "6"),
 					samples: []sample{{10000, 1}, {20000, 2}, {30000, 3}, {50000, 5}},
 				}, {
-					lset:    labels.Labels{{Name: "a", Value: "5"}, {Name: "c", Value: "6"}},
+					lset:    labelpb.FromStrings("a", "5", "c", "6"),
 					samples: []sample{{10000, 1}, {20000, 2}, {30000, 3}, {50000, 5}},
 				}, {
-					lset:    labels.Labels{{Name: "b", Value: "5"}, {Name: "c", Value: "6"}},
+					lset:    labelpb.FromStrings("b", "5", "c", "6"),
 					samples: []sample{{10000, 1}, {20000, 2}, {30000, 3}, {50000, 5}},
 				}, {
-					lset:    labels.Labels{{Name: "b", Value: "5"}, {Name: "c", Value: "6"}},
+					lset:    labelpb.FromStrings("b", "5", "c", "6"),
 					samples: []sample{{10000, 1}, {20000, 2}, {30000, 3}, {50000, 5}},
 				}, {
-					lset:    labels.Labels{{Name: "b", Value: "5"}, {Name: "c", Value: "6"}},
+					lset:    labelpb.FromStrings("b", "5", "c", "6"),
 					samples: []sample{{10000, 1}, {20000, 1234}, {30000, 3}, {50000, 5}},
 				},
 			},
 			exp: []series{
 				{
-					lset:    labels.Labels{{Name: "a", Value: "5"}, {Name: "c", Value: "6"}},
+					lset:    labelpb.FromStrings("a", "5", "c", "6"),
 					samples: []sample{{10000, 1}, {20000, 2}, {30000, 3}, {50000, 5}},
 				},
 				{
-					lset:    labels.Labels{{Name: "b", Value: "5"}, {Name: "c", Value: "6"}},
+					lset:    labelpb.FromStrings("b", "5", "c", "6"),
 					samples: []sample{{10000, 1}, {20000, 2}, {30000, 3}, {50000, 5}},
 				},
 			},
@@ -213,7 +213,7 @@ func TestMergedSeriesIterator(t *testing.T) {
 			name: "ignore sampling interval too small",
 			input: []series{
 				{
-					lset: labels.Labels{{Name: "a", Value: "1"}},
+					lset: labelpb.FromStrings("a", "1"),
 					samples: []sample{
 						{10000, 8.0},
 						{20000, 9.0},
@@ -225,7 +225,7 @@ func TestMergedSeriesIterator(t *testing.T) {
 						{100000, 9 + 6.0},
 					},
 				}, {
-					lset: labels.Labels{{Name: "a", Value: "1"}},
+					lset: labelpb.FromStrings("a", "1"),
 					samples: []sample{
 						{10001, 8.0}, // Penalty 5000 will be added.
 						// 20001 was app reset. No sample, because stale marker but removed by downsample.CounterSeriesIterator. Penalty 2 * (20000 - 10000) will be added.
@@ -239,7 +239,7 @@ func TestMergedSeriesIterator(t *testing.T) {
 			},
 			exp: []series{
 				{
-					lset:    labels.Labels{{Name: "a", Value: "1"}},
+					lset:    labelpb.FromStrings("a", "1"),
 					samples: []sample{{10000, 8}, {20000, 9}, {45001, 9}, {50001, 10}, {55001, 10}, {65001, 11}, {80000, 13}, {90000, 14}, {100000, 15}},
 				},
 			},
@@ -255,7 +255,7 @@ func TestMergedSeriesIterator(t *testing.T) {
 			isCounter: true,
 			input: []series{
 				{
-					lset: labels.FromStrings("a", "1"),
+					lset: labelpb.FromStrings("a", "1"),
 					samples: []sample{
 						{10000, 8.0}, // Smaller timestamp, this will be chosen. CurrValue = 8.0.
 						{20000, 9.0}, // Same. CurrValue = 9.0.
@@ -268,7 +268,7 @@ func TestMergedSeriesIterator(t *testing.T) {
 						{100000, 9 + 6.0},
 					},
 				}, {
-					lset: labels.FromStrings("a", "1"),
+					lset: labelpb.FromStrings("a", "1"),
 					samples: []sample{
 						{10001, 8.0}, // Penalty 5000 will be added.
 						// 20001 was app reset. No sample, because stale marker but removed by downsample.CounterSeriesIterator. Penalty 2 * (20000 - 10000) will be added.
@@ -282,7 +282,7 @@ func TestMergedSeriesIterator(t *testing.T) {
 			},
 			exp: []series{
 				{
-					lset:    labels.FromStrings("a", "1"),
+					lset:    labelpb.FromStrings("a", "1"),
 					samples: []sample{{10000, 8}, {20000, 9}, {45001, 9}, {t: 50001, f: 10}, {55001, 10}, {65001, 11}, {t: 80000, f: 13}, {90000, 14}, {100000, 15}},
 				},
 			},
@@ -293,12 +293,12 @@ func TestMergedSeriesIterator(t *testing.T) {
 			isCounter: false,
 			input: []series{
 				{
-					lset: labels.FromStrings("a", "1"),
+					lset: labelpb.FromStrings("a", "1"),
 					samples: []sample{
 						{10000, 8.0}, {20000, 9.0}, {50001, 9 + 1.0}, {60000, 9 + 2.0}, {70000, 9 + 3.0}, {80000, 9 + 4.0}, {90000, 9 + 5.0}, {100000, 9 + 6.0},
 					},
 				}, {
-					lset: labels.FromStrings("a", "1"),
+					lset: labelpb.FromStrings("a", "1"),
 					samples: []sample{
 						{10001, 8.0}, {45001, 8 + 0.5}, {55001, 8 + 1.5}, {65001, 8 + 2.5},
 					},
@@ -306,7 +306,7 @@ func TestMergedSeriesIterator(t *testing.T) {
 			},
 			exp: []series{
 				{
-					lset:    labels.FromStrings("a", "1"),
+					lset:    labelpb.FromStrings("a", "1"),
 					samples: []sample{{10000, 8}, {20000, 9}, {45001, 8.5}, {t: 50001, f: 10}, {55001, 9.5}, {65001, 10.5}, {t: 80000, f: 13}, {90000, 14}, {100000, 15}},
 				},
 			},
@@ -316,13 +316,13 @@ func TestMergedSeriesIterator(t *testing.T) {
 			isCounter: false,
 			input: []series{
 				{
-					lset: labels.FromStrings("a", "1"),
+					lset: labelpb.FromStrings("a", "1"),
 					samples: []sample{
 						{10000, 8.0}, {20000, 9.0}, {1050001, 1.0}, {1060001, 5.0}, {2060001, 3.0},
 					},
 				},
 				{
-					lset: labels.FromStrings("a", "1"),
+					lset: labelpb.FromStrings("a", "1"),
 					samples: []sample{
 						{10000, 8.0}, {20000, 9.0}, {1050001, 1.0}, {1060001, 5.0}, {2060001, 3.0},
 					},
@@ -330,7 +330,7 @@ func TestMergedSeriesIterator(t *testing.T) {
 			},
 			exp: []series{
 				{
-					lset:    labels.FromStrings("a", "1"),
+					lset:    labelpb.FromStrings("a", "1"),
 					samples: []sample{{10000, 8.0}, {20000, 9.0}, {1050001, 1.0}, {1060001, 5.0}, {2060001, 3.0}},
 				},
 			},
@@ -340,13 +340,13 @@ func TestMergedSeriesIterator(t *testing.T) {
 			isCounter: true,
 			input: []series{
 				{
-					lset: labels.FromStrings("a", "1"),
+					lset: labelpb.FromStrings("a", "1"),
 					samples: []sample{
 						{10000, 8.0}, {20000, 9.0}, {1050001, 1.0}, {1060001, 5.0}, {2060001, 3.0},
 					},
 				},
 				{
-					lset: labels.FromStrings("a", "1"),
+					lset: labelpb.FromStrings("a", "1"),
 					samples: []sample{
 						{10000, 8.0}, {20000, 9.0}, {1050001, 1.0}, {1060001, 5.0}, {2060001, 3.0},
 					},
@@ -354,7 +354,7 @@ func TestMergedSeriesIterator(t *testing.T) {
 			},
 			exp: []series{
 				{
-					lset:    labels.FromStrings("a", "1"),
+					lset:    labelpb.FromStrings("a", "1"),
 					samples: []sample{{10000, 8.0}, {20000, 9.0}, {1050001, 9.0}, {1060001, 13.0}, {2060001, 13.0}},
 				},
 			},
@@ -364,19 +364,19 @@ func TestMergedSeriesIterator(t *testing.T) {
 			isCounter: true,
 			input: []series{
 				{
-					lset: labels.FromStrings("a", "1"),
+					lset: labelpb.FromStrings("a", "1"),
 					samples: []sample{
 						{10000, 10.0}, {100000, 8.0}, {110000, 10.0},
 					},
 				},
 				{
-					lset: labels.FromStrings("a", "1"),
+					lset: labelpb.FromStrings("a", "1"),
 					samples: []sample{
 						{10000, 10.0}, {20000, 0.0}, {30000, 1.0}, {40000, 2.0}, {50000, 3.0}, {60000, 4.0}, {70000, 5.0}, {80000, 6.0}, {90000, 7.0}, {100000, 8.0}, {110000, 10.0},
 					},
 				},
 				{
-					lset: labels.FromStrings("a", "1"),
+					lset: labelpb.FromStrings("a", "1"),
 					samples: []sample{
 						{10000, 10.0}, {20000, 0.0}, {30000, 1.0}, {40000, 2.0}, {50000, 3.0}, {60000, 4.0}, {70000, 5.0}, {80000, 6.0}, {90000, 7.0}, {100000, 8.0}, {110000, 10.0},
 					},
@@ -384,7 +384,7 @@ func TestMergedSeriesIterator(t *testing.T) {
 			},
 			exp: []series{
 				{
-					lset: labels.FromStrings("a", "1"),
+					lset: labelpb.FromStrings("a", "1"),
 					samples: []sample{
 						{10000, 10.0}, {20000, 10.0}, {30000, 11.0}, {40000, 12.0}, {50000, 13.0}, {60000, 14.0}, {70000, 15.0}, {80000, 16.0}, {90000, 17.0}, {100000, 18.0}, {110000, 20.0},
 					},
@@ -400,7 +400,7 @@ func TestMergedSeriesIterator(t *testing.T) {
 				f = "rate"
 			}
 			dedupSet := NewSeriesSet(&mockedSeriesSet{series: tcase.input}, f, AlgorithmQuorum)
-			var ats []storage.Series
+			var ats []Series
 			for dedupSet.Next() {
 				ats = append(ats, dedupSet.At())
 			}

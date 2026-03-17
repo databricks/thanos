@@ -17,7 +17,6 @@ import (
 
 	"github.com/efficientgo/core/testutil"
 	"github.com/thanos-io/thanos/pkg/exemplars/exemplarspb"
-	"github.com/thanos-io/thanos/pkg/store/labelpb"
 	"github.com/thanos-io/thanos/test/e2e/e2ethanos"
 )
 
@@ -131,21 +130,18 @@ func exemplarsOnExpectedSeries(requiredSeriesLabels map[string]string) func(data
 		}
 
 		// Compare series labels.
-		seriesLabels := labelpb.ZLabelSetsToPromLabelSets(data[0].SeriesLabels)
-		for _, lbls := range seriesLabels {
-			for k, v := range requiredSeriesLabels {
-				if lbls.Get(k) != v {
-					return errors.Errorf("unexpected labels in result, expected %v, got: %v", requiredSeriesLabels, seriesLabels)
-				}
+		seriesLabels := data[0].GetSeriesLabels().PromLabels()
+		for k, v := range requiredSeriesLabels {
+			if seriesLabels.Get(k) != v {
+				return errors.Errorf("unexpected labels in result, expected %v, got: %v", requiredSeriesLabels, seriesLabels)
 			}
 		}
 
 		// Make sure the exemplar contains the correct traceID label.
 		for _, exemplar := range data[0].Exemplars {
-			for _, lbls := range labelpb.ZLabelSetsToPromLabelSets(exemplar.Labels) {
-				if !lbls.Has(traceIDLabel) {
-					return errors.Errorf("unexpected labels in exemplar, expected %v, got: %v", traceIDLabel, exemplar.Labels)
-				}
+			lbls := exemplar.GetLabels().PromLabels()
+			if !lbls.Has(traceIDLabel) {
+				return errors.Errorf("unexpected labels in exemplar, expected %v, got: %v", traceIDLabel, exemplar.Labels)
 			}
 		}
 		return nil

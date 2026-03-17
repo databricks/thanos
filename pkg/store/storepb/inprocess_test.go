@@ -13,9 +13,12 @@ import (
 	"github.com/efficientgo/core/testutil"
 	"github.com/pkg/errors"
 	"github.com/thanos-io/thanos/pkg/store/labelpb"
+	thanostestutil "github.com/thanos-io/thanos/pkg/testutil"
 )
 
 type testStoreServer struct {
+	UnimplementedStoreServer
+
 	series        []*SeriesResponse
 	seriesLastReq *SeriesRequest
 
@@ -59,17 +62,17 @@ func TestServerAsClient(t *testing.T) {
 		s := &testStoreServer{
 			series: []*SeriesResponse{
 				NewSeriesResponse(&Series{
-					Labels: []labelpb.ZLabel{{Name: "a", Value: "b"}},
-					Chunks: []AggrChunk{{MinTime: 123, MaxTime: 124}, {MinTime: 12455, MaxTime: 14124}},
+					Labels: labelpb.FromStrings("a", "b"),
+					Chunks: []*AggrChunk{{MinTime: 123, MaxTime: 124}, {MinTime: 12455, MaxTime: 14124}},
 				}),
 				NewSeriesResponse(&Series{
-					Labels: []labelpb.ZLabel{{Name: "a", Value: "b1"}},
-					Chunks: []AggrChunk{{MinTime: 1231, MaxTime: 124}, {MinTime: 12455, MaxTime: 14124}},
+					Labels: labelpb.FromStrings("a", "b1"),
+					Chunks: []*AggrChunk{{MinTime: 1231, MaxTime: 124}, {MinTime: 12455, MaxTime: 14124}},
 				}),
 				NewWarnSeriesResponse(errors.New("yolo")),
 				NewSeriesResponse(&Series{
-					Labels: []labelpb.ZLabel{{Name: "a", Value: "b3"}},
-					Chunks: []AggrChunk{{MinTime: 123, MaxTime: 124}, {MinTime: 124554, MaxTime: 14124}},
+					Labels: labelpb.FromStrings("a", "b3"),
+					Chunks: []*AggrChunk{{MinTime: 123, MaxTime: 124}, {MinTime: 124554, MaxTime: 14124}},
 				}),
 			}}
 		t.Run("ok", func(t *testing.T) {
@@ -77,7 +80,7 @@ func TestServerAsClient(t *testing.T) {
 				r := &SeriesRequest{
 					MinTime:                 -214,
 					MaxTime:                 213,
-					Matchers:                []LabelMatcher{{Value: "wfsdfs", Name: "__name__", Type: LabelMatcher_EQ}},
+					Matchers:                []*LabelMatcher{{Value: "wfsdfs", Name: "__name__", Type: LabelMatcher_EQ}},
 					PartialResponseStrategy: PartialResponseStrategy_ABORT,
 				}
 				client, err := ServerAsClient(s).Series(ctx, r)
@@ -91,8 +94,8 @@ func TestServerAsClient(t *testing.T) {
 					testutil.Ok(t, err)
 					resps = append(resps, resp)
 				}
-				testutil.Equals(t, s.series, resps)
-				testutil.Equals(t, r, s.seriesLastReq)
+				thanostestutil.ProtoEquals(t, s.series, resps)
+				thanostestutil.ProtoEquals(t, r, s.seriesLastReq)
 				s.seriesLastReq = nil
 			}
 		})
@@ -102,7 +105,7 @@ func TestServerAsClient(t *testing.T) {
 				r := &SeriesRequest{
 					MinTime:                 -214,
 					MaxTime:                 213,
-					Matchers:                []LabelMatcher{{Value: "wfsdfs", Name: "__name__", Type: LabelMatcher_EQ}},
+					Matchers:                []*LabelMatcher{{Value: "wfsdfs", Name: "__name__", Type: LabelMatcher_EQ}},
 					PartialResponseStrategy: PartialResponseStrategy_ABORT,
 				}
 				client, err := ServerAsClient(s).Series(ctx, r)
@@ -120,8 +123,8 @@ func TestServerAsClient(t *testing.T) {
 					testutil.Ok(t, err)
 					resps = append(resps, resp)
 				}
-				testutil.Equals(t, s.series[:len(s.series)/2], resps)
-				testutil.Equals(t, r, s.seriesLastReq)
+				thanostestutil.ProtoEquals(t, s.series[:len(s.series)/2], resps)
+				thanostestutil.ProtoEquals(t, r, s.seriesLastReq)
 				s.seriesLastReq = nil
 			}
 		})
@@ -130,7 +133,7 @@ func TestServerAsClient(t *testing.T) {
 				r := &SeriesRequest{
 					MinTime:                 -214,
 					MaxTime:                 213,
-					Matchers:                []LabelMatcher{{Value: "wfsdfs", Name: "__name__", Type: LabelMatcher_EQ}},
+					Matchers:                []*LabelMatcher{{Value: "wfsdfs", Name: "__name__", Type: LabelMatcher_EQ}},
 					PartialResponseStrategy: PartialResponseStrategy_ABORT,
 				}
 				client, err := ServerAsClient(s).Series(ctx, r)
@@ -147,8 +150,8 @@ func TestServerAsClient(t *testing.T) {
 					testutil.Ok(t, err)
 					resps = append(resps, resp)
 				}
-				testutil.Equals(t, s.series[:len(s.series)/2], resps)
-				testutil.Equals(t, r, s.seriesLastReq)
+				thanostestutil.ProtoEquals(t, s.series[:len(s.series)/2], resps)
+				thanostestutil.ProtoEquals(t, r, s.seriesLastReq)
 				s.seriesLastReq = nil
 			}
 		})
@@ -164,8 +167,8 @@ func TestServerAsClient(t *testing.T) {
 				}
 				resp, err := ServerAsClient(s).LabelNames(ctx, r)
 				testutil.Ok(t, err)
-				testutil.Equals(t, s.labelNames, resp)
-				testutil.Equals(t, r, s.labelNamesLastReq)
+				thanostestutil.ProtoEquals(t, s.labelNames, resp)
+				thanostestutil.ProtoEquals(t, r, s.labelNamesLastReq)
 				s.labelNamesLastReq = nil
 			}
 		})
@@ -200,8 +203,8 @@ func TestServerAsClient(t *testing.T) {
 				}
 				resp, err := ServerAsClient(s).LabelValues(ctx, r)
 				testutil.Ok(t, err)
-				testutil.Equals(t, s.labelValues, resp)
-				testutil.Equals(t, r, s.labelValuesLastReq)
+				thanostestutil.ProtoEquals(t, s.labelValues, resp)
+				thanostestutil.ProtoEquals(t, r, s.labelValuesLastReq)
 				s.labelValuesLastReq = nil
 			}
 		})

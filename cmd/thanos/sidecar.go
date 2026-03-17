@@ -22,7 +22,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/common/model"
-	"github.com/prometheus/prometheus/model/labels"
 
 	"github.com/thanos-io/objstore"
 	"github.com/thanos-io/objstore/client"
@@ -261,7 +260,7 @@ func runSidecar(
 				return errors.Wrap(err, "initial external labels query")
 			}
 
-			if m.Labels().Len() == 0 {
+			if len(m.Labels()) == 0 {
 				return errors.New("no external labels configured on Prometheus server, uniquely identifying external labels must be configured; see https://thanos.io/tip/thanos/storage.md#external-labels for details.")
 			}
 			promUp.Set(1)
@@ -325,7 +324,7 @@ func runSidecar(
 
 		infoSrv := info.NewInfoServer(
 			component.Sidecar.String(),
-			info.WithLabelSetFunc(func() []labelpb.ZLabelSet {
+			info.WithLabelSetFunc(func() []*labelpb.LabelSet {
 				return promStore.LabelSet()
 			}),
 			info.WithStoreInfoFunc(func() (*infopb.StoreInfo, error) {
@@ -406,7 +405,7 @@ func runSidecar(
 			defer cancel()
 
 			if err := runutil.Retry(2*time.Second, extLabelsCtx.Done(), func() error {
-				if m.Labels().Len() == 0 {
+				if len(m.Labels()) == 0 {
 					return errors.New("not uploading as no external labels are configured yet - is Prometheus healthy/reachable?")
 				}
 				return nil
@@ -476,7 +475,7 @@ type promMetadata struct {
 	mtx          sync.Mutex
 	mint         int64
 	maxt         int64
-	labels       labels.Labels
+	labels       labelpb.Labels
 	promVersion  string
 	limitMinTime thanosmodel.TimeOrDurationValue
 
@@ -511,7 +510,7 @@ func (s *promMetadata) UpdateTimestamps(ctx context.Context) error {
 	return nil
 }
 
-func (s *promMetadata) Labels() labels.Labels {
+func (s *promMetadata) Labels() labelpb.Labels {
 	s.mtx.Lock()
 	defer s.mtx.Unlock()
 

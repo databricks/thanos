@@ -154,7 +154,7 @@ func TestRendezvousHashringGetN(t *testing.T) {
 	ep1c := Endpoint{Address: podDNS("pod", 1), AZ: "zone-c", Shard: 1}
 
 	ts := &prompb.TimeSeries{
-		Labels: []labelpb.ZLabel{{Name: "test", Value: "replica-routing"}},
+		Labels: labelpb.Labels{{Name: "test", Value: "replica-routing"}},
 	}
 
 	t.Run("2 AZs RF=2, replicas have same shard", func(t *testing.T) {
@@ -219,7 +219,7 @@ func TestRendezvousHashringSameShardAcrossAZs(t *testing.T) {
 	// For many series, verify all replicas go to the same shard.
 	for i := 0; i < 500; i++ {
 		ts := &prompb.TimeSeries{
-			Labels: []labelpb.ZLabel{
+			Labels: labelpb.Labels{
 				{Name: "__name__", Value: "test_metric"},
 				{Name: "series", Value: fmt.Sprintf("series-%d", i)},
 			},
@@ -258,7 +258,7 @@ func TestRendezvousHashringDistribution(t *testing.T) {
 	numSeries := 10000
 	for i := 0; i < numSeries; i++ {
 		ts := &prompb.TimeSeries{
-			Labels: []labelpb.ZLabel{
+			Labels: labelpb.Labels{
 				{Name: "__name__", Value: "test_metric"},
 				{Name: "instance", Value: fmt.Sprintf("instance-%d", i)},
 			},
@@ -433,7 +433,7 @@ func TestRendezvousShuffleShardingPreservesAlignment(t *testing.T) {
 
 	for i := 0; i < 100; i++ {
 		ts := &prompb.TimeSeries{
-			Labels: []labelpb.ZLabel{
+			Labels: labelpb.Labels{
 				{Name: "series", Value: fmt.Sprintf("series-%d", i)},
 			},
 		}
@@ -495,7 +495,7 @@ func TestRendezvousShuffleShardingDataDistribution(t *testing.T) {
 	numSeries := 1000
 	for i := 0; i < numSeries; i++ {
 		ts := &prompb.TimeSeries{
-			Labels: []labelpb.ZLabel{
+			Labels: labelpb.Labels{
 				{Name: "series", Value: fmt.Sprintf("series-%d", i)},
 				{Name: "__name__", Value: "test_metric"},
 			},

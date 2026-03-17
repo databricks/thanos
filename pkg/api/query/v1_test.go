@@ -62,6 +62,7 @@ import (
 	"github.com/thanos-io/thanos/pkg/testutil/custom"
 	"github.com/thanos-io/thanos/pkg/testutil/e2eutil"
 	"github.com/thanos-io/thanos/pkg/testutil/testpromcompatibility"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func TestMain(m *testing.M) {
@@ -794,7 +795,7 @@ func newProxyStoreWithTSDBStore(db store.TSDBReader) *store.ProxyStore {
 		nil,
 		func() []store.Client { return []store.Client{c} },
 		component.Query,
-		nil,
+		labelpb.EmptyLabels(),
 		0,
 		store.EagerRetrieval,
 	)
@@ -1809,44 +1810,44 @@ func TestRulesHandler(t *testing.T) {
 	all := []*rulespb.Rule{
 		rulespb.NewRecordingRule(&rulespb.RecordingRule{
 			Name:                      "1",
-			LastEvaluation:            time.Time{}.Add(1 * time.Minute),
+			LastEvaluation:            timestamppb.New(time.Time{}.Add(1 * time.Minute)),
 			EvaluationDurationSeconds: 12,
 			Health:                    "x",
 			Query:                     "sum(up)",
-			Labels:                    labelpb.ZLabelSet{Labels: []labelpb.ZLabel{{Name: "some", Value: "label"}}},
+			Labels:                    labelpb.LabelSetFromStrings("some", "label"),
 			LastError:                 "err1",
 		}),
 		rulespb.NewRecordingRule(&rulespb.RecordingRule{
 			Name:                      "2",
-			LastEvaluation:            time.Time{}.Add(2 * time.Minute),
+			LastEvaluation:            timestamppb.New(time.Time{}.Add(2 * time.Minute)),
 			EvaluationDurationSeconds: 12,
 			Health:                    "x",
 			Query:                     "sum(up1)",
-			Labels:                    labelpb.ZLabelSet{Labels: []labelpb.ZLabel{{Name: "some", Value: "label2"}}},
+			Labels:                    labelpb.LabelSetFromStrings("some", "label2"),
 		}),
 		rulespb.NewAlertingRule(&rulespb.Alert{
 			Name:                      "3",
-			LastEvaluation:            time.Time{}.Add(3 * time.Minute),
+			LastEvaluation:            timestamppb.New(time.Time{}.Add(3 * time.Minute)),
 			EvaluationDurationSeconds: 12,
 			Health:                    "x",
 			Query:                     "sum(up2) == 2",
 			DurationSeconds:           101,
 			KeepFiringForSeconds:      102,
-			Labels:                    labelpb.ZLabelSet{Labels: []labelpb.ZLabel{{Name: "some", Value: "label3"}}},
-			Annotations:               labelpb.ZLabelSet{Labels: []labelpb.ZLabel{{Name: "ann", Value: "a1"}}},
+			Labels:                    labelpb.LabelSetFromStrings("some", "label3"),
+			Annotations:               labelpb.LabelSetFromStrings("ann", "a1"),
 			Alerts: []*rulespb.AlertInstance{
 				{
-					Labels:      labelpb.ZLabelSet{Labels: []labelpb.ZLabel{{Name: "inside", Value: "1"}}},
-					Annotations: labelpb.ZLabelSet{Labels: []labelpb.ZLabel{{Name: "insideann", Value: "2"}}},
+					Labels:      labelpb.LabelSetFromStrings("inside", "1"),
+					Annotations: labelpb.LabelSetFromStrings("insideann", "2"),
 					State:       rulespb.AlertState_FIRING,
-					ActiveAt:    &twoHAgo,
+					ActiveAt:    timestamppb.New(twoHAgo),
 					Value:       "1",
 					// This is unlikely if groups is warn, but test nevertheless.
 					PartialResponseStrategy: storepb.PartialResponseStrategy_ABORT,
 				},
 				{
-					Labels:      labelpb.ZLabelSet{Labels: []labelpb.ZLabel{{Name: "inside", Value: "3"}}},
-					Annotations: labelpb.ZLabelSet{Labels: []labelpb.ZLabel{{Name: "insideann", Value: "4"}}},
+					Labels:      labelpb.LabelSetFromStrings("inside", "3"),
+					Annotations: labelpb.LabelSetFromStrings("insideann", "4"),
 					State:       rulespb.AlertState_PENDING,
 					ActiveAt:    nil,
 					Value:       "2",
@@ -1858,24 +1859,24 @@ func TestRulesHandler(t *testing.T) {
 		}),
 		rulespb.NewAlertingRule(&rulespb.Alert{
 			Name:                      "4",
-			LastEvaluation:            time.Time{}.Add(4 * time.Minute),
+			LastEvaluation:            timestamppb.New(time.Time{}.Add(4 * time.Minute)),
 			EvaluationDurationSeconds: 122,
 			Health:                    "x",
 			DurationSeconds:           102,
 			KeepFiringForSeconds:      103,
 			Query:                     "sum(up3) == 3",
-			Labels:                    labelpb.ZLabelSet{Labels: []labelpb.ZLabel{{Name: "some", Value: "label4"}}},
+			Labels:                    labelpb.LabelSetFromStrings("some", "label4"),
 			State:                     rulespb.AlertState_INACTIVE,
 		}),
 		rulespb.NewAlertingRule(&rulespb.Alert{
 			Name:                      "5",
-			LastEvaluation:            time.Time{}.Add(4 * time.Minute),
+			LastEvaluation:            timestamppb.New(time.Time{}.Add(4 * time.Minute)),
 			EvaluationDurationSeconds: 122,
 			Health:                    "x",
 			DurationSeconds:           61,
 			KeepFiringForSeconds:      62,
 			Query:                     "sum(up4) == 4",
-			Labels:                    labelpb.ZLabelSet{Labels: []labelpb.ZLabel{{Name: "some", Value: "label5"}}},
+			Labels:                    labelpb.LabelSetFromStrings("some", "label5"),
 			State:                     rulespb.AlertState_INACTIVE,
 		}),
 	}
@@ -1889,7 +1890,7 @@ func TestRulesHandler(t *testing.T) {
 					Rules:                     all,
 					Interval:                  1,
 					EvaluationDurationSeconds: 214,
-					LastEvaluation:            time.Time{}.Add(10 * time.Minute),
+					LastEvaluation:            timestamppb.New(time.Time{}.Add(10 * time.Minute)),
 					PartialResponseStrategy:   storepb.PartialResponseStrategy_WARN,
 				},
 				{
@@ -1898,7 +1899,7 @@ func TestRulesHandler(t *testing.T) {
 					Rules:                     all[3:],
 					Interval:                  10,
 					EvaluationDurationSeconds: 2142,
-					LastEvaluation:            time.Time{}.Add(100 * time.Minute),
+					LastEvaluation:            timestamppb.New(time.Time{}.Add(100 * time.Minute)),
 					PartialResponseStrategy:   storepb.PartialResponseStrategy_ABORT,
 				},
 			},
@@ -1909,7 +1910,7 @@ func TestRulesHandler(t *testing.T) {
 					Rules:                     all[:2],
 					Interval:                  1,
 					EvaluationDurationSeconds: 214,
-					LastEvaluation:            time.Time{}.Add(20 * time.Minute),
+					LastEvaluation:            timestamppb.New(time.Time{}.Add(20 * time.Minute)),
 					PartialResponseStrategy:   storepb.PartialResponseStrategy_WARN,
 				},
 			},
@@ -1920,7 +1921,7 @@ func TestRulesHandler(t *testing.T) {
 					Rules:                     all[2:],
 					Interval:                  1,
 					EvaluationDurationSeconds: 214,
-					LastEvaluation:            time.Time{}.Add(30 * time.Minute),
+					LastEvaluation:            timestamppb.New(time.Time{}.Add(30 * time.Minute)),
 					PartialResponseStrategy:   storepb.PartialResponseStrategy_WARN,
 				},
 			},
@@ -1932,24 +1933,31 @@ func TestRulesHandler(t *testing.T) {
 		query    url.Values
 		response interface{}
 	}
+	tsToTimePtr := func(ts *timestamppb.Timestamp) *time.Time {
+		if ts == nil {
+			return nil
+		}
+		t := ts.AsTime()
+		return &t
+	}
 	expectedAll := []testpromcompatibility.Rule{
 		testpromcompatibility.RecordingRule{
 			Name:           all[0].GetRecording().Name,
 			Query:          all[0].GetRecording().Query,
-			Labels:         labelpb.ZLabelsToPromLabels(all[0].GetRecording().Labels.Labels),
+			Labels:         all[0].GetRecording().GetLabels().PromLabels(),
 			Health:         rules.RuleHealth(all[0].GetRecording().Health),
 			LastError:      all[0].GetRecording().LastError,
-			LastEvaluation: all[0].GetRecording().LastEvaluation,
+			LastEvaluation: all[0].GetRecording().LastEvaluation.AsTime(),
 			EvaluationTime: all[0].GetRecording().EvaluationDurationSeconds,
 			Type:           "recording",
 		},
 		testpromcompatibility.RecordingRule{
 			Name:           all[1].GetRecording().Name,
 			Query:          all[1].GetRecording().Query,
-			Labels:         labelpb.ZLabelsToPromLabels(all[1].GetRecording().Labels.Labels),
+			Labels:         all[1].GetRecording().GetLabels().PromLabels(),
 			Health:         rules.RuleHealth(all[1].GetRecording().Health),
 			LastError:      all[1].GetRecording().LastError,
-			LastEvaluation: all[1].GetRecording().LastEvaluation,
+			LastEvaluation: all[1].GetRecording().LastEvaluation.AsTime(),
 			EvaluationTime: all[1].GetRecording().EvaluationDurationSeconds,
 			Type:           "recording",
 		},
@@ -1957,28 +1965,28 @@ func TestRulesHandler(t *testing.T) {
 			State:          strings.ToLower(all[2].GetAlert().State.String()),
 			Name:           all[2].GetAlert().Name,
 			Query:          all[2].GetAlert().Query,
-			Labels:         labelpb.ZLabelsToPromLabels(all[2].GetAlert().Labels.Labels),
+			Labels:         all[2].GetAlert().GetLabels().PromLabels(),
 			Health:         rules.RuleHealth(all[2].GetAlert().Health),
 			LastError:      all[2].GetAlert().LastError,
-			LastEvaluation: all[2].GetAlert().LastEvaluation,
+			LastEvaluation: all[2].GetAlert().LastEvaluation.AsTime(),
 			EvaluationTime: all[2].GetAlert().EvaluationDurationSeconds,
 			Duration:       all[2].GetAlert().DurationSeconds,
 			KeepFiringFor:  all[2].GetAlert().KeepFiringForSeconds,
-			Annotations:    labelpb.ZLabelsToPromLabels(all[2].GetAlert().Annotations.Labels),
+			Annotations:    all[2].GetAlert().GetAnnotations().PromLabels(),
 			Alerts: []*testpromcompatibility.Alert{
 				{
-					Labels:                  labelpb.ZLabelsToPromLabels(all[2].GetAlert().Alerts[0].Labels.Labels),
-					Annotations:             labelpb.ZLabelsToPromLabels(all[2].GetAlert().Alerts[0].Annotations.Labels),
+					Labels:                  all[2].GetAlert().Alerts[0].GetLabels().PromLabels(),
+					Annotations:             all[2].GetAlert().Alerts[0].GetAnnotations().PromLabels(),
 					State:                   strings.ToLower(all[2].GetAlert().Alerts[0].State.String()),
-					ActiveAt:                all[2].GetAlert().Alerts[0].ActiveAt,
+					ActiveAt:                tsToTimePtr(all[2].GetAlert().Alerts[0].ActiveAt),
 					Value:                   all[2].GetAlert().Alerts[0].Value,
 					PartialResponseStrategy: all[2].GetAlert().Alerts[0].PartialResponseStrategy.String(),
 				},
 				{
-					Labels:                  labelpb.ZLabelsToPromLabels(all[2].GetAlert().Alerts[1].Labels.Labels),
-					Annotations:             labelpb.ZLabelsToPromLabels(all[2].GetAlert().Alerts[1].Annotations.Labels),
+					Labels:                  all[2].GetAlert().Alerts[1].GetLabels().PromLabels(),
+					Annotations:             all[2].GetAlert().Alerts[1].GetAnnotations().PromLabels(),
 					State:                   strings.ToLower(all[2].GetAlert().Alerts[1].State.String()),
-					ActiveAt:                all[2].GetAlert().Alerts[1].ActiveAt,
+					ActiveAt:                tsToTimePtr(all[2].GetAlert().Alerts[1].ActiveAt),
 					Value:                   all[2].GetAlert().Alerts[1].Value,
 					PartialResponseStrategy: all[2].GetAlert().Alerts[1].PartialResponseStrategy.String(),
 				},
@@ -1989,10 +1997,10 @@ func TestRulesHandler(t *testing.T) {
 			State:          strings.ToLower(all[3].GetAlert().State.String()),
 			Name:           all[3].GetAlert().Name,
 			Query:          all[3].GetAlert().Query,
-			Labels:         labelpb.ZLabelsToPromLabels(all[3].GetAlert().Labels.Labels),
+			Labels:         all[3].GetAlert().GetLabels().PromLabels(),
 			Health:         rules.RuleHealth(all[2].GetAlert().Health),
 			LastError:      all[3].GetAlert().LastError,
-			LastEvaluation: all[3].GetAlert().LastEvaluation,
+			LastEvaluation: all[3].GetAlert().LastEvaluation.AsTime(),
 			EvaluationTime: all[3].GetAlert().EvaluationDurationSeconds,
 			Duration:       all[3].GetAlert().DurationSeconds,
 			KeepFiringFor:  all[3].GetAlert().KeepFiringForSeconds,
@@ -2004,10 +2012,10 @@ func TestRulesHandler(t *testing.T) {
 			State:          strings.ToLower(all[4].GetAlert().State.String()),
 			Name:           all[4].GetAlert().Name,
 			Query:          all[4].GetAlert().Query,
-			Labels:         labelpb.ZLabelsToPromLabels(all[4].GetAlert().Labels.Labels),
+			Labels:         all[4].GetAlert().GetLabels().PromLabels(),
 			Health:         rules.RuleHealth(all[2].GetAlert().Health),
 			LastError:      all[4].GetAlert().LastError,
-			LastEvaluation: all[4].GetAlert().LastEvaluation,
+			LastEvaluation: all[4].GetAlert().LastEvaluation.AsTime(),
 			EvaluationTime: all[4].GetAlert().EvaluationDurationSeconds,
 			Duration:       all[4].GetAlert().DurationSeconds,
 			KeepFiringFor:  all[4].GetAlert().KeepFiringForSeconds,
@@ -2094,14 +2102,25 @@ func TestRulesHandler(t *testing.T) {
 			testutil.Assert(t, apiError == nil, "unexpected error %v", apiError)
 
 			// Those are different types now, but let's JSON outputs.
-			got, err := json.MarshalIndent(res, "", " ")
-			testutil.Ok(t, err)
-			exp, err := json.MarshalIndent(test.response, "", " ")
-			testutil.Ok(t, err)
-
+			got := stableJsonMarshal(t, res)
+			exp := stableJsonMarshal(t, test.response)
 			testutil.Equals(t, string(exp), string(got))
 		})
 	}
+}
+
+// stableJsonMarshal marshals the given value to JSON and returns the sorted JSON string.
+// This is useful since we are comparing two types with different field orderings.
+func stableJsonMarshal(t *testing.T, v any) []byte {
+	data, err := json.Marshal(v)
+	testutil.Ok(t, err)
+	// unmarshal back into a map. During JSON unmarshalling, the fields are sorted by key.
+	m := make(map[string]any)
+	testutil.Ok(t, json.Unmarshal(data, &m))
+	// And back into a string this time, it'll all be sorted by key.
+	data, err = json.MarshalIndent(m, "", " ")
+	testutil.Ok(t, err)
+	return data
 }
 
 func BenchmarkQueryResultEncoding(b *testing.B) {

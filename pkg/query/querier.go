@@ -16,12 +16,14 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/storage"
+	"github.com/prometheus/prometheus/tsdb/chunkenc"
 	"github.com/prometheus/prometheus/util/annotations"
 
 	"github.com/thanos-io/thanos/pkg/dedup"
 	"github.com/thanos-io/thanos/pkg/extprom"
 	"github.com/thanos-io/thanos/pkg/gate"
 	"github.com/thanos-io/thanos/pkg/store"
+	"github.com/thanos-io/thanos/pkg/store/labelpb"
 	"github.com/thanos-io/thanos/pkg/store/storepb"
 	"github.com/thanos-io/thanos/pkg/tenancy"
 	"github.com/thanos-io/thanos/pkg/tracing"
@@ -422,13 +424,13 @@ func (q *querier) selectFn(ctx context.Context, hints *storage.SelectHints, ms .
 	warns := annotations.New().Merge(resp.warnings)
 
 	if !q.isDedupEnabled() {
-		return NewPromSeriesSet(
+		return newPromSeriesSetAdapter(NewPromSeriesSet(
 			newStoreSeriesSet(resp.seriesSet),
 			q.mint,
 			q.maxt,
 			aggrs,
 			warns,
-		), resp.seriesSetStats, nil
+		)), resp.seriesSetStats, nil
 	}
 
 	// TODO(bwplotka): Move to deduplication on chunk level inside promSeriesSet, similar to what we have in dedup.NewDedupChunkMerger().
@@ -442,7 +444,42 @@ func (q *querier) selectFn(ctx context.Context, hints *storage.SelectHints, ms .
 		warns,
 	)
 	f := hints.Func
-	return dedup.NewSeriesSet(set, f, q.deduplicationFunc), resp.seriesSetStats, nil
+	return newPromSeriesSetAdapter(dedup.NewSeriesSet(set, f, q.deduplicationFunc)), resp.seriesSetStats, nil
+}
+
+// promSeriesSetAdapter bridges dedup.SeriesSet to storage.SeriesSet at the
+// PromQL boundary, converting labelpb.Labels to labels.Labels.
+type promSeriesSetAdapter struct {
+	set dedup.SeriesSet
+}
+
+func newPromSeriesSetAdapter(set dedup.SeriesSet) storage.SeriesSet {
+	return &promSeriesSetAdapter{set: set}
+}
+
+func (a *promSeriesSetAdapter) Next() bool                        { return a.set.Next() }
+func (a *promSeriesSetAdapter) Err() error                        { return a.set.Err() }
+func (a *promSeriesSetAdapter) Warnings() annotations.Annotations { return a.set.Warnings() }
+
+func (a *promSeriesSetAdapter) At() storage.Series {
+	s := a.set.At()
+	if s == nil {
+		return nil
+	}
+	return &promSeriesAdapter{s: s}
+}
+
+// promSeriesAdapter bridges dedup.Series to storage.Series.
+type promSeriesAdapter struct {
+	s dedup.Series
+}
+
+func (a *promSeriesAdapter) Labels() labels.Labels {
+	return labelpb.ToPromLabels(a.s.Labels())
+}
+
+func (a *promSeriesAdapter) Iterator(it chunkenc.Iterator) chunkenc.Iterator {
+	return a.s.Iterator(it)
 }
 
 // LabelValues returns all potential values for a label name.

@@ -50,7 +50,7 @@ func TestAddingExternalLabelsForTenants(t *testing.T) {
 				{
 					Endpoints:      []Endpoint{{Address: "node1"}},
 					Tenants:        []string{"tenant1"},
-					ExternalLabels: labels.FromStrings("name1", "value1"),
+					ExternalLabels: labelpb.FromStrings("name1", "value1"),
 				},
 			},
 			expectedExternalLabelSets: []labels.Labels{
@@ -63,11 +63,11 @@ func TestAddingExternalLabelsForTenants(t *testing.T) {
 				{
 					Endpoints: []Endpoint{{Address: "node1"}},
 					Tenants:   []string{"tenant1"},
-					ExternalLabels: labels.FromMap(map[string]string{
-						"name1": "value1",
-						"name2": "value2",
-						"name3": "value3",
-					}),
+					ExternalLabels: labelpb.FromStrings(
+						"name1", "value1",
+						"name2", "value2",
+						"name3", "value3",
+					),
 				},
 			},
 			expectedExternalLabelSets: []labels.Labels{
@@ -93,11 +93,9 @@ func TestAddingExternalLabelsForTenants(t *testing.T) {
 			name: "Multiple tenants - One label",
 			cfg: []HashringConfig{
 				{
-					Endpoints: []Endpoint{{Address: "node1"}},
-					Tenants:   []string{"tenant1", "tenant2", "tenant3"},
-					ExternalLabels: labels.FromMap(map[string]string{
-						"name1": "value1",
-					}),
+					Endpoints:      []Endpoint{{Address: "node1"}},
+					Tenants:        []string{"tenant1", "tenant2", "tenant3"},
+					ExternalLabels: labelpb.FromStrings("name1", "value1"),
 				},
 			},
 			expectedExternalLabelSets: []labels.Labels{
@@ -112,11 +110,11 @@ func TestAddingExternalLabelsForTenants(t *testing.T) {
 				{
 					Endpoints: []Endpoint{{Address: "node1"}},
 					Tenants:   []string{"tenant1", "tenant2", "tenant3"},
-					ExternalLabels: labels.FromMap(map[string]string{
-						"name3": "value3",
-						"name2": "value2",
-						"name1": "value1",
-					}),
+					ExternalLabels: labelpb.FromStrings(
+						"name3", "value3",
+						"name2", "value2",
+						"name1", "value1",
+					),
 				},
 			},
 			expectedExternalLabelSets: []labels.Labels{
@@ -134,20 +132,20 @@ func TestAddingExternalLabelsForTenants(t *testing.T) {
 				{
 					Endpoints: []Endpoint{{Address: "node1"}},
 					Tenants:   []string{"tenant1", "tenant2", "tenant3"},
-					ExternalLabels: labels.FromMap(map[string]string{
-						"name1": "value1",
-						"name2": "value2",
-						"name3": "value3",
-					}),
+					ExternalLabels: labelpb.FromStrings(
+						"name1", "value1",
+						"name2", "value2",
+						"name3", "value3",
+					),
 				},
 				{
 					Endpoints: []Endpoint{{Address: "node2"}},
 					Tenants:   []string{"tenant4", "tenant5", "tenant6"},
-					ExternalLabels: labels.FromMap(map[string]string{
-						"name6": "value6",
-						"name5": "value5",
-						"name4": "value4",
-					}),
+					ExternalLabels: labelpb.FromStrings(
+						"name4", "value4",
+						"name5", "value5",
+						"name6", "value6",
+					),
 				},
 			},
 			expectedExternalLabelSets: []labels.Labels{
@@ -171,20 +169,20 @@ func TestAddingExternalLabelsForTenants(t *testing.T) {
 				{
 					Endpoints: []Endpoint{{Address: "node1"}},
 					Tenants:   []string{"tenant1", "tenant2", "tenant3"},
-					ExternalLabels: labels.FromMap(map[string]string{
-						"name3": "value3",
-						"name2": "value2",
-						"name1": "value1",
-					}),
+					ExternalLabels: labelpb.FromStrings(
+						"name1", "value1",
+						"name2", "value2",
+						"name3", "value3",
+					),
 				},
 				{
 					Endpoints: []Endpoint{{Address: "node2"}},
 					Tenants:   []string{"tenant4", "tenant5", "tenant1"},
-					ExternalLabels: labels.FromMap(map[string]string{
-						"name4": "value4",
-						"name5": "value5",
-						"name6": "value6",
-					}),
+					ExternalLabels: labelpb.FromStrings(
+						"name4", "value4",
+						"name5", "value5",
+						"name6", "value6",
+					),
 				},
 			},
 			expectedExternalLabelSets: []labels.Labels{
@@ -245,11 +243,11 @@ func TestLabelSetsOfTenantsWhenAddingTenants(t *testing.T) {
 		{
 			Endpoints: []Endpoint{{Address: "node1"}},
 			Tenants:   []string{"tenant1", "tenant2", "tenant3"},
-			ExternalLabels: labels.FromMap(map[string]string{
-				"name1": "value1",
-				"name2": "value2",
-				"name3": "value3",
-			}),
+			ExternalLabels: labelpb.FromStrings(
+				"name1", "value1",
+				"name2", "value2",
+				"name3", "value3",
+			),
 		},
 	}
 	initialExpectedExternalLabelSets := []labels.Labels{
@@ -265,11 +263,11 @@ func TestLabelSetsOfTenantsWhenAddingTenants(t *testing.T) {
 		{
 			Endpoints: []Endpoint{{Address: "node1"}},
 			Tenants:   []string{"tenant1", "tenant2", "tenant3", "tenant4", "tenant5"},
-			ExternalLabels: labels.FromMap(map[string]string{
-				"name1": "value1",
-				"name2": "value2",
-				"name3": "value3",
-			}),
+			ExternalLabels: labelpb.FromStrings(
+				"name1", "value1",
+				"name2", "value2",
+				"name3", "value3",
+			),
 		},
 	}
 	changedExpectedExternalLabelSets := []labels.Labels{
@@ -356,20 +354,20 @@ func TestLabelSetsOfTenantsWhenChangingLabels(t *testing.T) {
 		{
 			Endpoints: []Endpoint{{Address: "node1"}},
 			Tenants:   []string{"tenant1", "tenant2", "tenant3"},
-			ExternalLabels: labels.FromMap(map[string]string{
-				"name1": "value1",
-				"name2": "value2",
-				"name3": "value3",
-			}),
+			ExternalLabels: labelpb.FromStrings(
+				"name1", "value1",
+				"name2", "value2",
+				"name3", "value3",
+			),
 		},
 		{
 			Endpoints: []Endpoint{{Address: "node2"}},
 			Tenants:   []string{"tenant4", "tenant5", "tenant6"},
-			ExternalLabels: labels.FromMap(map[string]string{
-				"name6": "value6",
-				"name5": "value5",
-				"name4": "value4",
-			}),
+			ExternalLabels: labelpb.FromStrings(
+				"name4", "value4",
+				"name5", "value5",
+				"name6", "value6",
+			),
 		},
 	}
 	initialExpectedExternalLabelSets := []labels.Labels{
@@ -398,22 +396,22 @@ func TestLabelSetsOfTenantsWhenChangingLabels(t *testing.T) {
 				{
 					Endpoints: []Endpoint{{Address: "node1"}},
 					Tenants:   []string{"tenant1", "tenant2", "tenant3"},
-					ExternalLabels: labels.FromMap(map[string]string{
-						"name1": "value1",
-						"name2": "value2",
-						"name3": "value3",
-						"name4": "value4",
-					}),
+					ExternalLabels: labelpb.FromStrings(
+						"name1", "value1",
+						"name2", "value2",
+						"name3", "value3",
+						"name4", "value4",
+					),
 				},
 				{
 					Endpoints: []Endpoint{{Address: "node2"}},
 					Tenants:   []string{"tenant4", "tenant5", "tenant6"},
-					ExternalLabels: labels.FromMap(map[string]string{
-						"name4": "value4",
-						"name5": "value5",
-						"name6": "value6",
-						"name7": "value7",
-					}),
+					ExternalLabels: labelpb.FromStrings(
+						"name4", "value4",
+						"name5", "value5",
+						"name6", "value6",
+						"name7", "value7",
+					),
 				},
 			},
 			changedExpectedExternalLabelSets: []labels.Labels{
@@ -437,18 +435,18 @@ func TestLabelSetsOfTenantsWhenChangingLabels(t *testing.T) {
 				{
 					Endpoints: []Endpoint{{Address: "node1"}},
 					Tenants:   []string{"tenant1", "tenant2", "tenant3"},
-					ExternalLabels: labels.FromMap(map[string]string{
-						"name1": "value1",
-						"name2": "value2",
-					}),
+					ExternalLabels: labelpb.FromStrings(
+						"name1", "value1",
+						"name2", "value2",
+					),
 				},
 				{
 					Endpoints: []Endpoint{{Address: "node2"}},
 					Tenants:   []string{"tenant4", "tenant5", "tenant6"},
-					ExternalLabels: labels.FromMap(map[string]string{
-						"name4": "value4",
-						"name5": "value5",
-					}),
+					ExternalLabels: labelpb.FromStrings(
+						"name4", "value4",
+						"name5", "value5",
+					),
 				},
 			},
 			changedExpectedExternalLabelSets: []labels.Labels{
@@ -493,20 +491,20 @@ func TestLabelSetsOfTenantsWhenChangingLabels(t *testing.T) {
 				{
 					Endpoints: []Endpoint{{Address: "node1"}},
 					Tenants:   []string{"tenant1", "tenant2", "tenant3"},
-					ExternalLabels: labels.FromMap(map[string]string{
-						"name1": "value3",
-						"name2": "value2",
-						"name3": "value3",
-					}),
+					ExternalLabels: labelpb.FromStrings(
+						"name1", "value3",
+						"name2", "value2",
+						"name3", "value3",
+					),
 				},
 				{
 					Endpoints: []Endpoint{{Address: "node2"}},
 					Tenants:   []string{"tenant4", "tenant5", "tenant6"},
-					ExternalLabels: labels.FromMap(map[string]string{
-						"name4": "value6",
-						"name5": "value5",
-						"name6": "value6",
-					}),
+					ExternalLabels: labelpb.FromStrings(
+						"name4", "value6",
+						"name5", "value5",
+						"name6", "value6",
+					),
 				},
 			},
 			changedExpectedExternalLabelSets: []labels.Labels{
@@ -588,20 +586,20 @@ func TestAddingLabelsWhenTenantAppearsInMultipleHashrings(t *testing.T) {
 		{
 			Endpoints: []Endpoint{{Address: "node1"}},
 			Tenants:   []string{"tenant1", "tenant2", "tenant3"},
-			ExternalLabels: labels.FromMap(map[string]string{
-				"name3": "value3",
-				"name2": "value2",
-				"name1": "value1",
-			}),
+			ExternalLabels: labelpb.FromStrings(
+				"name1", "value1",
+				"name2", "value2",
+				"name3", "value3",
+			),
 		},
 		{
 			Endpoints: []Endpoint{{Address: "node2"}},
 			Tenants:   []string{"tenant4", "tenant5", "tenant1"},
-			ExternalLabels: labels.FromMap(map[string]string{
-				"name4": "value4",
-				"name5": "value5",
-				"name6": "value6",
-			}),
+			ExternalLabels: labelpb.FromStrings(
+				"name4", "value4",
+				"name5", "value5",
+				"name6", "value6",
+			),
 		},
 	}
 	initialExpectedExternalLabelSets := []labels.Labels{
@@ -628,21 +626,21 @@ func TestAddingLabelsWhenTenantAppearsInMultipleHashrings(t *testing.T) {
 				{
 					Endpoints: []Endpoint{{Address: "node1"}},
 					Tenants:   []string{"tenant1", "tenant2", "tenant3"},
-					ExternalLabels: labels.FromMap(map[string]string{
-						"name1": "value1",
-						"name2": "value2",
-						"name3": "value3",
-						"name4": "value4",
-					}),
+					ExternalLabels: labelpb.FromStrings(
+						"name1", "value1",
+						"name2", "value2",
+						"name3", "value3",
+						"name4", "value4",
+					),
 				},
 				{
 					Endpoints: []Endpoint{{Address: "node2"}},
 					Tenants:   []string{"tenant4", "tenant5", "tenant1"},
-					ExternalLabels: labels.FromMap(map[string]string{
-						"name4": "value4",
-						"name5": "value5",
-						"name6": "value6",
-					}),
+					ExternalLabels: labelpb.FromStrings(
+						"name4", "value4",
+						"name5", "value5",
+						"name6", "value6",
+					),
 				},
 			},
 			changedExpectedExternalLabelSets: []labels.Labels{
@@ -664,21 +662,21 @@ func TestAddingLabelsWhenTenantAppearsInMultipleHashrings(t *testing.T) {
 				{
 					Endpoints: []Endpoint{{Address: "node1"}},
 					Tenants:   []string{"tenant1", "tenant2", "tenant3"},
-					ExternalLabels: labels.FromMap(map[string]string{
-						"name1": "value1",
-						"name2": "value2",
-						"name3": "value3",
-					}),
+					ExternalLabels: labelpb.FromStrings(
+						"name1", "value1",
+						"name2", "value2",
+						"name3", "value3",
+					),
 				},
 				{
 					Endpoints: []Endpoint{{Address: "node2"}},
 					Tenants:   []string{"tenant4", "tenant5", "tenant1"},
-					ExternalLabels: labels.FromMap(map[string]string{
-						"name4": "value4",
-						"name5": "value5",
-						"name6": "value6",
-						"name7": "value7",
-					}),
+					ExternalLabels: labelpb.FromStrings(
+						"name4", "value4",
+						"name5", "value5",
+						"name6", "value6",
+						"name7", "value7",
+					),
 				},
 			},
 			changedExpectedExternalLabelSets: []labels.Labels{
@@ -758,11 +756,11 @@ func TestReceiverLabelsNotOverwrittenByExternalLabels(t *testing.T) {
 		{
 			Endpoints: []Endpoint{{Address: "node1"}},
 			Tenants:   []string{"tenant1"},
-			ExternalLabels: labels.FromMap(map[string]string{
-				"replica":   "0",
-				"tenant_id": "tenant2",
-				"name3":     "value3",
-			}),
+			ExternalLabels: labelpb.FromStrings(
+				"name3", "value3",
+				"replica", "0",
+				"tenant_id", "tenant2",
+			),
 		},
 	}
 	expectedExternalLabelSets := []labels.Labels{
@@ -814,7 +812,7 @@ func initializeMultiTSDB(dir string) *MultiTSDB {
 			MaxBlockDuration:  (2 * time.Hour).Milliseconds(),
 			RetentionDuration: (6 * time.Hour).Milliseconds(),
 		},
-		labels.FromStrings("replica", "test"),
+		labelpb.FromStrings("replica", "test"),
 		"tenant_id",
 		bucket,
 		false,
@@ -833,13 +831,21 @@ func setupSetsOfExpectedAndActualStoreClientLabelSets(
 
 	for i := 0; i < len(actualStoreClients); i++ {
 		testStore := store.TSDBStore{}
-		testStore.SetExtLset(expectedExternalLabelSets[i])
+		testStore.SetExtLset(labelpb.FromPromLabels(expectedExternalLabelSets[i]))
 
-		expectedClientLabelSets := labelpb.ZLabelSetsToPromLabelSets(testStore.LabelSet()...)
-		setOfExpectedClientLabelSets = append(setOfExpectedClientLabelSets, expectedClientLabelSets)
+		lsets := testStore.LabelSet()
+		expectedClientLabelSets := make([]labels.Labels, len(lsets))
+		for j, ls := range lsets {
+			expectedClientLabelSets[j] = ls.PromLabels()
+		}
+		setOfExpectedClientLabelSets[i] = expectedClientLabelSets
 
-		actualClientLabelSets := actualStoreClients[i].LabelSets()
-		setOfActualClientLabelSets = append(setOfActualClientLabelSets, actualClientLabelSets)
+		actualLabelSets := actualStoreClients[i].LabelSets()
+		actualClientLabelSets := make([]labels.Labels, len(actualLabelSets))
+		for j, ls := range actualLabelSets {
+			actualClientLabelSets[j] = labelpb.ToPromLabels(ls)
+		}
+		setOfActualClientLabelSets[i] = actualClientLabelSets
 	}
 
 	return setOfExpectedClientLabelSets, setOfActualClientLabelSets

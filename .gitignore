@@ -30,6 +30,7 @@ benchmarks/
 
 /.idea
 /*.iml
+.vscode/
 
 website/public/
 website/docs-pre-processed/

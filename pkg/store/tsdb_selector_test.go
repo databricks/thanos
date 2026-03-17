@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/efficientgo/core/testutil"
-	"github.com/prometheus/prometheus/model/labels"
 
+	"github.com/thanos-io/thanos/pkg/store/labelpb"
 	"github.com/thanos-io/thanos/pkg/store/storepb"
 )
 
@@ -18,60 +18,60 @@ func TestMatchersForLabelSets(t *testing.T) {
 
 	tests := []struct {
 		name      string
-		labelSets []labels.Labels
-		want      []storepb.LabelMatcher
+		labelSets []labelpb.Labels
+		want      []*storepb.LabelMatcher
 	}{
 		{
 			name:      "empty label sets",
 			labelSets: nil,
-			want:      []storepb.LabelMatcher{},
+			want:      []*storepb.LabelMatcher{},
 		},
 		{
 			name: "single label set with single label",
-			labelSets: []labels.Labels{
-				labels.FromStrings("a", "1"),
+			labelSets: []labelpb.Labels{
+				labelpb.FromStrings("a", "1"),
 			},
-			want: []storepb.LabelMatcher{
+			want: []*storepb.LabelMatcher{
 				{Type: storepb.LabelMatcher_RE, Name: "a", Value: "1"},
 			},
 		},
 		{
 			name: "multiple labels with same label name",
-			labelSets: []labels.Labels{
-				labels.FromStrings("a", "1"),
-				labels.FromStrings("a", "2"),
+			labelSets: []labelpb.Labels{
+				labelpb.FromStrings("a", "1"),
+				labelpb.FromStrings("a", "2"),
 			},
-			want: []storepb.LabelMatcher{
+			want: []*storepb.LabelMatcher{
 				{Type: storepb.LabelMatcher_RE, Name: "a", Value: "1|2"},
 			},
 		},
 		{
 			name: "multiple labels with different label name",
-			labelSets: []labels.Labels{
-				labels.FromStrings("a", "1", "b", "2"),
+			labelSets: []labelpb.Labels{
+				labelpb.FromStrings("a", "1", "b", "2"),
 			},
-			want: []storepb.LabelMatcher{
+			want: []*storepb.LabelMatcher{
 				{Type: storepb.LabelMatcher_RE, Name: "a", Value: "1"},
 				{Type: storepb.LabelMatcher_RE, Name: "b", Value: "2"},
 			},
 		},
 		{
 			name: "multiple label sets with same label name",
-			labelSets: []labels.Labels{
-				labels.FromStrings("a", "1"),
-				labels.FromStrings("a", "2"),
+			labelSets: []labelpb.Labels{
+				labelpb.FromStrings("a", "1"),
+				labelpb.FromStrings("a", "2"),
 			},
-			want: []storepb.LabelMatcher{
+			want: []*storepb.LabelMatcher{
 				{Type: storepb.LabelMatcher_RE, Name: "a", Value: "1|2"},
 			},
 		},
 		{
 			name: "multiple label sets with different label name",
-			labelSets: []labels.Labels{
-				labels.FromStrings("a", "1"),
-				labels.FromStrings("b", "2"),
+			labelSets: []labelpb.Labels{
+				labelpb.FromStrings("a", "1"),
+				labelpb.FromStrings("b", "2"),
 			},
-			want: []storepb.LabelMatcher{
+			want: []*storepb.LabelMatcher{
 				{Type: storepb.LabelMatcher_RE, Name: "a", Value: "1|^$"},
 				{Type: storepb.LabelMatcher_RE, Name: "b", Value: "2|^$"},
 			},

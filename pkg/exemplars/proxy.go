@@ -21,6 +21,7 @@ import (
 	"github.com/thanos-io/thanos/pkg/exemplars/exemplarspb"
 	"github.com/thanos-io/thanos/pkg/extpromql"
 	"github.com/thanos-io/thanos/pkg/store"
+	"github.com/thanos-io/thanos/pkg/store/labelpb"
 	"github.com/thanos-io/thanos/pkg/store/storepb"
 	"github.com/thanos-io/thanos/pkg/tracing"
 )
@@ -28,9 +29,11 @@ import (
 // Proxy implements exemplarspb.Exemplars gRPC that fanouts requests to
 // given exemplarspb.Exemplars.
 type Proxy struct {
+	exemplarspb.UnimplementedExemplarsServer
+
 	logger         log.Logger
 	exemplars      func() []*exemplarspb.ExemplarStore
-	selectorLabels labels.Labels
+	selectorLabels labelpb.Labels
 }
 
 // RegisterExemplarsServer register exemplars server.
@@ -41,7 +44,7 @@ func RegisterExemplarsServer(exemplarsSrv exemplarspb.ExemplarsServer) func(*grp
 }
 
 // NewProxy return new exemplars.Proxy.
-func NewProxy(logger log.Logger, exemplars func() []*exemplarspb.ExemplarStore, selectorLabels labels.Labels) *Proxy {
+func NewProxy(logger log.Logger, exemplars func() []*exemplarspb.ExemplarStore, selectorLabels labelpb.Labels) *Proxy {
 	return &Proxy{
 		logger:         logger,
 		exemplars:      exemplars,
@@ -159,7 +162,7 @@ func (s *Proxy) Exemplars(req *exemplarspb.ExemplarsRequest, srv exemplarspb.Exe
 	return nil
 }
 
-func containsLabelName(name string, sets []labels.Labels) bool {
+func containsLabelName(name string, sets []labelpb.Labels) bool {
 	for _, ls := range sets {
 		if ls.Get(name) != "" {
 			return true
@@ -221,7 +224,7 @@ func (stream *exemplarsStream) receive(ctx context.Context) error {
 
 // matchesExternalLabels returns false if given matchers are not matching external labels.
 // If true, matchesExternalLabels also returns Prometheus matchers without those matching external labels.
-func matchesExternalLabels(ms []*labels.Matcher, externalLabels labels.Labels) (bool, []*labels.Matcher) {
+func matchesExternalLabels(ms []*labels.Matcher, externalLabels labelpb.Labels) (bool, []*labels.Matcher) {
 	if externalLabels.IsEmpty() {
 		return true, ms
 	}

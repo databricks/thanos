@@ -53,7 +53,7 @@ type MultiTSDB struct {
 	reg             prometheus.Registerer
 	tsdbOpts        *tsdb.Options
 	tenantLabelName string
-	labels          labels.Labels
+	labels          labelpb.Labels
 	bucket          objstore.Bucket
 
 	mtx                   *sync.RWMutex
@@ -138,7 +138,7 @@ func NewMultiTSDB(
 	l log.Logger,
 	reg prometheus.Registerer,
 	tsdbOpts *tsdb.Options,
-	labels labels.Labels,
+	labels labelpb.Labels,
 	tenantLabelName string,
 	bucket objstore.Bucket,
 	allowOutOfOrderUpload bool,
@@ -318,22 +318,26 @@ func (l *localClient) Matches(matchers []*labels.Matcher) bool {
 	return l.store.Matches(matchers)
 }
 
-func (l *localClient) LabelSets() []labels.Labels {
-	return labelpb.ZLabelSetsToPromLabelSets(l.store.LabelSet()...)
+func (l *localClient) LabelSets() []labelpb.Labels {
+	result := make([]labelpb.Labels, len(l.store.LabelSet()))
+	for i, ls := range l.store.LabelSet() {
+		result[i] = ls.GetLabels()
+	}
+	return result
 }
 
 func (l *localClient) TimeRange() (mint int64, maxt int64) {
 	return l.store.TimeRange()
 }
 
-func (l *localClient) TSDBInfos() []infopb.TSDBInfo {
+func (l *localClient) TSDBInfos() []*infopb.TSDBInfo {
 	labelsets := l.store.LabelSet()
 	if len(labelsets) == 0 {
-		return []infopb.TSDBInfo{}
+		return []*infopb.TSDBInfo{}
 	}
 
 	mint, maxt := l.store.TimeRange()
-	return []infopb.TSDBInfo{
+	return []*infopb.TSDBInfo{
 		{
 			Labels:  labelsets[0],
 			MinTime: mint,
@@ -346,7 +350,7 @@ func (l *localClient) String() string {
 	mint, maxt := l.store.TimeRange()
 	return fmt.Sprintf(
 		"LabelSets: %v MinTime: %d MaxTime: %d",
-		labelpb.PromLabelSetsToStringN(l.LabelSets(), 500), mint, maxt,
+		labelpb.LabelSetsToStringN(l.LabelSets(), 500), mint, maxt,
 	)
 }
 
@@ -835,7 +839,7 @@ func (t *MultiTSDB) startTSDB(logger log.Logger, tenantID string, tenant *tenant
 	reg := prometheus.WrapRegistererWith(prometheus.Labels{"tenant": tenantID}, t.reg)
 	reg = NewUnRegisterer(reg)
 
-	initialLset := labelpb.ExtendSortedLabels(t.labels, labels.FromStrings(t.tenantLabelName, tenantID))
+	initialLset := labelpb.ExtendSortedLabels(t.labels, labelpb.FromStrings(t.tenantLabelName, tenantID))
 	lset := t.extractTenantsLabels(tenantID, initialLset)
 	dataDir := t.defaultTenantDataDir(tenantID)
 
@@ -893,7 +897,7 @@ func (t *MultiTSDB) startTSDB(logger log.Logger, tenantID string, tenant *tenant
 			reg,
 			dataDir,
 			tenantBucket,
-			func() labels.Labels { return lset },
+			func() labelpb.Labels { return lset },
 			metadata.ReceiveSource,
 			nil,
 			t.allowOutOfOrderUpload,
@@ -981,7 +985,7 @@ func (t *MultiTSDB) SetHashringConfig(cfg []HashringConfig) error {
 			if t.tenants[tenantID] != nil {
 				updatedTenants = append(updatedTenants, tenantID)
 
-				lset := labelpb.ExtendSortedLabels(t.labels, labels.FromStrings(t.tenantLabelName, tenantID))
+				lset := labelpb.ExtendSortedLabels(t.labels, labelpb.FromStrings(t.tenantLabelName, tenantID))
 				lset = labelpb.ExtendSortedLabels(hc.ExternalLabels, lset)
 
 				if t.tenants[tenantID].ship != nil {
@@ -1154,7 +1158,7 @@ func (u *UnRegisterer) MustRegister(cs ...prometheus.Collector) {
 // extractTenantsLabels extracts tenant's external labels from hashring configs.
 // If one tenant appears in multiple hashring configs,
 // only the external label set from the first hashring config is applied.
-func (t *MultiTSDB) extractTenantsLabels(tenantID string, initialLset labels.Labels) labels.Labels {
+func (t *MultiTSDB) extractTenantsLabels(tenantID string, initialLset labelpb.Labels) labelpb.Labels {
 	for _, hc := range t.hashringConfigs {
 		for _, tenant := range hc.Tenants {
 			if tenant != tenantID {

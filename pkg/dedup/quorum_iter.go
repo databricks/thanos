@@ -7,21 +7,21 @@ import (
 	"math"
 
 	"github.com/prometheus/prometheus/model/histogram"
-	"github.com/prometheus/prometheus/model/labels"
-	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
+
+	"github.com/thanos-io/thanos/pkg/store/labelpb"
 )
 
-// quorumSeries is a storage.Series that implements quorum algorithm.
-// when replicas has conflict values at the same timestamp, the value in majority replica will be selected.
+// quorumSeries implements dedup.Series using the quorum algorithm.
+// When replicas have conflicting values at the same timestamp, the majority value is selected.
 type quorumSeries struct {
-	lset     labels.Labels
-	replicas []storage.Series
+	lset     labelpb.Labels
+	replicas []Series
 
 	isCounter bool
 }
 
-func NewQuorumSeries(lset labels.Labels, replicas []storage.Series, f string) storage.Series {
+func NewQuorumSeries(lset labelpb.Labels, replicas []Series, f string) Series {
 	return &quorumSeries{
 		lset:     lset,
 		replicas: replicas,
@@ -30,7 +30,7 @@ func NewQuorumSeries(lset labels.Labels, replicas []storage.Series, f string) st
 	}
 }
 
-func (m *quorumSeries) Labels() labels.Labels {
+func (m *quorumSeries) Labels() labelpb.Labels {
 	return m.lset
 }
 func (m *quorumSeries) Iterator(_ chunkenc.Iterator) chunkenc.Iterator {
