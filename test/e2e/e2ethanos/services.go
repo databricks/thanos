@@ -1050,6 +1050,52 @@ func NewQueryFrontend(e e2e.Environment, name, downstreamURL string, config quer
 		}), "http")
 }
 
+// NewQueryFrontendWithProtection starts a query-frontend with a protection config file mounted into the container.
+// protectionConfigContent is the YAML content of the protection config.
+func NewQueryFrontendWithProtection(e e2e.Environment, name, downstreamURL string, config queryfrontend.Config, cacheConfig queryfrontend.CacheProviderConfig, protectionConfigContent string) *e2eobs.Observable {
+	cacheConfigBytes, err := yaml.Marshal(cacheConfig)
+	if err != nil {
+		return &e2eobs.Observable{Runnable: e2e.NewFailedRunnable(name, errors.Wrapf(err, "marshal response cache config file: %v", cacheConfig))}
+	}
+
+	f := e.Runnable(fmt.Sprintf("query-frontend-%s", name)).
+		WithPorts(map[string]int{"http": 8080}).
+		Future()
+
+	if err := os.MkdirAll(f.Dir(), 0750); err != nil {
+		return &e2eobs.Observable{Runnable: e2e.NewFailedRunnable(name, errors.Wrap(err, "create dir"))}
+	}
+
+	protectionConfigPath := filepath.Join(f.Dir(), "protection.yaml")
+	if err := os.WriteFile(protectionConfigPath, []byte(protectionConfigContent), 0600); err != nil {
+		return &e2eobs.Observable{Runnable: e2e.NewFailedRunnable(name, errors.Wrap(err, "write protection config file"))}
+	}
+
+	const containerProtectionConfigPath = "/etc/thanos/protection.yaml"
+
+	flags := map[string]string{
+		"--debug.name":                        fmt.Sprintf("query-frontend-%s", name),
+		"--http-address":                      ":8080",
+		"--query-frontend.downstream-url":     downstreamURL,
+		"--log.level":                         infoLogLevel,
+		"--query-range.response-cache-config": string(cacheConfigBytes),
+		"--protection-config":                 containerProtectionConfigPath,
+	}
+
+	if !config.QueryRangeConfig.AlignRangeWithStep {
+		flags["--no-query-range.align-range-with-step"] = ""
+	}
+
+	return e2eobs.AsObservable(f.Init(e2e.StartOptions{
+		Image:            DefaultImage(),
+		Command:          e2e.NewCommand("query-frontend", e2e.BuildArgs(flags)...),
+		Readiness:        e2e.NewHTTPReadinessProbe("http", "/-/ready", 200, 200),
+		User:             strconv.Itoa(os.Getuid()),
+		WaitReadyBackoff: &defaultBackoffConfig,
+		Volumes:          []string{protectionConfigPath + ":" + containerProtectionConfigPath + ":ro"},
+	}), "http")
+}
+
 func NewReverseProxy(e e2e.Environment, name, tenantID, target string) *e2eobs.Observable {
 	conf := fmt.Sprintf(`
 events {

@@ -1203,3 +1203,64 @@ func TestQueryFrontendAnalyze(t *testing.T) {
 
 	require.Equal(t, true, r.MatchString(strings.TrimSpace(string(body))))
 }
+
+func TestQueryFrontendProtection(t *testing.T) {
+	t.Parallel()
+
+	e, err := e2e.NewDockerEnvironment("qfe-protection")
+	testutil.Ok(t, err)
+	t.Cleanup(e2ethanos.CleanScenario(t, e))
+
+	q := e2ethanos.NewQuerierBuilder(e, "1").Init()
+	testutil.Ok(t, e2e.StartAndWaitReady(q))
+
+	t.Run("block action returns 400", func(t *testing.T) {
+		qfe := e2ethanos.NewQueryFrontendWithProtection(e, "block", "http://"+q.InternalEndpoint("http"),
+			queryfrontend.Config{},
+			queryfrontend.CacheProviderConfig{Type: queryfrontend.INMEMORY},
+			`
+rules:
+  - name: block-all
+    protection: noop
+    action: block
+    actor: ".*"
+    enabled: true
+`)
+		testutil.Ok(t, e2e.StartAndWaitReady(qfe))
+
+		req, err := http.NewRequest("GET", fmt.Sprintf("http://%s/api/v1/query_range?query=up&start=0&end=3600&step=60", qfe.Endpoint("http")), nil)
+		require.NoError(t, err)
+		req.Header.Set("X-Source", "test-actor")
+
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, resp.Body.Close()) })
+
+		require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	})
+
+	t.Run("log action passes through", func(t *testing.T) {
+		qfe := e2ethanos.NewQueryFrontendWithProtection(e, "log", "http://"+q.InternalEndpoint("http"),
+			queryfrontend.Config{},
+			queryfrontend.CacheProviderConfig{Type: queryfrontend.INMEMORY},
+			`
+rules:
+  - name: log-all
+    protection: noop
+    action: log
+    actor: ".*"
+    enabled: true
+`)
+		testutil.Ok(t, e2e.StartAndWaitReady(qfe))
+
+		req, err := http.NewRequest("GET", fmt.Sprintf("http://%s/api/v1/query_range?query=up&start=0&end=3600&step=60", qfe.Endpoint("http")), nil)
+		require.NoError(t, err)
+		req.Header.Set("X-Source", "test-actor")
+
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, resp.Body.Close()) })
+
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+	})
+}
