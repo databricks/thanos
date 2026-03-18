@@ -13,8 +13,8 @@ import (
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
-	"github.com/prometheus/prometheus/promql/parser"
 	"github.com/thanos-io/thanos/internal/cortex/querier/queryrange"
+	"github.com/thanos-io/thanos/pkg/extpromql"
 	"github.com/weaveworks/common/httpgrpc"
 )
 
@@ -29,26 +29,28 @@ type protectionMiddleware struct {
 
 // NewProtectionMiddleware creates a new middleware that applies protection rules to queries.
 func NewProtectionMiddleware(engine *ProtectionEngine, logger log.Logger, reg prometheus.Registerer) queryrange.Middleware {
+	durationBuckets := []float64{0.0001, 0.00025, 0.0005, 0.001, 0.005, 0.01, 0.1, 1.0, 10.0}
+
 	parseLatency := promauto.With(reg).NewHistogram(prometheus.HistogramOpts{
 		Namespace: "thanos",
 		Subsystem: "query_frontend",
 		Name:      "protection_parse_duration_seconds",
 		Help:      "Duration of PromQL parsing in the protection middleware.",
-		Buckets:   prometheus.DefBuckets,
+		Buckets:   durationBuckets,
 	})
 	evalLatency := promauto.With(reg).NewHistogram(prometheus.HistogramOpts{
 		Namespace: "thanos",
 		Subsystem: "query_frontend",
 		Name:      "protection_evaluate_duration_seconds",
 		Help:      "Duration of rule evaluation in the protection middleware.",
-		Buckets:   prometheus.DefBuckets,
+		Buckets:   durationBuckets,
 	})
 	totalLatency := promauto.With(reg).NewHistogram(prometheus.HistogramOpts{
 		Namespace: "thanos",
 		Subsystem: "query_frontend",
 		Name:      "protection_duration_seconds",
 		Help:      "Total duration of the protection middleware, including parsing and evaluation.",
-		Buckets:   prometheus.DefBuckets,
+		Buckets:   durationBuckets,
 	})
 
 	return queryrange.MiddlewareFunc(func(next queryrange.Handler) queryrange.Handler {
@@ -74,7 +76,7 @@ func (m *protectionMiddleware) Do(ctx context.Context, r queryrange.Request) (qu
 
 	// Parse PromQL and measure latency.
 	parseStart := time.Now()
-	parsed, err := parser.ParseExpr(query)
+	parsed, err := extpromql.ParseExpr(query)
 	m.parseLatency.Observe(time.Since(parseStart).Seconds())
 
 	if err != nil {
