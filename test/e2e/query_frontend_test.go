@@ -62,7 +62,7 @@ func TestQueryFrontend(t *testing.T) {
 	}
 
 	cfg := queryfrontend.Config{}
-	queryFrontend := e2ethanos.NewQueryFrontend(e, "1", "http://"+q.InternalEndpoint("http"), cfg, inMemoryCacheConfig)
+	queryFrontend := e2ethanos.NewQueryFrontend(e, "1", "http://"+q.InternalEndpoint("http"), cfg, inMemoryCacheConfig, "")
 	testutil.Ok(t, e2e.StartAndWaitReady(queryFrontend))
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -466,7 +466,7 @@ func TestQueryFrontendMemcachedCache(t *testing.T) {
 	}
 
 	cfg := queryfrontend.Config{}
-	queryFrontend := e2ethanos.NewQueryFrontend(e, "1", "http://"+q.InternalEndpoint("http"), cfg, memCachedConfig)
+	queryFrontend := e2ethanos.NewQueryFrontend(e, "1", "http://"+q.InternalEndpoint("http"), cfg, memCachedConfig, "")
 	testutil.Ok(t, e2e.StartAndWaitReady(queryFrontend))
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -646,7 +646,7 @@ func TestRangeQueryShardingWithRandomData(t *testing.T) {
 		},
 		NumShards: 2,
 	}
-	qfe := e2ethanos.NewQueryFrontend(e, "query-frontend", "http://"+q1.InternalEndpoint("http"), config, inMemoryCacheConfig)
+	qfe := e2ethanos.NewQueryFrontend(e, "query-frontend", "http://"+q1.InternalEndpoint("http"), config, inMemoryCacheConfig, "")
 	testutil.Ok(t, e2e.StartAndWaitReady(qfe))
 
 	qryFunc := func() string { return `sum by (pod) (http_requests_total)` }
@@ -700,7 +700,7 @@ func TestRangeQueryDynamicHorizontalSharding(t *testing.T) {
 			SplitQueriesByInterval: 0,
 		},
 	}
-	queryFrontend := e2ethanos.NewQueryFrontend(e, "1", "http://"+querier.InternalEndpoint("http"), cfg, inMemoryCacheConfig)
+	queryFrontend := e2ethanos.NewQueryFrontend(e, "1", "http://"+querier.InternalEndpoint("http"), cfg, inMemoryCacheConfig, "")
 	testutil.Ok(t, e2e.StartAndWaitReady(queryFrontend))
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -851,7 +851,7 @@ func TestInstantQueryShardingWithRandomData(t *testing.T) {
 		},
 		NumShards: 2,
 	}
-	qfe := e2ethanos.NewQueryFrontend(e, "query-frontend", "http://"+q1.InternalEndpoint("http"), config, inMemoryCacheConfig)
+	qfe := e2ethanos.NewQueryFrontend(e, "query-frontend", "http://"+q1.InternalEndpoint("http"), config, inMemoryCacheConfig, "")
 	testutil.Ok(t, e2e.StartAndWaitReady(qfe))
 
 	queryOpts := promclient.QueryOptions{Deduplicate: true}
@@ -992,6 +992,7 @@ func TestQueryFrontendTenantForward(t *testing.T) {
 				fmt.Sprintf("http://%s:%s", e.HostAddr(), tsPort),
 				queryFrontendConfig,
 				inMemoryCacheConfig,
+				"",
 			)
 			testutil.Ok(t, e2e.StartAndWaitReady(queryFrontend))
 
@@ -1059,7 +1060,7 @@ func TestTenantQFEHTTPMetrics(t *testing.T) {
 	}
 
 	cfg := queryfrontend.Config{}
-	queryFrontend := e2ethanos.NewQueryFrontend(e, "1", "http://"+q.InternalEndpoint("http"), cfg, inMemoryCacheConfig)
+	queryFrontend := e2ethanos.NewQueryFrontend(e, "1", "http://"+q.InternalEndpoint("http"), cfg, inMemoryCacheConfig, "")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
 	t.Cleanup(cancel)
@@ -1158,7 +1159,7 @@ func TestQueryFrontendExplain(t *testing.T) {
 
 	qfe := e2ethanos.NewQueryFrontend(e, "1", "http://"+q.InternalEndpoint("http"), queryfrontend.Config{}, queryfrontend.CacheProviderConfig{
 		Type: queryfrontend.INMEMORY,
-	})
+	}, "")
 	testutil.Ok(t, e2e.StartAndWaitReady(qfe))
 
 	resp, err := http.Get(fmt.Sprintf("http://%s/api/v1/query_explain?query=time()&engine=thanos", qfe.Endpoint("http")))
@@ -1184,7 +1185,7 @@ func TestQueryFrontendAnalyze(t *testing.T) {
 
 	qfe := e2ethanos.NewQueryFrontend(e, "1", "http://"+q.InternalEndpoint("http"), queryfrontend.Config{}, queryfrontend.CacheProviderConfig{
 		Type: queryfrontend.INMEMORY,
-	})
+	}, "")
 	testutil.Ok(t, e2e.StartAndWaitReady(qfe))
 
 	resp, err := http.Get(fmt.Sprintf("http://%s/api/v1/query?query=time()&engine=thanos&analyze=true", qfe.Endpoint("http")))
@@ -1215,7 +1216,7 @@ func TestQueryFrontendProtection(t *testing.T) {
 	testutil.Ok(t, e2e.StartAndWaitReady(q))
 
 	t.Run("block action returns 400", func(t *testing.T) {
-		qfe := e2ethanos.NewQueryFrontendWithProtection(e, "block", "http://"+q.InternalEndpoint("http"),
+		qfe := e2ethanos.NewQueryFrontend(e, "block", "http://"+q.InternalEndpoint("http"),
 			queryfrontend.Config{},
 			queryfrontend.CacheProviderConfig{Type: queryfrontend.INMEMORY},
 			`
@@ -1240,7 +1241,7 @@ rules:
 	})
 
 	t.Run("log action passes through", func(t *testing.T) {
-		qfe := e2ethanos.NewQueryFrontendWithProtection(e, "log", "http://"+q.InternalEndpoint("http"),
+		qfe := e2ethanos.NewQueryFrontend(e, "log", "http://"+q.InternalEndpoint("http"),
 			queryfrontend.Config{},
 			queryfrontend.CacheProviderConfig{Type: queryfrontend.INMEMORY},
 			`
