@@ -285,10 +285,9 @@ format: go-format shell-format
 
 .PHONY: go-format
 go-format: ## Formats Go code including imports.
-go-format: $(GOIMPORTS)
+go-format: $(GOLANGCI_LINT)
 	@echo ">> formatting go code"
-	@gofmt -s -w $(FILES_TO_FMT)
-	@$(GOIMPORTS) -w $(FILES_TO_FMT)
+	@$(GOLANGCI_LINT) fmt
 
 .PHONY: proto
 proto: ## Generates Go files from Thanos proto files.
@@ -398,21 +397,8 @@ lint: go-lint react-app-lint shell-lint
 #      --mem-profile-path string   Path to memory profile output file
 # to debug big allocations during linting.
 .PHONY: go-lint
-go-lint: check-git deps $(GOLANGCI_LINT) $(FAILLINT)
+go-lint: check-git deps $(GOLANGCI_LINT)
 	$(call require_clean_work_tree,'detected not clean work tree before running lint, previous job changed something?')
-	@echo ">> verifying modules being imported"
-	@# TODO(bwplotka): Add, Printf, DefaultRegisterer, NewGaugeFunc and MustRegister once exception are accepted. Add fmt.{Errorf}=github.com/pkg/errors.{Errorf} once https://github.com/fatih/faillint/issues/10 is addressed.
-	@$(FAILLINT) -paths "github.com/prometheus/tsdb=github.com/prometheus/prometheus/tsdb,\
-github.com/prometheus/prometheus/pkg/testutils=github.com/thanos-io/thanos/pkg/testutil,\
-github.com/prometheus/client_golang/prometheus.{DefaultGatherer,DefBuckets,NewUntypedFunc,UntypedFunc},\
-github.com/prometheus/client_golang/prometheus.{NewCounter,NewCounterVec,NewCounterVec,NewGauge,NewGaugeVec,NewGaugeFunc,\
-NewHistorgram,NewHistogramVec,NewSummary,NewSummaryVec}=github.com/prometheus/client_golang/prometheus/promauto.{NewCounter,\
-NewCounterVec,NewCounterVec,NewGauge,NewGaugeVec,NewGaugeFunc,NewHistorgram,NewHistogramVec,NewSummary,NewSummaryVec},\
-github.com/NYTimes/gziphandler.{GzipHandler}=github.com/klauspost/compress/gzhttp.{GzipHandler},\
-sync/atomic=go.uber.org/atomic,github.com/cortexproject/cortex=github.com/thanos-io/thanos/internal/cortex,\
-github.com/prometheus/prometheus/promql/parser.{ParseExpr,ParseMetricSelector}=github.com/thanos-io/thanos/pkg/extpromql.{ParseExpr,ParseMetricSelector},\
-io/ioutil.{Discard,NopCloser,ReadAll,ReadDir,ReadFile,TempDir,TempFile,Writefile}" $(shell go list ./... | grep -v "internal/cortex")
-	@$(FAILLINT) -paths "fmt.{Print,Println,Sprint}" -ignore-tests ./...
 	@echo ">> linting all of the Go files GOGC=${GOGC}"
 	@$(GOLANGCI_LINT) run
 	@echo ">> ensuring Copyright headers"
@@ -420,6 +406,19 @@ io/ioutil.{Discard,NopCloser,ReadAll,ReadDir,ReadFile,TempDir,TempFile,Writefile
 	@echo ">> ensuring generated proto files are up to date"
 	@$(MAKE) proto
 	$(call require_clean_work_tree,'detected files without copyright, run make lint and commit changes')
+
+.PHONY: lint-local
+lint-local: ## Runs Go linters locally without clean work tree checks.
+lint-local: check-git deps $(GOLANGCI_LINT)
+	@echo ">> linting all of the Go files GOGC=${GOGC}"
+	@$(GOLANGCI_LINT) run
+
+
+.PHONY: lint-fix
+lint-fix: ## Runs Go linters and auto-fixes issues where possible.
+lint-fix: check-git deps $(GOLANGCI_LINT)
+	@echo ">> linting and fixing Go files GOGC=${GOGC}"
+	@$(GOLANGCI_LINT) run --fix
 
 .PHONY: shell-lint
 shell-lint: ## Runs static analysis against our shell scripts.
