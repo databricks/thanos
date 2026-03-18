@@ -34,7 +34,7 @@ const (
 var labelValuesPattern = regexp.MustCompile("/api/v1/label/.+/values$")
 
 // NewTripperware returns a Tripperware which sends requests to different sub tripperwares based on the query type.
-func NewTripperware(config Config, reg prometheus.Registerer, logger log.Logger) (queryrange.Tripperware, error) {
+func NewTripperware(config Config, reg prometheus.Registerer, logger log.Logger, engine *ProtectionEngine) (queryrange.Tripperware, error) {
 	var (
 		queryRangeLimits, labelsLimits queryrange.Limits
 		err                            error
@@ -63,7 +63,7 @@ func NewTripperware(config Config, reg prometheus.Registerer, logger log.Logger)
 		queryRangeCodec,
 		config.NumShards,
 		config.CortexHandlerConfig.QueryStatsEnabled,
-		prometheus.WrapRegistererWith(prometheus.Labels{"tripperware": "query_range"}, reg), logger, config.ForwardHeaders)
+		prometheus.WrapRegistererWith(prometheus.Labels{"tripperware": "query_range"}, reg), logger, config.ForwardHeaders, engine)
 	if err != nil {
 		return nil, err
 	}
@@ -169,6 +169,7 @@ func newQueryRangeTripperware(
 	reg prometheus.Registerer,
 	logger log.Logger,
 	forwardHeaders []string,
+	engine *ProtectionEngine,
 ) (queryrange.Tripperware, error) {
 	queryRangeMiddleware := []queryrange.Middleware{queryrange.NewLimitsMiddleware(limits)}
 	m := queryrange.NewInstrumentMiddlewareMetrics(reg)
@@ -249,6 +250,13 @@ func newQueryRangeTripperware(
 		queryRangeMiddleware,
 		queryrange.InstrumentMiddleware("rangequerylogging", m, logger),
 		NewRangeQueryLoggingMiddleware(logger, reg),
+	)
+
+	// Add protection middleware (inside logging so blocked queries are still logged).
+	queryRangeMiddleware = append(
+		queryRangeMiddleware,
+		queryrange.InstrumentMiddleware("protection", m, logger),
+		NewProtectionMiddleware(engine, logger, reg),
 	)
 
 	return func(next http.RoundTripper) http.RoundTripper {

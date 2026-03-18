@@ -197,7 +197,7 @@ func TestRoundTripRetryMiddleware(t *testing.T) {
 						Limits:                 defaultLimits,
 						SplitQueriesByInterval: day,
 					},
-				}, nil, log.NewNopLogger(),
+				}, nil, log.NewNopLogger(), NewProtectionEngine(nil),
 			)
 			testutil.Ok(t, err)
 
@@ -370,7 +370,7 @@ func TestRoundTripSplitIntervalMiddleware(t *testing.T) {
 						Limits:                 defaultLimits,
 						SplitQueriesByInterval: tc.splitInterval,
 					},
-				}, nil, log.NewNopLogger(),
+				}, nil, log.NewNopLogger(), NewProtectionEngine(nil),
 			)
 			testutil.Ok(t, err)
 
@@ -469,7 +469,7 @@ func TestRoundTripQueryRangeCacheMiddleware(t *testing.T) {
 				ResultsCacheConfig:     cacheConf,
 				SplitQueriesByInterval: day,
 			},
-		}, nil, log.NewNopLogger(),
+		}, nil, log.NewNopLogger(), NewProtectionEngine(nil),
 	)
 	testutil.Ok(t, err)
 
@@ -563,7 +563,7 @@ func TestRoundTripQueryCacheWithShardingMiddleware(t *testing.T) {
 				SplitQueriesByInterval: day,
 			},
 			CortexHandlerConfig: &transport.HandlerConfig{},
-		}, nil, log.NewNopLogger(),
+		}, nil, log.NewNopLogger(), NewProtectionEngine(nil),
 	)
 	testutil.Ok(t, err)
 
@@ -688,7 +688,7 @@ func TestRoundTripLabelsCacheMiddleware(t *testing.T) {
 				SplitQueriesByInterval: day,
 			},
 			CortexHandlerConfig: &transport.HandlerConfig{},
-		}, nil, log.NewNopLogger(),
+		}, nil, log.NewNopLogger(), NewProtectionEngine(nil),
 	)
 	testutil.Ok(t, err)
 
@@ -802,7 +802,7 @@ func TestRoundTripSeriesCacheMiddleware(t *testing.T) {
 				ResultsCacheConfig:     cacheConf,
 				SplitQueriesByInterval: day,
 			},
-		}, nil, log.NewNopLogger(),
+		}, nil, log.NewNopLogger(), NewProtectionEngine(nil),
 	)
 	testutil.Ok(t, err)
 
