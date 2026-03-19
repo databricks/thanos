@@ -97,7 +97,7 @@ func parseAction(s string) (RuleAction, error) {
 
 // WatchConfig watches the protection config file for changes and reloads the engine.
 // It polls the file at the given interval, detecting changes via SHA256 checksum.
-// Blocks until ctx is cancelled.
+// Blocks until ctx is canceled.
 func WatchConfig(ctx context.Context, engine *ProtectionEngine, path string, logger log.Logger, interval time.Duration) error {
 	if err := reloadRules(engine, path, logger); err != nil {
 		return errors.Wrap(err, "load initial protection config")
