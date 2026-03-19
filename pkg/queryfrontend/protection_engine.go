@@ -10,7 +10,7 @@ import (
 
 // ProtectionEngine evaluates a list of rules against a query request.
 type ProtectionEngine struct {
-	mu    sync.RWMutex
+	mu    sync.Mutex
 	rules []*Rule
 }
 
@@ -31,9 +31,9 @@ func (e *ProtectionEngine) UpdateRules(rules []*Rule) {
 // Returns the updated context (with ProtectionResult if a rule triggered),
 // the action to take, and any error.
 func (e *ProtectionEngine) Evaluate(ctx context.Context, req thanosQueryReq) (*ProtectionResult, error) {
-	e.mu.RLock()
+	e.mu.Lock()
 	rules := e.rules
-	e.mu.RUnlock()
+	e.mu.Unlock()
 
 	for _, rule := range rules {
 		// Skip disabled rules.
