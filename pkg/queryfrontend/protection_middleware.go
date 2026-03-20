@@ -19,10 +19,11 @@ import (
 )
 
 type protectionMiddleware struct {
-	next         queryrange.Handler
-	engine       *ProtectionEngine
-	logger       log.Logger
-	totalLatency prometheus.Histogram
+	next             queryrange.Handler
+	engine           *ProtectionEngine
+	logger           log.Logger
+	totalLatency     prometheus.Histogram
+	triggeredTotal   *prometheus.CounterVec
 }
 
 // NewProtectionMiddleware creates a new middleware that applies protection rules to queries.
@@ -34,13 +35,20 @@ func NewProtectionMiddleware(engine *ProtectionEngine, logger log.Logger, reg pr
 		Help:      "Total duration of the protection middleware, including parsing and evaluation.",
 		Buckets:   []float64{0.0001, 0.00025, 0.0005, 0.001, 0.005, 0.01, 0.1, 1.0, 10.0},
 	})
+	triggeredTotal := promauto.With(reg).NewCounterVec(prometheus.CounterOpts{
+		Namespace: "thanos",
+		Subsystem: "query_frontend",
+		Name:      "protection_triggered_total",
+		Help:      "Total number of queries matched by a protection rule, labeled by action and rule name.",
+	}, []string{"action", "rule"})
 
 	return queryrange.MiddlewareFunc(func(next queryrange.Handler) queryrange.Handler {
 		return &protectionMiddleware{
-			next:         next,
-			engine:       engine,
-			logger:       logger,
-			totalLatency: totalLatency,
+			next:           next,
+			engine:         engine,
+			logger:         logger,
+			totalLatency:   totalLatency,
+			triggeredTotal: triggeredTotal,
 		}
 	})
 }
@@ -93,8 +101,10 @@ func (m *protectionMiddleware) Do(ctx context.Context, r queryrange.Request) (qu
 func (m *protectionMiddleware) applyProtectionResult(result *ProtectionResult, query string) error {
 	switch result.Action {
 	case RuleActionBlock:
+		m.triggeredTotal.WithLabelValues("block", result.RuleName).Inc()
 		return httpgrpc.Errorf(http.StatusBadRequest, "query blocked by protection rule: %s", result.RuleName)
 	case RuleActionLog:
+		m.triggeredTotal.WithLabelValues("log", result.RuleName).Inc()
 		level.Info(m.logger).Log("msg", "protection rule triggered", "rule", result.RuleName, "action", "log", "query", query)
 	}
 	return nil
