@@ -1003,11 +1003,18 @@ func (c *CompactorBuilder) Init(bucketConfig client.BucketConfig, relabelConfig 
 	})), "http")
 }
 
-func NewQueryFrontend(e e2e.Environment, name, downstreamURL string, config queryfrontend.Config, cacheConfig queryfrontend.CacheProviderConfig) *e2eobs.Observable {
+// NewQueryFrontend starts a query-frontend container.
+// If protectionConfigContent is non-empty, the content is written to a file and mounted into the container
+// with --protection-config pointing to it.
+func NewQueryFrontend(e e2e.Environment, name, downstreamURL string, config queryfrontend.Config, cacheConfig queryfrontend.CacheProviderConfig, protectionConfigContent string) *e2eobs.Observable {
 	cacheConfigBytes, err := yaml.Marshal(cacheConfig)
 	if err != nil {
 		return &e2eobs.Observable{Runnable: e2e.NewFailedRunnable(name, errors.Wrapf(err, "marshal response cache config file: %v", cacheConfig))}
 	}
+
+	f := e.Runnable(fmt.Sprintf("query-frontend-%s", name)).
+		WithPorts(map[string]int{"http": 8080}).
+		Future()
 
 	flags := map[string]string{
 		"--debug.name":                        fmt.Sprintf("query-frontend-%s", name),
@@ -1039,15 +1046,28 @@ func NewQueryFrontend(e e2e.Environment, name, downstreamURL string, config quer
 		flags["--query-frontend.default-tenant"] = config.DefaultTenant
 	}
 
-	return e2eobs.AsObservable(e.Runnable(fmt.Sprintf("query-frontend-%s", name)).
-		WithPorts(map[string]int{"http": 8080}).
-		Init(e2e.StartOptions{
-			Image:            DefaultImage(),
-			Command:          e2e.NewCommand("query-frontend", e2e.BuildArgs(flags)...),
-			Readiness:        e2e.NewHTTPReadinessProbe("http", "/-/ready", 200, 200),
-			User:             strconv.Itoa(os.Getuid()),
-			WaitReadyBackoff: &defaultBackoffConfig,
-		}), "http")
+	var volumes []string
+	if protectionConfigContent != "" {
+		if err := os.MkdirAll(f.Dir(), 0750); err != nil {
+			return &e2eobs.Observable{Runnable: e2e.NewFailedRunnable(name, errors.Wrap(err, "create dir"))}
+		}
+		protectionConfigPath := filepath.Join(f.Dir(), "protection.yaml")
+		if err := os.WriteFile(protectionConfigPath, []byte(protectionConfigContent), 0600); err != nil {
+			return &e2eobs.Observable{Runnable: e2e.NewFailedRunnable(name, errors.Wrap(err, "write protection config file"))}
+		}
+		const containerProtectionConfigPath = "/etc/thanos/protection.yaml"
+		flags["--protection-config"] = containerProtectionConfigPath
+		volumes = []string{protectionConfigPath + ":" + containerProtectionConfigPath + ":ro"}
+	}
+
+	return e2eobs.AsObservable(f.Init(e2e.StartOptions{
+		Image:            DefaultImage(),
+		Command:          e2e.NewCommand("query-frontend", e2e.BuildArgs(flags)...),
+		Readiness:        e2e.NewHTTPReadinessProbe("http", "/-/ready", 200, 200),
+		User:             strconv.Itoa(os.Getuid()),
+		WaitReadyBackoff: &defaultBackoffConfig,
+		Volumes:          volumes,
+	}), "http")
 }
 
 func NewReverseProxy(e e2e.Environment, name, tenantID, target string) *e2eobs.Observable {

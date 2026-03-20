@@ -4,6 +4,7 @@
 package main
 
 import (
+	"context"
 	"net"
 	"net/http"
 	"time"
@@ -43,9 +44,10 @@ import (
 
 type queryFrontendConfig struct {
 	queryfrontend.Config
-	http           httpConfig
-	webDisableCORS bool
-	orgIdHeaders   []string
+	http                 httpConfig
+	webDisableCORS       bool
+	orgIdHeaders         []string
+	protectionConfigPath string
 }
 
 func registerQueryFrontend(app *extkingpin.App) {
@@ -173,6 +175,9 @@ func registerQueryFrontend(app *extkingpin.App) {
 	cmd.Flag("query-frontend.vertical-shards", "Number of shards to use when distributing shardable PromQL queries. For more details, you can refer to the Vertical query sharding proposal: https://thanos.io/tip/proposals-accepted/202205-vertical-query-sharding.md").IntVar(&cfg.NumShards)
 
 	cmd.Flag("query-frontend.slow-query-logs-user-header", "Set the value of the field remote_user in the slow query logs to the value of the given HTTP header. Falls back to reading the user from the basic auth header.").PlaceHolder("<http-header-name>").Default("").StringVar(&cfg.CortexHandlerConfig.SlowQueryLogsUserHeader)
+
+	cmd.Flag("protection-config", "Path to YAML file containing query protection rules. If not set, protection engine starts with no rules.").
+		Default("").StringVar(&cfg.protectionConfigPath)
 
 	reqLogConfig := extkingpin.RegisterRequestLoggingFlags(cmd)
 
@@ -309,7 +314,17 @@ func runQueryFrontend(
 		}
 	}
 
-	tripperWare, err := queryfrontend.NewTripperware(cfg.Config, reg, logger)
+	engine := queryfrontend.NewProtectionEngine(nil)
+	if cfg.protectionConfigPath != "" {
+		ctx, cancel := context.WithCancel(context.Background())
+		g.Add(func() error {
+			return queryfrontend.WatchConfig(ctx, engine, cfg.protectionConfigPath, logger, 30*time.Second)
+		}, func(err error) {
+			cancel()
+		})
+	}
+
+	tripperWare, err := queryfrontend.NewTripperware(cfg.Config, reg, logger, engine)
 	if err != nil {
 		return errors.Wrap(err, "setup tripperwares")
 	}

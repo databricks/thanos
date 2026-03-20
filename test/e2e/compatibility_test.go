@@ -363,5 +363,5 @@ func newQueryFrontendRunnable(e e2e.Environment, name, downstreamURL string) *e2
 		},
 		NumShards: 3,
 	}
-	return e2ethanos.NewQueryFrontend(e, name, downstreamURL, config, inMemoryCacheConfig)
+	return e2ethanos.NewQueryFrontend(e, name, downstreamURL, config, inMemoryCacheConfig, "")
 }

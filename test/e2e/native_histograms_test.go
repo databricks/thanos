@@ -177,7 +177,7 @@ func TestQueryFrontendNativeHistograms(t *testing.T) {
 		},
 	}
 
-	queryFrontend := e2ethanos.NewQueryFrontend(e, "query-frontend", "http://"+querier.InternalEndpoint("http"), queryfrontend.Config{}, inMemoryCacheConfig)
+	queryFrontend := e2ethanos.NewQueryFrontend(e, "query-frontend", "http://"+querier.InternalEndpoint("http"), queryfrontend.Config{}, inMemoryCacheConfig, "")
 	testutil.Ok(t, e2e.StartAndWaitReady(queryFrontend))
 
 	rawRemoteWriteURL1 := "http://" + prom1.Endpoint("http") + "/api/v1/write"
