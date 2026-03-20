@@ -87,7 +87,7 @@ func TestProtectionMiddleware_RuleActionLog_PassesThrough(t *testing.T) {
 	require.True(t, called)
 }
 
-func TestProtectionMiddleware_RuleActionBlock_Returns400(t *testing.T) {
+func TestProtectionMiddleware_RuleActionBlock_Returns403(t *testing.T) {
 	called := false
 	next := queryrange.HandlerFunc(func(ctx context.Context, r queryrange.Request) (queryrange.Response, error) {
 		called = true
@@ -104,7 +104,7 @@ func TestProtectionMiddleware_RuleActionBlock_Returns400(t *testing.T) {
 
 	httpErr, ok := httpgrpc.HTTPResponseFromError(err)
 	require.True(t, ok)
-	require.Equal(t, int32(http.StatusBadRequest), httpErr.Code)
+	require.Equal(t, int32(http.StatusForbidden), httpErr.Code)
 }
 
 func TestProtectionMiddleware_ProtectionResultInContext(t *testing.T) {

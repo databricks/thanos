@@ -1215,7 +1215,7 @@ func TestQueryFrontendProtection(t *testing.T) {
 	q := e2ethanos.NewQuerierBuilder(e, "1").Init()
 	testutil.Ok(t, e2e.StartAndWaitReady(q))
 
-	t.Run("block action returns 400", func(t *testing.T) {
+	t.Run("block action returns 403", func(t *testing.T) {
 		qfe := e2ethanos.NewQueryFrontend(e, "block", "http://"+q.InternalEndpoint("http"),
 			queryfrontend.Config{},
 			queryfrontend.CacheProviderConfig{Type: queryfrontend.INMEMORY},
@@ -1237,7 +1237,7 @@ rules:
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, resp.Body.Close()) })
 
-		require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+		require.Equal(t, http.StatusForbidden, resp.StatusCode)
 	})
 
 	t.Run("log action passes through", func(t *testing.T) {
