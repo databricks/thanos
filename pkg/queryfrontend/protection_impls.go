@@ -12,20 +12,19 @@ import (
 // This file contains all protection rule implementations.
 // Each protection implements the Protection interface defined in protection.go.
 
-// NoopProtection is a protection that always matches but never blocks any query.
-// Used in M2 to verify the protection engine framework without affecting queries.
-type NoopProtection struct{}
+// AlwaysMatchProtection is a protection that always matches every query.
+type AlwaysMatchProtection struct{}
 
-func (n *NoopProtection) Name() string { return "noop" }
+func (n *AlwaysMatchProtection) Name() string { return "noop" }
 
-func (n *NoopProtection) Run(_ context.Context, _ thanosQueryReq) (bool, error) {
+func (n *AlwaysMatchProtection) Run(_ context.Context, _ thanosQueryReq) (bool, error) {
 	return true, nil
 }
 
 // protectionRegistry maps protection names (as used in config) to their factory functions.
 var protectionRegistry = map[string]ProtectionFactory{
 	"noop": func(_ map[string]string) (Protection, error) {
-		return &NoopProtection{}, nil
+		return &AlwaysMatchProtection{}, nil
 	},
 }
 

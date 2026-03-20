@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNoopProtection_AlwaysMatches(t *testing.T) {
-	p := &NoopProtection{}
+func TestAlwaysMatchProtection_AlwaysMatches(t *testing.T) {
+	p := &AlwaysMatchProtection{}
 	matched, err := p.Run(context.Background(), thanosQueryReq{})
 	require.NoError(t, err)
 	require.True(t, matched)
