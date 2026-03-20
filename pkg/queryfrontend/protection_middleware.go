@@ -102,7 +102,7 @@ func (m *protectionMiddleware) applyProtectionResult(result *ProtectionResult, q
 	switch result.Action {
 	case RuleActionBlock:
 		m.triggeredTotal.WithLabelValues("block", result.RuleName).Inc()
-		return httpgrpc.Errorf(http.StatusBadRequest, "query blocked by protection rule: %s", result.RuleName)
+		return httpgrpc.Errorf(http.StatusForbidden, "query blocked by protection rule: %s", result.RuleName)
 	case RuleActionLog:
 		m.triggeredTotal.WithLabelValues("log", result.RuleName).Inc()
 		level.Info(m.logger).Log("msg", "protection rule triggered", "rule", result.RuleName, "action", "log", "query", query)
