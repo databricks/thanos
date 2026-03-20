@@ -15,7 +15,7 @@ import (
 // AlwaysMatchProtection is a protection that always matches every query.
 type AlwaysMatchProtection struct{}
 
-func (n *AlwaysMatchProtection) Name() string { return "noop" }
+func (n *AlwaysMatchProtection) Name() string { return "always-match" }
 
 func (n *AlwaysMatchProtection) Run(_ context.Context, _ thanosQueryReq) (bool, error) {
 	return true, nil
@@ -23,7 +23,7 @@ func (n *AlwaysMatchProtection) Run(_ context.Context, _ thanosQueryReq) (bool, 
 
 // protectionRegistry maps protection names (as used in config) to their factory functions.
 var protectionRegistry = map[string]ProtectionFactory{
-	"noop": func(_ map[string]string) (Protection, error) {
+	"always-match": func(_ map[string]string) (Protection, error) {
 		return &AlwaysMatchProtection{}, nil
 	},
 }

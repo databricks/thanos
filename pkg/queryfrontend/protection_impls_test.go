@@ -18,14 +18,14 @@ func TestAlwaysMatchProtection_AlwaysMatches(t *testing.T) {
 	require.True(t, matched)
 }
 
-func TestLookupProtection_Noop(t *testing.T) {
-	factory, err := LookupProtection("noop")
+func TestLookupProtection_AlwaysMatch(t *testing.T) {
+	factory, err := LookupProtection("always-match")
 	require.NoError(t, err)
 	require.NotNil(t, factory)
 
 	p, err := factory(nil)
 	require.NoError(t, err)
-	require.Equal(t, "noop", p.Name())
+	require.Equal(t, "always-match", p.Name())
 }
 
 func TestLookupProtection_Unknown(t *testing.T) {
