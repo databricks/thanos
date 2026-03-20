@@ -33,12 +33,12 @@ func TestLoadRulesFromFile_Valid(t *testing.T) {
 	path := writeConfigFile(t, dir, `
 rules:
   - name: noop-log
-    protection: noop
+    protection: always-match
     action: log
     actor: ".*"
     enabled: true
   - name: noop-block
-    protection: noop
+    protection: always-match
     action: block
     actor: "^admin$"
     enabled: false
@@ -60,7 +60,7 @@ func TestLoadRulesFromFile_InvalidYAML(t *testing.T) {
 	path := writeConfigFile(t, dir, `
 rules:
   - name: bad
-    protection: noop
+    protection: always-match
     action: log
     actor: ".*"
     args:
@@ -94,7 +94,7 @@ func TestLoadRulesFromFile_UnknownAction(t *testing.T) {
 	path := writeConfigFile(t, dir, `
 rules:
   - name: bad
-    protection: noop
+    protection: always-match
     action: unknown
     actor: ".*"
     enabled: true
@@ -109,7 +109,7 @@ func TestLoadRulesFromFile_EmptyName(t *testing.T) {
 	dir := t.TempDir()
 	path := writeConfigFile(t, dir, `
 rules:
-  - protection: noop
+  - protection: always-match
     action: log
     actor: ".*"
     enabled: true
@@ -125,7 +125,7 @@ func TestLoadRulesFromFile_EmptyActor(t *testing.T) {
 	path := writeConfigFile(t, dir, `
 rules:
   - name: bad
-    protection: noop
+    protection: always-match
     action: log
     enabled: true
 `)
@@ -140,7 +140,7 @@ func TestLoadRulesFromFile_InvalidActorRegex(t *testing.T) {
 	path := writeConfigFile(t, dir, `
 rules:
   - name: bad
-    protection: noop
+    protection: always-match
     action: log
     actor: "["
     enabled: true
@@ -156,7 +156,7 @@ func TestWatchConfig_InitialLoad(t *testing.T) {
 	path := writeConfigFile(t, dir, `
 rules:
   - name: initial-rule
-    protection: noop
+    protection: always-match
     action: log
     actor: ".*"
     enabled: true
@@ -190,7 +190,7 @@ func TestWatchConfig_ReloadsOnFileChange(t *testing.T) {
 	path := writeConfigFile(t, dir, `
 rules:
   - name: rule-v1
-    protection: noop
+    protection: always-match
     action: log
     actor: ".*"
     enabled: true
@@ -216,7 +216,7 @@ rules:
 	require.NoError(t, os.WriteFile(path, []byte(`
 rules:
   - name: rule-v2
-    protection: noop
+    protection: always-match
     action: block
     actor: ".*"
     enabled: true

@@ -1222,7 +1222,7 @@ func TestQueryFrontendProtection(t *testing.T) {
 			`
 rules:
   - name: block-all
-    protection: noop
+    protection: always-match
     action: block
     actor: ".*"
     enabled: true
@@ -1247,7 +1247,7 @@ rules:
 			`
 rules:
   - name: log-all
-    protection: noop
+    protection: always-match
     action: log
     actor: ".*"
     enabled: true
