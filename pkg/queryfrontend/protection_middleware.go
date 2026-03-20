@@ -80,14 +80,24 @@ func (m *protectionMiddleware) Do(ctx context.Context, r queryrange.Request) (qu
 
 	if protectionResult != nil {
 		ctx = WithProtectionResult(ctx, protectionResult)
-	}
-
-	// Return 400 Bad Request error code if a protection rule is triggered.
-	if protectionResult != nil && protectionResult.Action == RuleActionBlock {
-		return nil, httpgrpc.Errorf(http.StatusBadRequest, "query blocked by protection rule: %s", protectionResult.RuleName)
+		if err := m.applyProtectionResult(protectionResult, query); err != nil {
+			return nil, err
+		}
 	}
 
 	return m.next.Do(ctx, r)
+}
+
+// applyProtectionResult performs the action indicated by the protection result.
+// Returns an error if the query should be blocked, nil otherwise.
+func (m *protectionMiddleware) applyProtectionResult(result *ProtectionResult, query string) error {
+	switch result.Action {
+	case RuleActionBlock:
+		return httpgrpc.Errorf(http.StatusBadRequest, "query blocked by protection rule: %s", result.RuleName)
+	case RuleActionLog:
+		level.Info(m.logger).Log("msg", "protection rule triggered", "rule", result.RuleName, "action", "log", "query", query)
+	}
+	return nil
 }
 
 // extractActor returns the actor identifier from the request headers.
