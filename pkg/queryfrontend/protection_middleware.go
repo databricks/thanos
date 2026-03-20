@@ -19,11 +19,11 @@ import (
 )
 
 type protectionMiddleware struct {
-	next             queryrange.Handler
-	engine           *ProtectionEngine
-	logger           log.Logger
-	totalLatency     prometheus.Histogram
-	triggeredTotal   *prometheus.CounterVec
+	next           queryrange.Handler
+	engine         *ProtectionEngine
+	logger         log.Logger
+	totalLatency   prometheus.Histogram
+	triggeredTotal *prometheus.CounterVec
 }
 
 // NewProtectionMiddleware creates a new middleware that applies protection rules to queries.
