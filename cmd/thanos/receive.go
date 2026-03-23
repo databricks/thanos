@@ -305,6 +305,12 @@ func runReceive(
 		return errors.Wrap(err, "creating limiter")
 	}
 
+	// Create blocklist filter if config is provided.
+	blocklistFilter, err := receive.NewBlocklistFilter(conf.blocklistConfigPath, reg, log.With(logger, "component", "blocklist-filter"), conf.blocklistConfigReloadTimer)
+	if err != nil {
+		return errors.Wrap(err, "creating blocklist filter")
+	}
+
 	// Create tenant attributor if config is provided.
 	var tenantAttributor *receive.TenantAttributor
 	if conf.tenantRulesConfig != nil {
@@ -338,6 +344,7 @@ func runReceive(
 		ReplicaHeader:            conf.replicaHeader,
 		ReplicationFactor:        conf.replicationFactor,
 		Relabeller:               relabeller,
+		Blocklist:                blocklistFilter,
 		ReceiverMode:             receiveMode,
 		Tracer:                   tracer,
 		TLSConfig:                rwTLSConfig,
@@ -365,6 +372,24 @@ func runReceive(
 					return err
 				}
 				level.Info(logger).Log("msg", "relabel config reloading initialized.")
+				<-ctx.Done()
+				return nil
+			}, func(error) {
+				cancel()
+			})
+		}
+	}
+
+	{
+		if blocklistFilter.CanReload() {
+			ctx, cancel := context.WithCancel(context.Background())
+			g.Add(func() error {
+				level.Debug(logger).Log("msg", "blocklist config initialized with file watcher.")
+				if err := blocklistFilter.StartConfigReloader(ctx); err != nil {
+					level.Error(logger).Log("msg", "initializing blocklist config reloading.", "err", err)
+					return err
+				}
+				level.Info(logger).Log("msg", "blocklist config reloading initialized.")
 				<-ctx.Done()
 				return nil
 			}, func(error) {
@@ -1043,6 +1068,9 @@ type receiveConfig struct {
 	tenantRulesConfig       *extflag.PathOrContent
 	verifyTenantAttribution bool
 
+	blocklistConfigPath        *extflag.PathOrContent
+	blocklistConfigReloadTimer time.Duration
+
 	// Pool configuration for receive-path buffer reuse.
 	poolingEnabled           bool
 	maxPooledCompressedCap   int
@@ -1253,6 +1281,10 @@ func (rc *receiveConfig) registerFlag(cmd extkingpin.FlagClause) {
 	rc.tenantRulesConfig = extflag.RegisterPathOrContent(cmd, "receive.tenant-rules", "YAML file that contains tenant attribution rules. Each rule maps label filters to a tenant ID. Rules are evaluated in order, first match wins.", extflag.WithEnvSubstitution())
 	cmd.Flag("receive.verify-tenant-attribution", "When enabled, tenant attribution rules are evaluated but only for verification. The HTTP header tenant is still used for actual routing/storage. Metrics are emitted to compare attributed vs HTTP tenant.").
 		Default("false").BoolVar(&rc.verifyTenantAttribution)
+
+	rc.blocklistConfigPath = extflag.RegisterPathOrContent(cmd, "receive.blocklist-config", "YAML file that contains blocklist filter rules. Each rule is an M3-style filter string. Time series matching any rule are dropped before writing.", extflag.WithEnvSubstitution())
+	cmd.Flag("receive.blocklist-config-reload-timer", "Minimum amount of time to pass for the blocklist configuration to be reloaded. Helps to avoid excessive reloads.").
+		Default("0s").DurationVar(&rc.blocklistConfigReloadTimer)
 
 	cmd.Flag("receive.pooling-enabled", "Enable pooling of buffers for receive-path request handling.").
 		Default("false").
