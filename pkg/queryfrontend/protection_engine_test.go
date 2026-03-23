@@ -14,14 +14,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// alwaysMatchProtection always matches (returns true).
-type alwaysMatchProtection struct{}
-
-func (p *alwaysMatchProtection) Name() string { return "always" }
-func (p *alwaysMatchProtection) Run(_ context.Context, _ thanosQueryReq) (bool, error) {
-	return true, nil
-}
-
 // neverMatchProtection never matches (returns false).
 type neverMatchProtection struct{}
 
@@ -47,7 +39,7 @@ func TestProtectionEngine_NoRules(t *testing.T) {
 
 func TestProtectionEngine_DisabledRuleSkipped(t *testing.T) {
 	engine := NewProtectionEngine([]*Rule{
-		NewRule("disabled", &alwaysMatchProtection{}, RuleActionBlock, nil, false),
+		NewRule("disabled", &AlwaysMatchProtection{}, RuleActionBlock, nil, false),
 	})
 	protectionResult, err := engine.Evaluate(context.Background(), thanosQueryReq{})
 	require.NoError(t, err)
@@ -56,7 +48,7 @@ func TestProtectionEngine_DisabledRuleSkipped(t *testing.T) {
 
 func TestProtectionEngine_ActorRegexNoMatch(t *testing.T) {
 	engine := NewProtectionEngine([]*Rule{
-		NewRule("filtered", &alwaysMatchProtection{}, RuleActionBlock, regexp.MustCompile("^admin$"), true),
+		NewRule("filtered", &AlwaysMatchProtection{}, RuleActionBlock, regexp.MustCompile("^admin$"), true),
 	})
 	protectionResult, err := engine.Evaluate(context.Background(), thanosQueryReq{actor: "user"})
 	require.NoError(t, err)
@@ -65,7 +57,7 @@ func TestProtectionEngine_ActorRegexNoMatch(t *testing.T) {
 
 func TestProtectionEngine_ActorRegexMatch(t *testing.T) {
 	engine := NewProtectionEngine([]*Rule{
-		NewRule("filtered", &alwaysMatchProtection{}, RuleActionBlock, regexp.MustCompile("^admin$"), true),
+		NewRule("filtered", &AlwaysMatchProtection{}, RuleActionBlock, regexp.MustCompile("^admin$"), true),
 	})
 	protectionResult, err := engine.Evaluate(context.Background(), thanosQueryReq{actor: "admin"})
 	require.NoError(t, err)
@@ -77,8 +69,8 @@ func TestProtectionEngine_ActorRegexMatch(t *testing.T) {
 func TestProtectionEngine_FirstMatchingRuleWins(t *testing.T) {
 	engine := NewProtectionEngine([]*Rule{
 		NewRule("first", &neverMatchProtection{}, RuleActionBlock, nil, true),
-		NewRule("second", &alwaysMatchProtection{}, RuleActionLog, nil, true),
-		NewRule("third", &alwaysMatchProtection{}, RuleActionBlock, nil, true),
+		NewRule("second", &AlwaysMatchProtection{}, RuleActionLog, nil, true),
+		NewRule("third", &AlwaysMatchProtection{}, RuleActionBlock, nil, true),
 	})
 	protectionResult, err := engine.Evaluate(context.Background(), thanosQueryReq{})
 	require.NoError(t, err)
@@ -98,7 +90,7 @@ func TestProtectionEngine_RunError(t *testing.T) {
 
 func TestProtectionEngine_UpdateRules(t *testing.T) {
 	engine := NewProtectionEngine([]*Rule{
-		NewRule("block-all", &alwaysMatchProtection{}, RuleActionBlock, nil, true),
+		NewRule("block-all", &AlwaysMatchProtection{}, RuleActionBlock, nil, true),
 	})
 
 	protectionResult, err := engine.Evaluate(context.Background(), thanosQueryReq{})
