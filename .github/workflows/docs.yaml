@@ -12,7 +12,9 @@ permissions:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on:
+      group: databricks-eng-protected-runner-group
+      labels: linux-ubuntu-latest
     name: Documentation check
     env:
       GOBIN: /tmp/.bin

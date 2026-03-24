@@ -11,7 +11,9 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on:
+      group: databricks-eng-protected-runner-group
+      labels: linux-ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
@@ -28,7 +30,9 @@ jobs:
         run: make check-examples
 
   lint:
-    runs-on: ubuntu-latest
+    runs-on:
+      group: databricks-eng-protected-runner-group
+      labels: linux-ubuntu-latest
     name: Linters (Static Analysis) for Jsonnet (mixin)
     steps:
       - name: Checkout code

@@ -27,7 +27,9 @@ permissions:
 jobs:
   analyze:
     name: Analyze
-    runs-on: ubuntu-latest
+    runs-on:
+      group: databricks-eng-protected-runner-group
+      labels: linux-ubuntu-latest
 
     strategy:
       fail-fast: false

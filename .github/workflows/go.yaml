@@ -12,7 +12,9 @@ permissions:
 
 jobs:
   unit:
-    runs-on: ubuntu-latest
+    runs-on:
+      group: databricks-eng-protected-runner-group
+      labels: linux-ubuntu-latest
     name: Thanos unit tests
     env:
       THANOS_TEST_OBJSTORE_SKIP: GCS,S3,AZURE,COS,ALIYUNOSS,BOS,OCI,OBS,SWIFT
@@ -44,7 +46,9 @@ jobs:
         run: make test
 
   cross-build-check:
-    runs-on: ubuntu-latest
+    runs-on:
+      group: databricks-eng-protected-runner-group
+      labels: linux-ubuntu-latest
     name: Go build for different platforms
     env:
       GOBIN: /tmp/.bin
@@ -71,7 +75,9 @@ jobs:
         run: make crossbuild
 
   build-stringlabels:
-    runs-on: ubuntu-latest
+    runs-on:
+      group: databricks-eng-protected-runner-group
+      labels: linux-ubuntu-latest
     name: Go build with -tags=stringlabels
     env:
       GOBIN: /tmp/.bin
@@ -98,7 +104,9 @@ jobs:
       run: go build -tags=stringlabels ./cmd/thanos
 
   lint:
-    runs-on: ubuntu-latest
+    runs-on:
+      group: databricks-eng-protected-runner-group
+      labels: linux-ubuntu-latest
     name: Linters (Static Analysis) for Go
     env:
       GOBIN: /tmp/.bin
@@ -128,7 +136,9 @@ jobs:
         run: make go-lint
 
   codespell:
-    runs-on: ubuntu-latest
+    runs-on:
+      group: databricks-eng-protected-runner-group
+      labels: linux-ubuntu-latest
     name: Check misspelled words
     steps:
       - name: Checkout code
@@ -147,7 +157,9 @@ jobs:
       matrix:
         parallelism: [8]
         index: [0, 1, 2, 3, 4, 5, 6, 7]
-    runs-on: ubuntu-24.04
+    runs-on:
+      group: databricks-eng-protected-runner-group
+      labels: linux-ubuntu-latest
     name: Thanos end-to-end tests
     env:
       GOBIN: /tmp/.bin
