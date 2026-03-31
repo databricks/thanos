@@ -132,6 +132,8 @@ type compactMetrics struct {
 	blockCleanupFailures        prometheus.Counter
 	blocksMarked                *prometheus.CounterVec
 	garbageCollectedBlocks      prometheus.Counter
+	tenantIterations            *prometheus.CounterVec
+	tenantAssigned              *prometheus.GaugeVec
 }
 
 func newCompactMetrics(reg *prometheus.Registry, deleteDelay time.Duration) *compactMetrics {
@@ -185,6 +187,14 @@ func newCompactMetrics(reg *prometheus.Registry, deleteDelay time.Duration) *com
 		Name: "thanos_compact_garbage_collected_blocks_total",
 		Help: "Total number of blocks marked for deletion by compactor.",
 	})
+	m.tenantIterations = promauto.With(reg).NewCounterVec(prometheus.CounterOpts{
+		Name: "thanos_compact_tenant_iterations_total",
+		Help: "Total number of compaction iterations completed successfully per tenant.",
+	}, []string{"tenant"})
+	m.tenantAssigned = promauto.With(reg).NewGaugeVec(prometheus.GaugeOpts{
+		Name: "thanos_compact_tenant_assigned",
+		Help: "Set to 1 for each tenant assigned to this compactor instance.",
+	}, []string{"tenant"})
 	return m
 }
 
@@ -294,6 +304,7 @@ func runCompact(
 	runWebServer(g, ctx, logger, cancel, reg, &conf, component, tracer, progressRegistry, globalBaseMetaFetcher, api, srv)
 
 	for _, tenantPrefix := range tenantPrefixes {
+		compactMetrics.tenantAssigned.WithLabelValues(tenantPrefix).Set(1)
 		bucketConf := &client.BucketConfig{
 			Type:   initialBucketConf.Type,
 			Config: initialBucketConf.Config,
@@ -628,6 +639,7 @@ func runCompactForTenant(
 			err := compactMainFn(progressRegistry.Get(compact.Main))
 			if err == nil {
 				compactMetrics.iterations.Inc()
+				compactMetrics.tenantIterations.WithLabelValues(tenant).Inc()
 				return nil
 			}
 
