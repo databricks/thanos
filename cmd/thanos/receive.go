@@ -1227,9 +1227,10 @@ func (rc *receiveConfig) registerFlag(cmd extkingpin.FlagClause) {
 		Default("false").Hidden().BoolVar(&rc.tsdbEnableTenantPathPrefix)
 
 	cmd.Flag("tsdb.path-segments-before-tenant",
-		"[EXPERIMENTAL] Specifies the path segments before the tenant for object storage."+
-			"Must only be used in combination with tsdb.enable-tenant-path-prefix.").
-		Default("raw").Hidden().StringsVar(&rc.tsdbPathSegmentsBeforeTenant)
+		"[EXPERIMENTAL] Specifies the path segments before the tenant for object storage. "+
+			"Must only be used in combination with tsdb.enable-tenant-path-prefix. "+
+			"Must align with compact.common-path-prefix on the compactor.").
+		Default("v1", "raw").Hidden().StringsVar(&rc.tsdbPathSegmentsBeforeTenant)
 
 	cmd.Flag("tsdb.head-chunks-write-buffer-size-bytes",
 		"Configures the write buffer size used by the head chunks mapper. "+
