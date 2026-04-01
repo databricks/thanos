@@ -70,8 +70,7 @@ type MultiTSDB struct {
 	disableSeriesResorting   bool
 	metricNameFilterEnabled  bool
 	noUploadTenants          []string // Support both exact matches and prefix patterns (e.g., "tenant1", "prod-*")
-	enableTenantPathPrefix   bool
-	pathSegmentsBeforeTenant []string
+	enableTenantPathPrefix bool
 
 	compactionDelayInterval time.Duration
 	tenantCounter           atomic.Uint64
@@ -107,13 +106,6 @@ func WithNoUploadTenants(tenants []string) MultiTSDBOption {
 func WithTenantPathPrefix() MultiTSDBOption {
 	return func(s *MultiTSDB) {
 		s.enableTenantPathPrefix = true
-	}
-}
-
-// WithPathSegmentsBeforeTenant sets the path segments before the tenant for object store.
-func WithPathSegmentsBeforeTenant(segments []string) MultiTSDBOption {
-	return func(s *MultiTSDB) {
-		s.pathSegmentsBeforeTenant = segments
 	}
 }
 
@@ -877,10 +869,8 @@ func (t *MultiTSDB) startTSDB(logger log.Logger, tenantID string, tenant *tenant
 	if t.bucket != nil && !t.isNoUploadTenant(tenantID) {
 		var tenantBucket objstore.Bucket
 		if t.enableTenantPathPrefix {
-			segmentsBeforeTenant := path.Join(t.pathSegmentsBeforeTenant...)
-			tenantPrefix := path.Join(segmentsBeforeTenant, tenantID)
-			tenantBucket = objstore.NewPrefixedBucket(t.bucket, tenantPrefix)
-			level.Info(logger).Log("msg", "assigning shipper bucket with tenant path prefix", "tenantPrefix", tenantPrefix)
+			tenantBucket = objstore.NewPrefixedBucket(t.bucket, tenantID)
+			level.Info(logger).Log("msg", "assigning shipper bucket with tenant path prefix", "tenantID", tenantID)
 		} else {
 			tenantBucket = t.bucket
 		}

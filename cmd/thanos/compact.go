@@ -70,7 +70,9 @@ func (r *idempotentRegisterer) Register(c prometheus.Collector) error {
 
 func (r *idempotentRegisterer) MustRegister(cs ...prometheus.Collector) {
 	for _, c := range cs {
-		_ = r.Register(c) // Ignores duplicates
+		if err := r.Register(c); err != nil {
+			panic(err)
+		}
 	}
 }
 
@@ -869,7 +871,7 @@ func getTenantsForCompactor(ctx context.Context, logger log.Logger, conf compact
 
 		level.Info(logger).Log("msg", "setting up tenant partitioning", "ordinal", ordinal, "total_shards", totalShards)
 
-		tenantAssignments, err := compact.SetupTenantPartitioning(ctx, discoveryBkt, logger, tenantWeightsPath, conf.commonPathPrefix, totalShards)
+		tenantAssignments, err := compact.SetupTenantPartitioning(ctx, discoveryBkt, logger, tenantWeightsPath, totalShards)
 		runutil.CloseWithLogOnErr(logger, discoveryBkt, "discovery bucket")
 		if err != nil {
 			return nil, true, errors.Wrap(err, "failed to setup tenant partitioning")
@@ -883,10 +885,9 @@ func getTenantsForCompactor(ctx context.Context, logger log.Logger, conf compact
 		// Deduplicate tenants to avoid duplicate metric registration
 		seenTenants := make(map[string]bool)
 		for _, tenant := range assignedTenants {
-			tenantPrefix := path.Join(conf.commonPathPrefix, tenant)
-			if !seenTenants[tenantPrefix] {
-				seenTenants[tenantPrefix] = true
-				tenantPrefixes = append(tenantPrefixes, tenantPrefix)
+			if !seenTenants[tenant] {
+				seenTenants[tenant] = true
+				tenantPrefixes = append(tenantPrefixes, tenant)
 			}
 		}
 
@@ -902,11 +903,17 @@ func getTenantsForCompactor(ctx context.Context, logger log.Logger, conf compact
 func getBucketForTenant(logger log.Logger, isMultiTenant bool, tenantConfYaml []byte, component component.Component, conf compactConfig, bucketConf *client.BucketConfig, globalBkt objstore.Bucket) (objstore.Bucket, error) {
 	if isMultiTenant {
 		bkt, err := client.NewBucket(logger, tenantConfYaml, component.String(), nil)
+		if err != nil {
+			return nil, errors.Wrap(err, "create tenant bucket")
+		}
 		if conf.enableFolderDeletion {
 			bkt, err = block.WrapWithAzDataLakeSdk(logger, tenantConfYaml, bkt)
+			if err != nil {
+				return nil, errors.Wrap(err, "wrap tenant bucket with Azure Data Lake SDK")
+			}
 			level.Info(logger).Log("msg", "azdatalake sdk wrapper enabled", "prefix", bucketConf.Prefix, "name", bkt.Name())
 		}
-		return bkt, err
+		return bkt, nil
 	}
 	return globalBkt, nil
 }
@@ -1049,7 +1056,11 @@ func getRetentionPolicies(logger log.Logger, conf *compactConfig) (map[compact.R
 
 func extractOrdinalFromHostname(hostname string) (int, error) {
 	parts := strings.Split(hostname, "-")
-	return strconv.Atoi(parts[len(parts)-1])
+	ordinal, err := strconv.Atoi(parts[len(parts)-1])
+	if err != nil {
+		return 0, fmt.Errorf("cannot extract ordinal from hostname %q (expected StatefulSet format 'name-N'): %w", hostname, err)
+	}
+	return ordinal, nil
 }
 
 type compactConfig struct {
@@ -1093,7 +1104,6 @@ type compactConfig struct {
 	tenantWeights                                  extflag.PathOrContent
 	replicas                                       int
 	replicationFactor                              int
-	commonPathPrefix                               string
 	enableTenantPathPrefix                         bool
 }
 
@@ -1219,10 +1229,7 @@ func (cc *compactConfig) registerFlag(cmd extkingpin.FlagClause) {
 	cmd.Flag("compact.replication-factor", "Replication factor of the stateful set.").
 		Default("1").IntVar(&cc.replicationFactor)
 
-	cmd.Flag("compact.common-path-prefix", "Common path prefix for tenant discovery when using tenant partitioning. This is the prefix before the tenant name in the object storage path.").
-		Default("v1/raw/").StringVar(&cc.commonPathPrefix)
-
-	cmd.Flag("compact.enable-tenant-path-prefix", "Enable tenant path prefix mode for backward compatibility. When disabled, compactor runs in single-tenant mode.").
+	cmd.Flag("compact.enable-tenant-path-prefix", "Enable multi-tenant compaction with per-tenant path prefixing. Each tenant's blocks are expected under a {tenantID}/ prefix.").
 		Default("false").BoolVar(&cc.enableTenantPathPrefix)
 
 	cc.webConf.registerFlag(cmd)

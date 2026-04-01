@@ -167,11 +167,6 @@ func runReceive(
 		level.Info(logger).Log("msg", "tenant path prefix feature enabled")
 	}
 
-	if len(conf.tsdbPathSegmentsBeforeTenant) > 0 {
-		multiTSDBOptions = append(multiTSDBOptions, receive.WithPathSegmentsBeforeTenant(conf.tsdbPathSegmentsBeforeTenant))
-		level.Info(logger).Log("msg", "tenant path segments before tenant feature enabled", "segments", path.Join(conf.tsdbPathSegmentsBeforeTenant...))
-	}
-
 	if *conf.compactionDelayInterval > 0 {
 		multiTSDBOptions = append(multiTSDBOptions, receive.WithCompactionDelayInterval(time.Duration(*conf.compactionDelayInterval)))
 		level.Info(logger).Log("msg", "deterministic compaction delay enabled", "interval", conf.compactionDelayInterval.String())
@@ -1028,7 +1023,6 @@ type receiveConfig struct {
 	tsdbDisableFlushOnShutdown    bool
 	tsdbEnableNativeHistograms    bool
 	tsdbEnableTenantPathPrefix    bool
-	tsdbPathSegmentsBeforeTenant  []string
 	tsdbHeadChunksWriteBufferSize int
 	tsdbStripeSize                int
 
@@ -1223,13 +1217,8 @@ func (rc *receiveConfig) registerFlag(cmd extkingpin.FlagClause) {
 		Default("false").Hidden().BoolVar(&rc.tsdbEnableNativeHistograms)
 
 	cmd.Flag("tsdb.enable-tenant-path-prefix",
-		"[EXPERIMENTAL] Enables the tenant path prefix for object storage.").
+		"Enables per-tenant path prefixing in object storage. Each tenant's blocks are stored under a {tenantID}/ prefix.").
 		Default("false").Hidden().BoolVar(&rc.tsdbEnableTenantPathPrefix)
-
-	cmd.Flag("tsdb.path-segments-before-tenant",
-		"[EXPERIMENTAL] Specifies the path segments before the tenant for object storage."+
-			"Must only be used in combination with tsdb.enable-tenant-path-prefix.").
-		Default("raw").Hidden().StringsVar(&rc.tsdbPathSegmentsBeforeTenant)
 
 	cmd.Flag("tsdb.head-chunks-write-buffer-size-bytes",
 		"Configures the write buffer size used by the head chunks mapper. "+

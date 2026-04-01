@@ -446,44 +446,41 @@ func TestDiscoverTenantsFromBucket(t *testing.T) {
 	logger := log.NewNopLogger()
 
 	for _, tcase := range []struct {
-		name             string
-		setupBucket      func(bkt objstore.Bucket) error
-		commonPathPrefix string
-		knownTenants     []TenantWeight
-		expectedTenants  []string
-		expectError      bool
+		name            string
+		setupBucket     func(bkt objstore.Bucket) error
+		knownTenants    []TenantWeight
+		expectedTenants []string
+		expectError     bool
 	}{
 		{
 			name: "discover multiple new tenants",
 			setupBucket: func(bkt objstore.Bucket) error {
-				if err := bkt.Upload(ctx, "v1/raw/tenant-a/.keep", strings.NewReader("")); err != nil {
+				if err := bkt.Upload(ctx, "tenant-a/.keep", strings.NewReader("")); err != nil {
 					return err
 				}
-				if err := bkt.Upload(ctx, "v1/raw/tenant-b/.keep", strings.NewReader("")); err != nil {
+				if err := bkt.Upload(ctx, "tenant-b/.keep", strings.NewReader("")); err != nil {
 					return err
 				}
-				if err := bkt.Upload(ctx, "v1/raw/tenant-c/.keep", strings.NewReader("")); err != nil {
+				if err := bkt.Upload(ctx, "tenant-c/.keep", strings.NewReader("")); err != nil {
 					return err
 				}
 				return nil
 			},
-			commonPathPrefix: "v1/raw/",
-			knownTenants:     []TenantWeight{},
-			expectedTenants:  []string{"tenant-a", "tenant-b", "tenant-c"},
-			expectError:      false,
+			knownTenants:    []TenantWeight{},
+			expectedTenants: []string{"tenant-a", "tenant-b", "tenant-c"},
+			expectError:     false,
 		},
 		{
 			name: "skip known tenants",
 			setupBucket: func(bkt objstore.Bucket) error {
-				if err := bkt.Upload(ctx, "v1/raw/known-tenant/.keep", strings.NewReader("")); err != nil {
+				if err := bkt.Upload(ctx, "known-tenant/.keep", strings.NewReader("")); err != nil {
 					return err
 				}
-				if err := bkt.Upload(ctx, "v1/raw/new-tenant/.keep", strings.NewReader("")); err != nil {
+				if err := bkt.Upload(ctx, "new-tenant/.keep", strings.NewReader("")); err != nil {
 					return err
 				}
 				return nil
 			},
-			commonPathPrefix: "v1/raw/",
 			knownTenants: []TenantWeight{
 				{TenantName: "known-tenant", Weight: 100},
 			},
@@ -495,23 +492,21 @@ func TestDiscoverTenantsFromBucket(t *testing.T) {
 			setupBucket: func(bkt objstore.Bucket) error {
 				return nil
 			},
-			commonPathPrefix: "v1/raw/",
-			knownTenants:     []TenantWeight{},
-			expectedTenants:  []string{},
-			expectError:      false,
+			knownTenants:    []TenantWeight{},
+			expectedTenants: []string{},
+			expectError:     false,
 		},
 		{
 			name: "all tenants already known",
 			setupBucket: func(bkt objstore.Bucket) error {
-				if err := bkt.Upload(ctx, "v1/raw/tenant-1/.keep", strings.NewReader("")); err != nil {
+				if err := bkt.Upload(ctx, "tenant-1/.keep", strings.NewReader("")); err != nil {
 					return err
 				}
-				if err := bkt.Upload(ctx, "v1/raw/tenant-2/.keep", strings.NewReader("")); err != nil {
+				if err := bkt.Upload(ctx, "tenant-2/.keep", strings.NewReader("")); err != nil {
 					return err
 				}
 				return nil
 			},
-			commonPathPrefix: "v1/raw/",
 			knownTenants: []TenantWeight{
 				{TenantName: "tenant-1", Weight: 50},
 				{TenantName: "tenant-2", Weight: 50},
@@ -524,35 +519,18 @@ func TestDiscoverTenantsFromBucket(t *testing.T) {
 			setupBucket: func(bkt objstore.Bucket) error {
 				tenants := []string{"tenant-a", "tenant-b", "tenant-c", "tenant-d", "tenant-e"}
 				for _, tenant := range tenants {
-					if err := bkt.Upload(ctx, "v1/raw/"+tenant+"/.keep", strings.NewReader("")); err != nil {
+					if err := bkt.Upload(ctx, tenant+"/.keep", strings.NewReader("")); err != nil {
 						return err
 					}
 				}
 				return nil
 			},
-			commonPathPrefix: "v1/raw/",
 			knownTenants: []TenantWeight{
 				{TenantName: "tenant-a", Weight: 100},
 				{TenantName: "tenant-c", Weight: 80},
 			},
 			expectedTenants: []string{"tenant-b", "tenant-d", "tenant-e"},
 			expectError:     false,
-		},
-		{
-			name: "different path prefix",
-			setupBucket: func(bkt objstore.Bucket) error {
-				if err := bkt.Upload(ctx, "data/metrics/tenant-x/.keep", strings.NewReader("")); err != nil {
-					return err
-				}
-				if err := bkt.Upload(ctx, "data/metrics/tenant-y/.keep", strings.NewReader("")); err != nil {
-					return err
-				}
-				return nil
-			},
-			commonPathPrefix: "data/metrics/",
-			knownTenants:     []TenantWeight{},
-			expectedTenants:  []string{"tenant-x", "tenant-y"},
-			expectError:      false,
 		},
 	} {
 		t.Run(tcase.name, func(t *testing.T) {
@@ -564,7 +542,7 @@ func TestDiscoverTenantsFromBucket(t *testing.T) {
 			}
 
 			// Discover tenants
-			discovered, err := discoverTenantsFromBucket(ctx, bkt, logger, tcase.commonPathPrefix, tcase.knownTenants)
+			discovered, err := discoverTenantsFromBucket(ctx, bkt, logger, tcase.knownTenants)
 
 			if tcase.expectError {
 				if err == nil {
@@ -617,7 +595,6 @@ func TestSetupTenantPartitioning(t *testing.T) {
 		name                      string
 		setupBucket               func(bkt objstore.Bucket) error
 		setupConfigFile           func() (string, error)
-		commonPathPrefix          string
 		numShards                 int
 		expectedActiveTenants     int
 		expectedDiscoveredTenants int
@@ -626,9 +603,8 @@ func TestSetupTenantPartitioning(t *testing.T) {
 		{
 			name: "active and discovered tenants",
 			setupBucket: func(bkt objstore.Bucket) error {
-				// Create some discovered tenants
 				for _, tenant := range []string{"discovered-1", "discovered-2"} {
-					if err := bkt.Upload(ctx, "v1/raw/"+tenant+"/.keep", strings.NewReader("")); err != nil {
+					if err := bkt.Upload(ctx, tenant+"/.keep", strings.NewReader("")); err != nil {
 						return err
 					}
 				}
@@ -646,7 +622,6 @@ func TestSetupTenantPartitioning(t *testing.T) {
 				}
 				return encodeTempFile(t, tempFile, config)
 			},
-			commonPathPrefix:          "v1/raw/",
 			numShards:                 2,
 			expectedActiveTenants:     2,
 			expectedDiscoveredTenants: 2,
@@ -670,7 +645,6 @@ func TestSetupTenantPartitioning(t *testing.T) {
 				}
 				return encodeTempFile(t, tempFile, config)
 			},
-			commonPathPrefix:          "v1/raw/",
 			numShards:                 2,
 			expectedActiveTenants:     3,
 			expectedDiscoveredTenants: 0,
@@ -680,7 +654,7 @@ func TestSetupTenantPartitioning(t *testing.T) {
 			name: "only discovered tenants",
 			setupBucket: func(bkt objstore.Bucket) error {
 				for _, tenant := range []string{"tenant-1", "tenant-2", "tenant-3", "tenant-4"} {
-					if err := bkt.Upload(ctx, "v1/raw/"+tenant+"/.keep", strings.NewReader("")); err != nil {
+					if err := bkt.Upload(ctx, tenant+"/.keep", strings.NewReader("")); err != nil {
 						return err
 					}
 				}
@@ -695,7 +669,6 @@ func TestSetupTenantPartitioning(t *testing.T) {
 				config := map[string]int{} // Empty config
 				return encodeTempFile(t, tempFile, config)
 			},
-			commonPathPrefix:          "v1/raw/",
 			numShards:                 2,
 			expectedActiveTenants:     0,
 			expectedDiscoveredTenants: 4,
@@ -704,10 +677,9 @@ func TestSetupTenantPartitioning(t *testing.T) {
 		{
 			name: "large mixed setup",
 			setupBucket: func(bkt objstore.Bucket) error {
-				// Create many discovered tenants
 				for i := 1; i <= 20; i++ {
 					tenant := "discovered-" + string(rune('a'+i-1))
-					if err := bkt.Upload(ctx, "v1/raw/"+tenant+"/.keep", strings.NewReader("")); err != nil {
+					if err := bkt.Upload(ctx, tenant+"/.keep", strings.NewReader("")); err != nil {
 						return err
 					}
 				}
@@ -728,7 +700,6 @@ func TestSetupTenantPartitioning(t *testing.T) {
 				}
 				return encodeTempFile(t, tempFile, config)
 			},
-			commonPathPrefix:          "v1/raw/",
 			numShards:                 3,
 			expectedActiveTenants:     5,
 			expectedDiscoveredTenants: 20,
@@ -748,7 +719,7 @@ func TestSetupTenantPartitioning(t *testing.T) {
 			}
 			defer os.Remove(configPath)
 
-			tenantAssignments, err := SetupTenantPartitioning(ctx, bkt, logger, configPath, tcase.commonPathPrefix, tcase.numShards)
+			tenantAssignments, err := SetupTenantPartitioning(ctx, bkt, logger, configPath, tcase.numShards)
 
 			if tcase.expectError {
 				if err == nil {
@@ -771,7 +742,7 @@ func TestSetupTenantPartitioning_InvalidConfig(t *testing.T) {
 	logger := log.NewNopLogger()
 	bkt := objstore.NewInMemBucket()
 
-	_, err := SetupTenantPartitioning(ctx, bkt, logger, "/nonexistent/config.json", "v1/raw/", 3)
+	_, err := SetupTenantPartitioning(ctx, bkt, logger, "/nonexistent/config.json", 3)
 	if err == nil {
 		t.Error("expected error for nonexistent config file, got nil")
 	}
@@ -801,20 +772,20 @@ func TestSetupTenantPartitioning_NoDuplicates(t *testing.T) {
 	weightsFile.Close()
 
 	// Create bucket structure with tenant directories including "unknown"
-	testutil.Ok(t, bkt.Upload(ctx, "v1/raw/unknown/meta.json", bytes.NewReader([]byte("{}"))))
-	testutil.Ok(t, bkt.Upload(ctx, "v1/raw/eng-monitoring-platform/meta.json", bytes.NewReader([]byte("{}"))))
-	testutil.Ok(t, bkt.Upload(ctx, "v1/raw/eng-compute-lifecycle-team/meta.json", bytes.NewReader([]byte("{}"))))
-	testutil.Ok(t, bkt.Upload(ctx, "v1/raw/discovered-tenant/meta.json", bytes.NewReader([]byte("{}"))))
+	testutil.Ok(t, bkt.Upload(ctx, "unknown/meta.json", bytes.NewReader([]byte("{}"))))
+	testutil.Ok(t, bkt.Upload(ctx, "eng-monitoring-platform/meta.json", bytes.NewReader([]byte("{}"))))
+	testutil.Ok(t, bkt.Upload(ctx, "eng-compute-lifecycle-team/meta.json", bytes.NewReader([]byte("{}"))))
+	testutil.Ok(t, bkt.Upload(ctx, "discovered-tenant/meta.json", bytes.NewReader([]byte("{}"))))
 
 	// Run tenant partitioning
-	assignments, err := SetupTenantPartitioning(ctx, bkt, logger, weightsFile.Name(), "v1/raw/", 2)
+	assignments, err := SetupTenantPartitioning(ctx, bkt, logger, weightsFile.Name(), 2)
 	testutil.Ok(t, err)
 
 	// Verify no tenant appears more than once across all shards
 	seenTenants := make(map[string]int)
 	for shard, tenants := range assignments {
 		for _, tenant := range tenants {
-			// Verify tenants don't have path prefix (should be just "unknown", not "v1/raw/unknown")
+			// Verify tenants are bare names without path separators
 			if strings.Contains(tenant, "/") {
 				t.Errorf("tenant name %s contains path separator, should be bare tenant name only", tenant)
 			}
