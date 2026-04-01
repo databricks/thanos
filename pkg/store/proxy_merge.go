@@ -813,6 +813,8 @@ func sortWithoutLabels(set []*storepb.SeriesResponse, labelsToRemove map[string]
 }
 
 func (l *eagerRespSet) Close() {
+	l.wg.Wait()
+
 	if l.closeSeries != nil {
 		l.closeSeries()
 	}
