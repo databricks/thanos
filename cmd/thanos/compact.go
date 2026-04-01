@@ -871,7 +871,7 @@ func getTenantsForCompactor(ctx context.Context, logger log.Logger, conf compact
 
 		level.Info(logger).Log("msg", "setting up tenant partitioning", "ordinal", ordinal, "total_shards", totalShards)
 
-		tenantAssignments, err := compact.SetupTenantPartitioning(ctx, discoveryBkt, logger, tenantWeightsPath, conf.commonPathPrefix, totalShards)
+		tenantAssignments, err := compact.SetupTenantPartitioning(ctx, discoveryBkt, logger, tenantWeightsPath, totalShards)
 		runutil.CloseWithLogOnErr(logger, discoveryBkt, "discovery bucket")
 		if err != nil {
 			return nil, true, errors.Wrap(err, "failed to setup tenant partitioning")
@@ -885,10 +885,9 @@ func getTenantsForCompactor(ctx context.Context, logger log.Logger, conf compact
 		// Deduplicate tenants to avoid duplicate metric registration
 		seenTenants := make(map[string]bool)
 		for _, tenant := range assignedTenants {
-			tenantPrefix := path.Join(conf.commonPathPrefix, tenant)
-			if !seenTenants[tenantPrefix] {
-				seenTenants[tenantPrefix] = true
-				tenantPrefixes = append(tenantPrefixes, tenantPrefix)
+			if !seenTenants[tenant] {
+				seenTenants[tenant] = true
+				tenantPrefixes = append(tenantPrefixes, tenant)
 			}
 		}
 
@@ -1105,7 +1104,6 @@ type compactConfig struct {
 	tenantWeights                                  extflag.PathOrContent
 	replicas                                       int
 	replicationFactor                              int
-	commonPathPrefix                               string
 	enableTenantPathPrefix                         bool
 }
 
@@ -1231,10 +1229,7 @@ func (cc *compactConfig) registerFlag(cmd extkingpin.FlagClause) {
 	cmd.Flag("compact.replication-factor", "Replication factor of the stateful set.").
 		Default("1").IntVar(&cc.replicationFactor)
 
-	cmd.Flag("compact.common-path-prefix", "Common path prefix for tenant discovery when using tenant partitioning. This is the prefix before the tenant name in the object storage path. Must align with tsdb.path-segments-before-tenant on the receiver.").
-		Default("v1/raw/").StringVar(&cc.commonPathPrefix)
-
-	cmd.Flag("compact.enable-tenant-path-prefix", "Enable tenant path prefix mode for backward compatibility. When disabled, compactor runs in single-tenant mode.").
+	cmd.Flag("compact.enable-tenant-path-prefix", "Enable multi-tenant compaction with per-tenant path prefixing. Each tenant's blocks are expected under a {tenantID}/ prefix.").
 		Default("false").BoolVar(&cc.enableTenantPathPrefix)
 
 	cc.webConf.registerFlag(cmd)

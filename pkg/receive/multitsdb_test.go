@@ -1151,7 +1151,9 @@ func TestTenantBucketPrefixInUpload(t *testing.T) {
 	dir := t.TempDir()
 	bucket := objstore.NewInMemBucket()
 
-	// Create MultiTSDB with bucket
+	// Create MultiTSDB with bucket and tenant path prefix enabled.
+	// The bucket config prefix is expected to already include the hierarchy (e.g., v1/{region}/raw),
+	// so the receiver only prefixes with the tenant ID.
 	m := NewMultiTSDB(dir, log.NewNopLogger(), prometheus.NewRegistry(),
 		&tsdb.Options{
 			MinBlockDuration:  (2 * time.Hour).Milliseconds(),
@@ -1164,7 +1166,6 @@ func TestTenantBucketPrefixInUpload(t *testing.T) {
 		false,
 		metadata.NoneFunc,
 		WithTenantPathPrefix(),
-		WithPathSegmentsBeforeTenant([]string{"v1", "raw"}),
 	)
 	defer func() { testutil.Ok(t, m.Close()) }()
 
@@ -1191,9 +1192,9 @@ func TestTenantBucketPrefixInUpload(t *testing.T) {
 
 	if uploaded > 0 {
 		// Verify that uploaded blocks are in directories with tenant prefixes
-		// Expected path format: "v1/raw/{tenantID}/{blockID}/{file}"
-		expectedPrefix1 := "v1/raw/tenant-a"
-		expectedPrefix2 := "v1/raw/tenant-b"
+		// Expected path format: "{tenantID}/{blockID}/{file}"
+		expectedPrefix1 := "tenant-a"
+		expectedPrefix2 := "tenant-b"
 		foundTenantA := false
 		foundTenantB := false
 
@@ -1225,12 +1226,10 @@ func TestTenantBucketPrefixInUpload(t *testing.T) {
 		testutil.Assert(t, foundTenantA, "uploaded blocks should contain tenant-a prefix path")
 		testutil.Assert(t, foundTenantB, "uploaded blocks should contain tenant-b prefix path")
 
-		// Also verify that objects don't exist at the block level without tenant prefixes
-		// The only objects at root should be the version directory "v1/"
+		// Verify that all objects at root are tenant directories (no loose block directories)
 		rootObjects := 0
 		testutil.Ok(t, bucket.Iter(context.Background(), "", func(name string) error {
-			// Allow "v1/" directory but no direct block directories
-			if name != "v1/" && !strings.HasPrefix(name, "v1/raw/tenant-") {
+			if !strings.HasPrefix(name, "tenant-") {
 				rootObjects++
 				t.Logf("Found unexpected root object: %s", name)
 			}

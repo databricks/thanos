@@ -90,9 +90,9 @@ func computeTenantAssignments(numShards int, tenantWeightList []TenantWeight) (m
 	return bucketTenantAssignments, bucketWeights
 }
 
-// Discover tenants from S3 bucket by listing all tenant directories under the path prefix before tenant.
-// e.g., if the path prefix is "v1/raw/", it will list all tenant directories under "v1/raw/".
-func discoverTenantsFromBucket(ctx context.Context, bkt objstore.BucketReader, logger log.Logger, commonPathPrefix string, knownTenants []TenantWeight) ([]string, error) {
+// Discover tenants from bucket by listing all tenant directories at the bucket root.
+// The bucket config prefix is expected to already scope the bucket to the correct hierarchy level.
+func discoverTenantsFromBucket(ctx context.Context, bkt objstore.BucketReader, logger log.Logger, knownTenants []TenantWeight) ([]string, error) {
 	discoveredTenants := []string{}
 	knownTenantSet := make(map[string]bool)
 
@@ -102,14 +102,12 @@ func discoverTenantsFromBucket(ctx context.Context, bkt objstore.BucketReader, l
 		level.Debug(logger).Log("msg", "marking tenant as known", "tenant", tw.TenantName)
 	}
 
-	// List all tenant directories under prefix before tenant
-	err := bkt.Iter(ctx, commonPathPrefix, func(name string) error {
-		// name will be like "v1/raw/tenant-a/"
+	err := bkt.Iter(ctx, "", func(name string) error {
 		if !strings.HasSuffix(name, "/") {
 			return nil // Not a directory
 		}
 
-		tenantName := strings.TrimSuffix(strings.TrimPrefix(name, commonPathPrefix), "/")
+		tenantName := strings.TrimSuffix(name, "/")
 
 		// Skip if already active tenant shown in tenant weight config
 		if knownTenantSet[tenantName] {
@@ -138,7 +136,7 @@ func tenantToShard(tenantName string, numShards int) int {
 	return int(h.Sum32()) % numShards
 }
 
-func SetupTenantPartitioning(ctx context.Context, bkt objstore.Bucket, logger log.Logger, configPath string, commonPathPrefix string, numShards int) (map[int][]string, error) {
+func SetupTenantPartitioning(ctx context.Context, bkt objstore.Bucket, logger log.Logger, configPath string, numShards int) (map[int][]string, error) {
 	// Get active tenants from tenant weight config
 	activeTenants, err := readTenantWeights(configPath)
 	if err != nil {
@@ -150,7 +148,7 @@ func SetupTenantPartitioning(ctx context.Context, bkt objstore.Bucket, logger lo
 	level.Debug(logger).Log("msg", "computed assignments for active tenants", "count", len(activeTenants))
 
 	// Discover additional tenants from S3
-	discoveredTenants, err := discoverTenantsFromBucket(ctx, bkt, logger, commonPathPrefix, activeTenants)
+	discoveredTenants, err := discoverTenantsFromBucket(ctx, bkt, logger, activeTenants)
 	if err != nil {
 		return nil, err
 	}
