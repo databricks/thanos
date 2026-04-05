@@ -1066,6 +1066,71 @@ func IsOutOfOrderChunkError(err error) bool {
 	return ok
 }
 
+// MissingChunkFilesError is a type wrapper for errors when block metadata references
+// chunk files that don't exist in the bucket. This typically happens due to incomplete
+// or failed block uploads.
+type MissingChunkFilesError struct {
+	err error
+	id  ulid.ULID
+}
+
+func (e MissingChunkFilesError) Error() string {
+	return e.err.Error()
+}
+
+func missingChunkFilesError(err error, brokenBlock ulid.ULID) MissingChunkFilesError {
+	return MissingChunkFilesError{err: err, id: brokenBlock}
+}
+
+// IsMissingChunkFilesError returns true if the base error is a MissingChunkFilesError.
+func IsMissingChunkFilesError(err error) bool {
+	_, ok := errors.Cause(err).(MissingChunkFilesError)
+	return ok
+}
+
+// detectCorruptedBlockFromError checks if the error indicates a corrupted block
+// with missing chunk files (e.g., "segment index X out of range" error).
+// It attempts to identify which block caused the error by parsing the error message
+// for block IDs mentioned in the "from block {ULID}" pattern.
+// Returns the block ID and true if a corrupted block is detected, otherwise returns empty and false.
+func detectCorruptedBlockFromError(err error, toCompact []*metadata.Meta) (ulid.ULID, bool) {
+	if err == nil {
+		return ulid.ULID{}, false
+	}
+
+	errStr := err.Error()
+
+	// Check for the specific error pattern that indicates missing chunk files
+	if !strings.Contains(errStr, "out of range") {
+		return ulid.ULID{}, false
+	}
+
+	// Try to find block ID in error message - look for "from block {ULID}" pattern
+	// The error typically looks like: "cannot populate chunk X from block {ULID}: segment index Y out of range"
+	if idx := strings.Index(errStr, "from block "); idx != -1 {
+		// Extract the ULID after "from block "
+		start := idx + len("from block ")
+		if start+26 <= len(errStr) { // ULID is 26 characters
+			if blockID, parseErr := ulid.Parse(errStr[start : start+26]); parseErr == nil {
+				// Verify this block is in our compaction set
+				for _, meta := range toCompact {
+					if meta.ULID == blockID {
+						return blockID, true
+					}
+				}
+			}
+		}
+	}
+
+	// If we couldn't parse a specific block ID but the error pattern matches,
+	// and we only have one block being compacted, assume it's that one
+	if len(toCompact) == 1 && strings.Contains(errStr, "segment index") {
+		return toCompact[0].ULID, true
+	}
+
+	return ulid.ULID{}, false
+}
+
 // HaltError is a type wrapper for errors that should halt any further progress on compactions.
 type HaltError struct {
 	err error
@@ -1335,6 +1400,16 @@ func (cg *Group) compact(ctx context.Context, dir string, planner Planner, comp 
 		compIDs, e = comp.CompactWithBlockPopulator(dir, toCompactDirs, nil, populateBlockFunc)
 		return e
 	}); err != nil {
+		// Check if this is a "segment index out of range" error, which indicates
+		// a corrupted block with missing chunk files. Try to identify the block
+		// and return a MissingChunkFilesError so it can be deleted instead of halting.
+		if corruptedBlockID, ok := detectCorruptedBlockFromError(err, toCompact); ok {
+			level.Warn(cg.logger).Log("msg", "detected corrupted block with missing chunk files during compaction",
+				"block", corruptedBlockID, "err", err)
+			return false, nil, missingChunkFilesError(
+				errors.Wrapf(err, "block %s appears corrupted (missing chunk files)", corruptedBlockID),
+				corruptedBlockID)
+		}
 		handledErrs := compactionLifecycleCallback.HandleError(ctx, cg.logger, cg, toCompact, err)
 		return false, nil, halt(errors.Wrapf(err, "compact blocks %v, handled %d errors", toCompactDirs, handledErrs))
 	}
@@ -1611,6 +1686,26 @@ func (c *BucketCompactor) Compact(ctx context.Context, progress *Progress) (rerr
 							finishedAllGroups = false
 							mtx.Unlock()
 							continue
+						}
+					}
+					// If block has missing chunk files (corrupted upload), mark it for deletion
+					// instead of halting the compactor.
+					if IsMissingChunkFilesError(err) {
+						blockID := err.(MissingChunkFilesError).id
+						level.Warn(c.logger).Log("msg", "block has missing chunk files, marking for deletion", "block", blockID, "err", err)
+						if markErr := block.MarkForDeletion(
+							ctx,
+							c.logger,
+							c.bkt,
+							blockID,
+							"MissingChunkFiles: block metadata references chunk files that don't exist in bucket",
+							c.sy.metrics.BlocksMarkedForDeletion); markErr == nil {
+							mtx.Lock()
+							finishedAllGroups = false
+							mtx.Unlock()
+							continue
+						} else {
+							level.Error(c.logger).Log("msg", "failed to mark corrupted block for deletion", "block", blockID, "err", markErr)
 						}
 					}
 					errChan <- errors.Wrapf(err, "group %s", g.Key())

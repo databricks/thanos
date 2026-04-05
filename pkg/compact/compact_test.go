@@ -99,6 +99,87 @@ func TestRetryError(t *testing.T) {
 	testutil.Assert(t, IsHaltError(err), "not a halt error. Retry should not hide halt error")
 }
 
+func TestMissingChunkFilesError(t *testing.T) {
+	t.Parallel()
+
+	err := errors.New("test")
+	testutil.Assert(t, !IsMissingChunkFilesError(err), "should not be a missing chunk files error")
+
+	blockID := ulid.MustNew(1, nil)
+	err = missingChunkFilesError(errors.New("test"), blockID)
+	testutil.Assert(t, IsMissingChunkFilesError(err), "should be a missing chunk files error")
+	testutil.Equals(t, blockID, err.(MissingChunkFilesError).id)
+
+	err = errors.Wrap(missingChunkFilesError(errors.New("test"), blockID), "wrapped")
+	testutil.Assert(t, IsMissingChunkFilesError(err), "wrapped error should still be detected")
+
+	err = errors.Wrap(errors.Wrap(missingChunkFilesError(errors.New("test"), blockID), "inner"), "outer")
+	testutil.Assert(t, IsMissingChunkFilesError(err), "double wrapped error should still be detected")
+}
+
+func TestDetectCorruptedBlockFromError(t *testing.T) {
+	t.Parallel()
+
+	blockID1 := ulid.MustNew(1, nil)
+	blockID2 := ulid.MustNew(2, nil)
+
+	toCompact := []*metadata.Meta{
+		{BlockMeta: tsdb.BlockMeta{ULID: blockID1}},
+		{BlockMeta: tsdb.BlockMeta{ULID: blockID2}},
+	}
+
+	// Test: nil error returns false
+	id, ok := detectCorruptedBlockFromError(nil, toCompact)
+	testutil.Assert(t, !ok, "nil error should return false")
+	testutil.Equals(t, ulid.ULID{}, id)
+
+	// Test: unrelated error returns false
+	err := errors.New("some random error")
+	_, ok = detectCorruptedBlockFromError(err, toCompact)
+	testutil.Assert(t, !ok, "unrelated error should return false")
+
+	// Test: error with "out of range" but no block ID returns false (multiple blocks)
+	err = errors.New("segment index 0 out of range")
+	_, ok = detectCorruptedBlockFromError(err, toCompact)
+	testutil.Assert(t, !ok, "error without block ID should return false when multiple blocks")
+
+	// Test: error with "out of range" and single block returns that block
+	singleBlock := []*metadata.Meta{{BlockMeta: tsdb.BlockMeta{ULID: blockID1}}}
+	id, ok = detectCorruptedBlockFromError(err, singleBlock)
+	testutil.Assert(t, ok, "error with single block should return true")
+	testutil.Equals(t, blockID1, id)
+
+	// Test: error with "from block {ULID}" pattern
+	err = errors.Errorf("cannot populate chunk 8 from block %s: segment index 0 out of range", blockID1.String())
+	id, ok = detectCorruptedBlockFromError(err, toCompact)
+	testutil.Assert(t, ok, "error with block ID should return true")
+	testutil.Equals(t, blockID1, id)
+
+	// Test: error with block ID not in toCompact returns false
+	unknownBlock := ulid.MustNew(999, nil)
+	err = errors.Errorf("cannot populate chunk 8 from block %s: segment index 0 out of range", unknownBlock.String())
+	_, ok = detectCorruptedBlockFromError(err, toCompact)
+	testutil.Assert(t, !ok, "error with unknown block ID should return false")
+
+	// Test: wrapped error with "from block {ULID}" pattern
+	err = errors.Wrap(
+		errors.Errorf("cannot populate chunk 8 from block %s: segment index 0 out of range", blockID2.String()),
+		"compaction failed")
+	id, ok = detectCorruptedBlockFromError(err, toCompact)
+	testutil.Assert(t, ok, "wrapped error with block ID should return true")
+	testutil.Equals(t, blockID2, id)
+
+	// Test: reference sequence out of range error (another variant)
+	err = errors.Errorf("cannot populate chunk 8 from block %s: reference sequence 0 out of range", blockID1.String())
+	id, ok = detectCorruptedBlockFromError(err, toCompact)
+	testutil.Assert(t, ok, "reference sequence out of range should also be detected")
+	testutil.Equals(t, blockID1, id)
+
+	// Test: empty toCompact slice
+	_, ok = detectCorruptedBlockFromError(errors.New("segment index 0 out of range"), []*metadata.Meta{})
+	testutil.Assert(t, !ok, "empty toCompact should return false")
+}
+
 func TestGroupKey(t *testing.T) {
 	t.Parallel()
 
