@@ -1,6 +1,8 @@
 // Copyright (c) The Thanos Authors.
 // Licensed under the Apache License 2.0.
 
+// This is to trigger tests
+
 package store
 
 import (
