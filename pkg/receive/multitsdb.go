@@ -230,6 +230,12 @@ func (t *MultiTSDB) GetActiveTenants() []string {
 	return activeTenants
 }
 
+func (t *MultiTSDB) GetNTenants() int {
+	t.mtx.RLock()
+	defer t.mtx.RUnlock()
+	return len(t.tenants)
+}
+
 // testGetTenant returns the tenant with the given tenantID for testing purposes.
 func (t *MultiTSDB) testGetTenant(tenantID string) *tenant {
 	t.mtx.RLock()

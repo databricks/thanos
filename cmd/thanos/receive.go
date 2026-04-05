@@ -575,6 +575,10 @@ func runReceive(
 
 	level.Debug(logger).Log("msg", "setting up periodic tenant pruning")
 	{
+		nTenantsMetric := promauto.With(reg).NewGauge(prometheus.GaugeOpts{
+			Name: "thanos_receive_n_tenants",
+			Help: "Number of tenants in multi TSDB.",
+		})
 		ctx, cancel := context.WithCancel(context.Background())
 		g.Add(func() error {
 			pruneInterval := 2 * time.Duration(tsdbOpts.MaxBlockDuration) * time.Millisecond
@@ -587,6 +591,7 @@ func runReceive(
 				if err := dbs.Prune(ctx); err != nil {
 					level.Error(logger).Log("err", err)
 				}
+				nTenantsMetric.Set(float64(dbs.GetNTenants()))
 				return nil
 			})
 		}, func(err error) {
