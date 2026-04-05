@@ -5,6 +5,7 @@ package queryfrontend
 
 import (
 	"context"
+	"regexp"
 )
 
 // RuleAction represents the action to take when a protection rule is triggered.
@@ -48,5 +49,40 @@ func RuleActionToString(action RuleAction) string {
 		return "Block"
 	default:
 		return "Unknown"
+	}
+}
+
+// thanosQueryReq wraps a query request with actor information.
+type thanosQueryReq struct {
+	actor string
+}
+
+// Protection is the interface that all protection implementations must satisfy.
+// It only determines whether a query matches — the action (log/block) is configured in Rule.
+type Protection interface {
+	Name() string
+	Run(ctx context.Context, req thanosQueryReq) (bool, error)
+}
+
+// ProtectionFactory constructs a Protection from a map of args parsed from config.
+type ProtectionFactory func(args map[string]string) (Protection, error)
+
+// Rule combines a Protection with its configured action, actor filter, and enabled state.
+type Rule struct {
+	name       string
+	protection Protection
+	action     RuleAction
+	actorRegex *regexp.Regexp
+	enabled    bool
+}
+
+// NewRule creates a Rule. actorRegex may be nil to match all actors.
+func NewRule(name string, protection Protection, action RuleAction, actorRegex *regexp.Regexp, enabled bool) *Rule {
+	return &Rule{
+		name:       name,
+		protection: protection,
+		action:     action,
+		actorRegex: actorRegex,
+		enabled:    enabled,
 	}
 }
