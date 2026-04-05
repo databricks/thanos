@@ -379,7 +379,7 @@ func runCompactForTenant(
 		cf := baseMetaFetcher.NewMetaFetcher(
 			extprom.WrapRegistererWithPrefix("thanos_", reg), filters)
 		cf.UpdateOnChange(func(blocks []metadata.Meta, err error) {
-			api.SetLoaded(blocks, err)
+			api.SetLoadedForTenant(tenant, blocks, err)
 		})
 
 		// Still use blockViewerSyncBlockTimeout to retain original behavior before this upstream change:

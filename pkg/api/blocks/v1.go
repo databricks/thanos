@@ -31,10 +31,16 @@ type BlocksAPI struct {
 	globalBlocksInfo *BlocksInfo
 	loadedBlocksInfo *BlocksInfo
 
+	// Per-tenant loaded blocks for multi-tenant mode aggregation.
+	loadedBlocksByTenant map[string][]metadata.Meta
+	loadedRefreshedAt    time.Time
+	loadedErr            error
+
 	globalLock, loadedLock sync.Mutex
 	disableCORS            bool
 	bkt                    objstore.Bucket
 	disableAdminOperations bool
+	label                  string
 }
 
 type BlocksInfo struct {
@@ -77,9 +83,11 @@ func NewBlocksAPI(logger log.Logger, disableCORS bool, label string, flagsMap ma
 			Blocks: []metadata.Meta{},
 			Label:  label,
 		},
+		loadedBlocksByTenant:   make(map[string][]metadata.Meta),
 		disableCORS:            disableCORS,
 		bkt:                    bkt,
 		disableAdminOperations: disableAdminOperations,
+		label:                  label,
 	}
 }
 
@@ -137,6 +145,38 @@ func (bapi *BlocksAPI) blocks(r *http.Request) (interface{}, []error, *api.ApiEr
 		bapi.loadedLock.Lock()
 		defer bapi.loadedLock.Unlock()
 
+		// If we have per-tenant blocks (multi-tenant mode), handle tenant filtering.
+		if len(bapi.loadedBlocksByTenant) > 0 {
+			tenantParam := r.URL.Query().Get("tenant")
+
+			// If a specific tenant is requested, return only that tenant's blocks.
+			if tenantParam != "" {
+				tenantBlocks, exists := bapi.loadedBlocksByTenant[tenantParam]
+				if !exists {
+					tenantBlocks = []metadata.Meta{}
+				}
+				return &BlocksInfo{
+					Label:       bapi.label,
+					Blocks:      tenantBlocks,
+					RefreshedAt: bapi.loadedRefreshedAt,
+					Err:         bapi.loadedErr,
+				}, nil, nil, func() {}
+			}
+
+			// No tenant specified, so we aggregate all tenants' blocks.
+			var allBlocks []metadata.Meta
+			for _, tenantBlocks := range bapi.loadedBlocksByTenant {
+				allBlocks = append(allBlocks, tenantBlocks...)
+			}
+			return &BlocksInfo{
+				Label:       bapi.label,
+				Blocks:      allBlocks,
+				RefreshedAt: bapi.loadedRefreshedAt,
+				Err:         bapi.loadedErr,
+			}, nil, nil, func() {}
+		}
+
+		// Fall back to single-tenant loadedBlocksInfo for backward compatibility.
 		return bapi.loadedBlocksInfo, nil, nil, func() {}
 	}
 
@@ -168,9 +208,27 @@ func (bapi *BlocksAPI) SetGlobal(blocks []metadata.Meta, err error) {
 }
 
 // SetLoaded updates the local blocks' metadata in the API.
+// This is used for single-tenant mode backward compatibility.
 func (bapi *BlocksAPI) SetLoaded(blocks []metadata.Meta, err error) {
 	bapi.loadedLock.Lock()
 	defer bapi.loadedLock.Unlock()
 
 	bapi.loadedBlocksInfo.set(blocks, err)
+}
+
+// SetLoadedForTenant updates the loaded blocks for a specific tenant.
+// This is used in multi-tenant mode to aggregate blocks from all tenants.
+func (bapi *BlocksAPI) SetLoadedForTenant(tenant string, blocks []metadata.Meta, err error) {
+	bapi.loadedLock.Lock()
+	defer bapi.loadedLock.Unlock()
+
+	if err != nil {
+		bapi.loadedErr = err
+		bapi.loadedRefreshedAt = time.Now()
+		return
+	}
+
+	bapi.loadedBlocksByTenant[tenant] = blocks
+	bapi.loadedRefreshedAt = time.Now()
+	bapi.loadedErr = nil
 }
